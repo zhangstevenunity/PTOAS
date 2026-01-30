@@ -56,15 +56,24 @@ RUN cmake -G Ninja \
 
 RUN ninja -C build && ninja -C build install
 
-# test ptoas cli
-ENV PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
-RUN which ptoas
+# test ptoas cli exists (using full path, not PATH modification)
+RUN test -f $PTO_SOURCE_DIR/build/tools/ptoas/ptoas && echo "ptoas binary found"
 
 # create python wheel
 ENV PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core/
 
 # copy pto.py, _pto_ops_gen.py 
 RUN cp $PTO_INSTALL_DIR/mlir/dialects/*.py $PY_PACKAGE_DIR/mlir/dialects/
+
+# copy ptoas binary into the package
+RUN mkdir -p $PY_PACKAGE_DIR/mlir/bin && \
+    cp $PTO_SOURCE_DIR/build/tools/ptoas/ptoas $PY_PACKAGE_DIR/mlir/bin/ptoas && \
+    chmod +x $PY_PACKAGE_DIR/mlir/bin/ptoas && \
+    touch $PY_PACKAGE_DIR/mlir/bin/__init__.py
+
+# copy Python wrapper script for ptoas
+COPY ./ptoas_wrapper.py $PY_PACKAGE_DIR/mlir/bin/ptoas_wrapper.py
+RUN chmod +x $PY_PACKAGE_DIR/mlir/bin/ptoas_wrapper.py
 
 COPY ./setup.py $PY_PACKAGE_DIR/
 
@@ -85,6 +94,8 @@ RUN python -c "from mlir.dialects import pto"
 
 WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
 RUN python ./tmatmulk.py > ./tmatmulk.pto
+# verify ptoas is using the wrapper from the installed wheel
+RUN which ptoas | grep -q "${PY_PATH}/bin/ptoas" && echo "Using ptoas wrapper from installed wheel"
 RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 # TODO: test compilation of the cpp file using `bisheng`
 # TODO: also test `ptoas --enable-insert-sync`
