@@ -87,6 +87,8 @@ ARG ARCH
 RUN export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
     && auditwheel repair --plat manylinux_2_34_${ARCH} dist/ptoas*.whl
 
+# TODO: after auditwheel, manually insert `ptoas` binary into the wheel zip
+
 RUN pip install wheelhouse/ptoas*.whl
 
 # test import without adjusting $PYTHONPATH and $LD_LIBRARY_PATH, in some irrelevant dir
