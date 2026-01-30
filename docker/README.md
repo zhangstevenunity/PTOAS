@@ -10,5 +10,7 @@ docker build . -t ptoas:py3.11 --build-arg PY_VER=cp311-cp311
 Use:
 
 ```bash
-docker run --rm -it ptoas:py3.12 /bin/bash
+docker run --rm -it \
+    -v $HOME:/mounted_home -w /mounted_home \
+    ptoas:py3.12 /bin/bash
 ```
