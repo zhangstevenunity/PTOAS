@@ -1,4 +1,5 @@
-FROM quay.io/pypa/manylinux_2_34_x86_64
+ARG ARCH=x86_64
+FROM quay.io/pypa/manylinux_2_34_${ARCH}
 
 # NOTE: change $PY_VER for different Python versions (3.8 - 3.14 available)
 ARG PY_VER=cp312-cp312
@@ -82,8 +83,10 @@ RUN pip install --no-cache-dir setuptools wheel auditwheel
 RUN python setup.py bdist_wheel
 
 # fix missing so
-RUN export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
-    && auditwheel repair dist/ptoas*.whl
+ARG ARCH
+RUN export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH \
+    export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
+    && auditwheel repair --plat manylinux_2_34_${ARCH} dist/ptoas*.whl
 
 RUN pip install wheelhouse/ptoas*.whl
 
