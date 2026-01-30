@@ -194,7 +194,8 @@ int main(int argc, char **argv) {
   }
 
   outputFile.keep(); // Success, keep the file
-  llvm::outs() << "PTO Driver Success!!!\n";
+  // llvm::outs() << "PTO Driver Success!!!\n";
+  // NOTE: do not print extra non-cpp text, keep output clean for bisheng
 
   return 0;
 }
