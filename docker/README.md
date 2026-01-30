@@ -13,4 +13,6 @@ Use:
 docker run --rm -it \
     -v $HOME:/mounted_home -w /mounted_home \
     ptoas:py3.12 /bin/bash
+
+which ptoas  # /opt/python/cp312-cp312/bin/ptoas
 ```
