@@ -38,7 +38,7 @@ RUN ninja -C $LLVM_BUILD_DIR
 
 # build ptoas
 WORKDIR $WORKSPACE_DIR
-RUN git clone -b wheel https://github.com/learning-chip/PTOAS.git
+RUN git clone -b npu https://github.com/learning-chip/PTOAS.git
 # TODO: tag git commit of PTOAS repo
 
 WORKDIR $PTO_SOURCE_DIR
