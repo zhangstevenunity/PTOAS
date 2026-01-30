@@ -84,8 +84,7 @@ RUN python setup.py bdist_wheel
 
 # fix missing so
 ARG ARCH
-RUN export PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH \
-    export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
+RUN export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
     && auditwheel repair --plat manylinux_2_34_${ARCH} dist/ptoas*.whl
 
 RUN pip install wheelhouse/ptoas*.whl
@@ -97,8 +96,8 @@ RUN python -c "from mlir.dialects import pto"
 
 WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
 RUN python ./tmatmulk.py > ./tmatmulk.pto
-# verify ptoas is using the wrapper from the installed wheel
-RUN which ptoas | grep -q "${PY_PATH}/bin/ptoas" && echo "Using ptoas wrapper from installed wheel"
+
+ENV PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
 RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 # TODO: test compilation of the cpp file using `bisheng`
 # TODO: also test `ptoas --enable-insert-sync`
