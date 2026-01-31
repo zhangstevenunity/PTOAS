@@ -1,3 +1,5 @@
+First follow [../../../docker/README.md](../../../docker/README.md) to obtain the wheel.
+
 ```bash
 # build
 docker build . -t ptoas_cann:8.5.0
@@ -17,6 +19,7 @@ docker run --rm -it --ipc=host --privileged \
     /bin/bash
 
 # in container
+pip install /mounted_home/pto*.whl
 cd /mounted_home/work_code/ptoas_fork/test/npu/abs
 bash ./compile.sh
 ```

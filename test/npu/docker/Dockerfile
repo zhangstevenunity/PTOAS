@@ -5,5 +5,5 @@ RUN pip install --no-cache-dir torch==2.8.0 --index-url https://download.pytorch
 
 RUN pip install --no-cache-dir numpy
 
-# https://pypi.org/project/ptoas/#history
-RUN pip install ptoas
+# TODO: install stable release from https://pypi.org/project/ptoas/#history
+# Now install local wheel during docker runtime

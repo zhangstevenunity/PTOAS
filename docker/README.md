@@ -15,4 +15,7 @@ docker run --rm -it \
     ptoas:py3.12 /bin/bash
 
 which ptoas  # /opt/python/cp312-cp312/bin/ptoas
+
+# copy wheel out of container to use in other environment
+cp $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl /mounted_home/
 ```

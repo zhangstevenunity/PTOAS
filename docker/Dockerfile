@@ -97,7 +97,7 @@ RUN pip install wheelhouse/ptoas*.whl
 
 # test import without adjusting $PYTHONPATH and $LD_LIBRARY_PATH, in some irrelevant dir
 WORKDIR /test
-RUN python -c "import mlir.ir"
+RUN python -c "from mlir.ir import Context, Location, Module, InsertionPoint"
 RUN python -c "from mlir.dialects import pto"
 
 WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
@@ -108,6 +108,6 @@ RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 # TODO: also test `ptoas --enable-insert-sync`
 
 # show the built wheel by default
-WORKDIR $PY_PACKAGE_DIR/dist
+WORKDIR $PY_PACKAGE_DIR/wheelhouse
 
 CMD ["/bin/bash"]
