@@ -100,6 +100,11 @@ RUN ptoas --enable-insert-sync ./abs.pto -o ./abs.cpp
 
 # NOTE: compilation of the cpp file using `bisheng` needs full CANN image (10 GB)
 
+# collect only *.so actually needed by ptoas (transitive closure under build dirs)
+ENV PTOAS_DEPS_DIR=/ptoas-deps
+COPY copy_ptoas_deps.sh /tmp/copy_ptoas_deps.sh
+RUN mkdir -p $PTOAS_DEPS_DIR && bash /tmp/copy_ptoas_deps.sh
+
 # -----------------------------------------------------------------------------
 # Stage 2: verify wheel and ptoas in ascend/python image (no build tree)
 # -----------------------------------------------------------------------------
@@ -110,8 +115,7 @@ COPY --from=builder /llvm-workspace/llvm-project/build-shared/tools/mlir/python_
 COPY --from=builder /llvm-workspace/PTOAS/build/tools/ptoas/ptoas /usr/local/bin/ptoas
 
 RUN mkdir -p /usr/local/lib/ptoas
-COPY --from=builder /llvm-workspace/llvm-project/build-shared/lib/. /usr/local/lib/ptoas/
-COPY --from=builder /llvm-workspace/PTOAS/install/lib/. /usr/local/lib/ptoas/
+COPY --from=builder /ptoas-deps/. /usr/local/lib/ptoas/
 ENV LD_LIBRARY_PATH=/usr/local/lib/ptoas:${LD_LIBRARY_PATH}
 
 COPY --from=builder /llvm-workspace/PTOAS/test/samples/MatMul/tmatmulk.py /test/MatMul/
