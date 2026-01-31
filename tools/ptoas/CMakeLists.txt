@@ -12,19 +12,17 @@ add_llvm_executable(pto-opt
 # [新增] 魔法操作：修改最终输出的文件名为 "ptoas"
 # =========================================================
 set_target_properties(pto-opt PROPERTIES OUTPUT_NAME "ptoas")
-# [修改 2] 更新链接库名称 + 静态链接
+# [修改 2] 更新链接库名称
 # 原因：In-tree 时你的库叫 MLIRPTODialect，但现在 Out-of-tree 它们是你自己定义的
 # (通常在 lib/PTO/IR/CMakeLists.txt 里被定义为 PTOIR 或类似名字)。
-# 使用 -Wl,-Bstatic / -Wl,-Bdynamic 使上述库全部静态链接，生成单文件可执行程序，便于跨机部署（无需携带 *.so）。
 target_link_libraries(pto-opt PRIVATE
-  "-Wl,-Bstatic"
   # === 你的本地库 (请确认 lib/PTO/*/CMakeLists.txt 里的定义名) ===
   PTOIR            # 替代 MLIRPTODialect
   PTOTransforms    # 替代 MLIRPTOTransforms
 
   # === MLIR 基础设施 ===
   MLIRMlirOptMain  # [重要] 包含了 main 函数入口逻辑，通常必须链接
-
+  
   # === MLIR 标准库 ===
   MLIRBufferizationTransforms
   MLIRArithTransforms
@@ -46,7 +44,6 @@ target_link_libraries(pto-opt PRIVATE
   MLIRFuncDialect
   MLIRSupport
   MLIRTransformUtils
-  "-Wl,-Bdynamic"
 )
 
 # [修改 3] 更新依赖

@@ -29,7 +29,7 @@ RUN git clone --depth 1 --branch ${LLVM_TAG} https://github.com/llvm/llvm-projec
 WORKDIR $LLVM_SOURCE_DIR
 RUN cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
     -DLLVM_ENABLE_PROJECTS="mlir;clang" \
-    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_SHARED_LIBS=ON \
     -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
     -DPython3_EXECUTABLE=${PY_PATH}/bin/python \
     -DCMAKE_BUILD_TYPE=Release \
