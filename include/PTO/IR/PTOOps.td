@@ -104,7 +104,7 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   let assemblyFormat = [{
     (`valid_row` `=` $valid_row^)? 
     (`valid_col` `=` $valid_col^)?
-    attr-dict `:` type($result)
+     attr-dict `:` qualified(type($result))
   }];
 
   let extraClassDeclaration = [{
@@ -363,15 +363,7 @@ def TTransOp : PTO_TOp<"ttrans", [
     PTODpsType:$tmp,
     PTODpsType:$dst
   );
-  let results = (outs
-    Optional<PTODpsType>:$result
-  );
-
-  let builders = [
-    OpBuilder<(ins "Value":$src, "Value":$tmp, "Value":$dst), [{
-      build($_builder, $_state, /*resultTypes=*/TypeRange{}, src, tmp, dst);
-    }]>
-  ];
+  let results = (outs);
 
   let assemblyFormat = [{
     `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
@@ -556,7 +548,10 @@ def TMatmulBiasOp : PTO_TOp<"tmatmul.bias", [
 }
 
 // pto.tmatmul.mx ins(%a,%a_scale,%b,%b_scale) outs(%dst) -> tensor?
-def TMatmulMxOp : PTO_TOp<"tmatmul.mx", []> {
+def TMatmulMxOp : PTO_TOp<"tmatmul.mx", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "Matmul mx (tile world, ins/outs).";
 
   let arguments = (ins
@@ -569,7 +564,6 @@ def TMatmulMxOp : PTO_TOp<"tmatmul.mx", []> {
   let results = (outs Optional<AnyRankedTensor>:$result);
   let hasVerifier = 1;
 
-
   let assemblyFormat = [{
     `ins` `(` $a `,` $a_scale `,` $b `,` $b_scale
           `:` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
@@ -580,11 +574,16 @@ def TMatmulMxOp : PTO_TOp<"tmatmul.mx", []> {
 
   let extraClassDeclaration = [{
     static StringRef getIntrinsicName() { return "TMATMUL_MX"; }
+	::mlir::pto::PIPE getPipe() {
+      return ::mlir::pto::PIPE::PIPE_M; 
   }];
 }
 
 // pto.tmatmul.mx.acc ins(%c_in,%a,%a_scale,%b,%b_scale) outs(%dst) -> tensor?
-def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", []> {
+def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Matmul mx accumulate (tile world, ins/outs).";
 
   let arguments = (ins
@@ -598,7 +597,6 @@ def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", []> {
   let results = (outs Optional<AnyRankedTensor>:$result);
   let hasVerifier = 1;
 
-
   let assemblyFormat = [{
     `ins` `(` $c_in `,` $a `,` $a_scale `,` $b `,` $b_scale
           `:` type($c_in) `,` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
@@ -609,11 +607,17 @@ def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", []> {
 
   let extraClassDeclaration = [{
     static StringRef getIntrinsicName() { return "TMATMUL_MX_ACC"; }
+ 	::mlir::pto::PIPE getPipe() {
+        return ::mlir::pto::PIPE::PIPE_M; 
+      }
   }];
 }
 
 // pto.tmatmul.mx.bias ins(%a,%a_scale,%b,%b_scale,%bias) outs(%dst)  -> tensor?
-def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias", []> {
+def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias",[
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Matmul mx with bias (tile world, ins/outs).";
 
   let arguments = (ins
@@ -638,6 +642,7 @@ def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias", []> {
 
   let extraClassDeclaration = [{
     static StringRef getIntrinsicName() { return "TMATMUL_MX_BIAS"; }
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
   }];
 }
 
@@ -903,21 +908,14 @@ def TransDpsOp : PTO_DpsOp<"trans_dps", []> {
   }];
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst);
-  let results = (outs
-    Optional<PTODpsType>:$result
-  );
+  let results = (outs);
 
-  let builders = [
-    OpBuilder<(ins "Value":$src, "Value":$dst), [{
-      build($_builder, $_state, /*resultTypes=*/TypeRange{}, src, dst);
-    }]>
-  ];
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
-    (`->` qualified(type($result))^)?
   }];
 }
 
@@ -1430,7 +1428,7 @@ def MGatherDpsOp : PTO_DpsOp<"mgather_dps", []> {
     PTODpsType:$idx,
     PTODpsType:$dst);
 
-  let results = (outs Optional<AnyRankedTensor>:$result);
+  let results = (outs);
 
   let hasVerifier = 1;
 
@@ -1438,7 +1436,6 @@ def MGatherDpsOp : PTO_DpsOp<"mgather_dps", []> {
     `ins` `(` $mem `,` $idx `:` type($mem) `,` type($idx) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
-    (`->` qualified(type($result))^)?
   }];
 
   let extraClassDeclaration = [{
@@ -1459,16 +1456,14 @@ def TMGatherOp : PTO_TOp<"tmgather", []> {
     PTODpsType:$idx,
     PTODpsType:$dst);
 
-  let results = (outs Optional<AnyRankedTensor>:$result);
+  let results = (outs);
 
   let hasVerifier = 1;
-
 
   let assemblyFormat = [{
     `ins` `(` $mem `,` $idx `:` type($mem) `,` type($idx) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
-    (`->` qualified(type($result))^)?
   }];
 
   let extraClassDeclaration = [{
@@ -1476,31 +1471,6 @@ def TMGatherOp : PTO_TOp<"tmgather", []> {
   }];
 }
 
-//===----------------------------------------------------------------------===//
-// MGATHER (sync form)
-// %dst = pto.mgather %mem, %idx : memref<...>, memref<...> -> memref<...>
-//===----------------------------------------------------------------------===//
-
-def PTO_MGatherOp : PTO_Op<"mgather", []> {
-  let summary = "Gather-load elements from global memory into a tile using per-element indices";
-  let description = [{
-    For each element (i, j): dst[i,j] = mem[idx[i,j]].
-    Index interpretation is target-defined.
-  }];
-
-  let arguments = (ins
-    AnyMemRef:$mem,
-    AnyMemRef:$idx
-  );
-
-  let results = (outs AnyMemRef:$dst);
-
-  let assemblyFormat = [{
-    $mem `,` $idx `:` type($mem) `,` type($idx) `->` qualified(type($dst) ) attr-dict
-  }];
-
-  let hasVerifier = 1;
-}
 //===----------------------------------------------------------------------===//
 // MSCATTER (DPS)  +  TMSCATTER (tile world TOp)
 //===----------------------------------------------------------------------===//
@@ -3344,6 +3314,24 @@ def PTO_XORSOp_DPS : PTO_DpsOp<"xors_dps", []> {
   }];
 
 }
+
+def PTO_PrintOp_DPS: PTO_TOp<"print_dps", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "TPRINT: Print the contents of a Tile or GlobalTensor for debugging purposes directly from device code..";
+
+  let arguments = (ins
+    PTODpsType:$src
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `:` qualified(type($src)) `)`
+    attr-dict
+  }];
+}
 //===----------------------------------------------------------------------===//
 // PTOOps.td  (add TSYNC DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
@@ -4959,5 +4947,24 @@ def PTO_TXOROp: PTO_TOp<"txor", []> {
   }];
 
 }
+
+def PTO_TPrintOp: PTO_TOp<"tprint", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "TPRINT: Print the contents of a Tile or GlobalTensor for debugging purposes directly from device code..";
+
+  let arguments = (ins
+    PTODpsType:$src
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `:` qualified(type($src)) `)`
+    attr-dict
+  }];
+ }
 
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

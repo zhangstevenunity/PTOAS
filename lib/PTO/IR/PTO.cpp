@@ -850,30 +850,7 @@ LogicalResult mlir::pto::TransOp::verify() {
 
   return success();
 }
-LogicalResult pto::MGatherOp::verify() {
-  auto memTy = llvm::dyn_cast<MemRefType>(getMem().getType());
-  auto idxTy = llvm::dyn_cast<MemRefType>(getIdx().getType());
-  auto dstTy = llvm::dyn_cast<MemRefType>(getDst().getType());
-  if (!memTy || !idxTy || !dstTy)
-    return emitOpError("expects mem, idx, dst to be memref types");
 
-  // dst element type must match mem element type
-  if (dstTy.getElementType() != memTy.getElementType())
-    return emitOpError("dst element type must match mem element type");
-
-  // idx element type must be integer or index
-  Type idxElem = idxTy.getElementType();
-  if (!idxElem.isa<IntegerType>() && !idxElem.isa<IndexType>())
-    return emitOpError("idx element type must be integer or index");
-
-  if (idxTy.getRank() != dstTy.getRank())
-    return emitOpError("idx rank must match dst rank");
-  if (idxTy.hasStaticShape() && dstTy.hasStaticShape() &&
-      idxTy.getShape() != dstTy.getShape())
-    return emitOpError("idx shape must match dst shape");
-
-  return success();
-}
 LogicalResult pto::MScatterOp::verify() {
   auto srcTy = llvm::dyn_cast<MemRefType>(getSrc().getType());
   auto memTy = llvm::dyn_cast<MemRefType>(getMem().getType());
@@ -2806,6 +2783,15 @@ mlir::LogicalResult mlir::pto::SYNCOp_DPS::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult mlir::pto::PrintOp_DPS::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+
+  if (!srcTy)
+    return emitOpError() << "expects memref types for src";
+  return mlir::success();
+}
+
+
 LogicalResult pto::TAbsOp::verify() {
   auto srcTy = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
   auto dstTy = llvm::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
@@ -3726,28 +3712,27 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   return success();
 }
 // ---- MGatherDpsOp ----
-LogicalResult MGatherDpsOp::verify() {
-  auto idxTy = dyn_cast<ShapedType>(getIdx().getType());
-  auto dstTy = dyn_cast<ShapedType>(getDst().getType());
-  if (!idxTy || !dstTy)
-    return emitOpError("expects idx and dst to be shaped types");
+LogicalResult MGatherDpsOp::verify() {  
+  int64_t memrank = getPTOTypeRank(getMem().getType());
+  int64_t idxrank = getPTOTypeRank(getIdx().getType());
+  int64_t dstrank = getPTOTypeRank(getDst().getType());
 
-  if (idxTy.hasRank() && dstTy.hasRank() && idxTy.getRank() != dstTy.getRank())
-    return emitOpError("expects idx and dst to have the same rank");
+  if (memrank == -1 || idxrank == -1 || dstrank == -1) {
+    return emitOpError("mem, idx and dst does not support PTO type");
+  }
 
   return success();
 }
 // ---- MScatterDpsOp ----
 LogicalResult MScatterDpsOp::verify() {
-  auto srcTy = dyn_cast<ShapedType>(getSrc().getType());
-  auto idxTy = dyn_cast<ShapedType>(getIdx().getType());
-  if (!srcTy || !idxTy)
-    return emitOpError("expects src and idx to be shaped types");
+  int64_t srcrank = getPTOTypeRank(getSrc().getType());
+  int64_t memrank = getPTOTypeRank(getMem().getType());
+  int64_t idxrank = getPTOTypeRank(getIdx().getType());
+  
+  if (memrank == -1 || idxrank == -1 || srcrank == -1) {
+    return emitOpError("src, idx, mem does not support PTO type");
+  }
 
-  if (srcTy.hasRank() && idxTy.hasRank() && srcTy.getRank() != idxTy.getRank())
-    return emitOpError("expects src and idx to have the same rank");
-
-  // mem is Anytilebuf by ODS; no extra check here.
   return success();
 }
 // ---- GetValDpsOp ----
@@ -3824,27 +3809,25 @@ LogicalResult TGetValOp::verify() {
 
 // ---- TMScatterOp ----
 LogicalResult TMScatterOp::verify() {
-  auto srcTy = dyn_cast<ShapedType>(getSrc().getType());
-  auto idxTy = dyn_cast<ShapedType>(getIdx().getType());
-  auto memTy = dyn_cast<ShapedType>(getMem().getType());
-  if (!srcTy || !idxTy || !memTy)
-    return emitOpError("expects src, idx and mem to be shaped types");
-
-  if (srcTy.hasRank() && idxTy.hasRank() && srcTy.getRank() != idxTy.getRank())
-    return emitOpError("expects src and idx to have the same rank");
-
+  int64_t srcrank = getPTOTypeRank(getSrc().getType());
+  int64_t memrank = getPTOTypeRank(getMem().getType());
+  int64_t idxrank = getPTOTypeRank(getIdx().getType());
+  
+  if (memrank == -1 || idxrank == -1 || srcrank == -1) {
+    return emitOpError("src, idx, mem does not support PTO type");
+  }
   return success();
 }
+
 // ---- TMGatherOp ----
 LogicalResult TMGatherOp::verify() {
-  auto memTy = dyn_cast<ShapedType>(getMem().getType());
-  auto idxTy = dyn_cast<ShapedType>(getIdx().getType());
-  auto dstTy = dyn_cast<ShapedType>(getDst().getType());
-  if (!memTy || !idxTy || !dstTy)
-    return emitOpError("expects mem, idx and dst to be shaped types");
+  int64_t memrank = getPTOTypeRank(getMem().getType());
+  int64_t idxrank = getPTOTypeRank(getIdx().getType());
+  int64_t dstrank = getPTOTypeRank(getDst().getType());
 
-  if (idxTy.hasRank() && dstTy.hasRank() && idxTy.getRank() != dstTy.getRank())
-    return emitOpError("expects idx and dst to have the same rank");
+  if (memrank == -1 || idxrank == -1 || memrank == -1) {
+    return emitOpError("mem, idx and dst does not support PTO type");
+  }
 
   return success();
 }
@@ -4915,6 +4898,14 @@ mlir::LogicalResult mlir::pto::TSYNCOp::verify() {
   return mlir::success();
 }
 
+mlir::LogicalResult mlir::pto::TPrintOp::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+
+  if (!srcTy)
+    return emitOpError() << "expects tilebuf types for src";
+  return mlir::success();
+}
+
 //===----------------------------------------------------------------------===//
 // pto.addf custom asm to support BOTH formats:
 //
@@ -5919,6 +5910,46 @@ void TMatmulBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Memor
   // 这里的 bias 是必选的 AnyType:$bias，所以是 Singleton
   addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TMatmulOp ===
+void TMatmulMxOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TMatmulAccMxOp ===
+// Read: acc_in, lhs, rhs, Write: dst
+void TMatmulMxAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getCInMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TMatmulBiasMxOp ===
+// Read: a, b, bias, Write: dst
+void TMatmulMxBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getAScaleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBScaleMutable(), MemoryEffects::Read::get());
+  // 这里的 bias 是必选的 AnyType:$bias，所以是 Singleton
+  addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+void TPrintOp::getEffects(SmallVectorImpl<mlir::SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::SideEffects::DefaultResource::get());
+}
+
+void PrintOp_DPS::getEffects(SmallVectorImpl<mlir::SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::SideEffects::DefaultResource::get());
 }
 
 // [Include 必须放在最后]

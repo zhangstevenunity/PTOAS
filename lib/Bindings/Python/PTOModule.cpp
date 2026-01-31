@@ -90,6 +90,15 @@ PYBIND11_MODULE(_pto, m) {
     .value("ODD", mlir::pto::RoundMode::ODD)
     .value("CAST_RINT", mlir::pto::RoundMode::CAST_RINT);
 
+    py::enum_<MlirPTOCmpMode>(m, "CmpMode")
+      .value("EQ", MlirPTOCmpMode_EQ)
+      .value("NE", MlirPTOCmpMode_NE)
+      .value("LT", MlirPTOCmpMode_LT)
+      .value("LE", MlirPTOCmpMode_LE)
+      .value("GT", MlirPTOCmpMode_GT)
+      .value("GE", MlirPTOCmpMode_GE)
+      .export_values();
+
     mlir_attribute_subclass(m, "BLayoutAttr",
                         [](MlirAttribute a) -> bool {
                           // 我们这里用“i32 integer attr”表示 enum，所以只要是 i32 IntegerAttr 就 accept
@@ -157,19 +166,46 @@ PYBIND11_MODULE(_pto, m) {
         return mlirPTOAddressSpaceAttrGetValue(self);
         });
 
-    mlir_attribute_subclass(m, "RoundModeAttr",
-                        [](MlirAttribute a) -> bool {
-                          return mlirAttributeIsAInteger(a) &&
-                                 mlirIntegerTypeGetWidth(mlirAttributeGetType(a)) == 32;
-                        })
-    .def_classmethod(
-        "get",
-        [](py::object cls, int32_t value, MlirContext ctx) -> py::object {
-          MlirAttribute a = mlirPTORoundModeAttrGet(ctx, value);
-          if (mlirAttributeIsNull(a)) return py::none();
-          return cls(a);
-        },
-        py::arg("cls"), py::arg("value"), py::arg("context") = py::none());
+    mlir_attribute_subclass(
+        m, "RoundModeAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsARoundModeAttr(a); })
+     .def_classmethod(
+         "get",
+        [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+        int32_t v = 0;
+        if (py::isinstance<py::int_>(value)) {
+            v = value.cast<int32_t>();
+        } else if (py::hasattr(value, "value")) {
+            // 通用：py::enum_ 通常有 .value
+            v = value.attr("value").cast<int32_t>();
+        } else {
+            throw std::runtime_error("RoundModeAttr.get expects int or RoundMode enum");
+        }
+
+        MlirAttribute a = mlirPTORoundModeAttrGet(ctx, v);
+        if (mlirAttributeIsNull(a)) return py::none();
+        return cls.attr("__call__")(a);
+         },
+        py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+
+    .def_property_readonly(
+        "value",
+        [](MlirAttribute self) -> int32_t {
+        return mlirPTORoundModeAttrGetValue(self);
+        });
+
+    mlir_attribute_subclass(m, "CmpModeAttr", mlirAttributeIsAPTOCmpModeAttr)
+      .def_classmethod(
+          "get",
+          [](py::object cls, MlirContext ctx, MlirPTOCmpMode value) {
+            return cls(mlirPTOCmpModeAttrGet(ctx, value));
+          },
+          "cls"_a, "context"_a, "value"_a)
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) {
+            return mlirPTOCmpModeAttrGetValue(self);
+          });
 
     // [保留 Feature]: GM Type Factory
     // ==========================================================================

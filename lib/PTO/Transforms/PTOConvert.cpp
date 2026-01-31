@@ -249,18 +249,22 @@ struct PTOMGatherToMGATHER : public OpConversionPattern<pto::MGatherDpsOp> {
                                 ConversionPatternRewriter &rewriter) const override {
     Value mem = peelUnrealized(adaptor.getMem());
     Value idx = peelUnrealized(adaptor.getIdx());
-
-    Value dst = rewriter.getRemappedValue(op.getResult());
+    Value dst = peelUnrealized(adaptor.getDst());
 
     rewriter.create<emitc::CallOpaqueOp>(
         op.getLoc(), TypeRange{}, "MGATHER",
         ArrayAttr{}, ArrayAttr{},
         ValueRange{dst, mem, idx});
 
-    rewriter.replaceOp(op, dst);
+     if (op->getNumResults() == 0) {
+      rewriter.eraseOp(op);
+    } else {
+      rewriter.replaceOp(op, dst);
+    }
     return success();
   }
 };
+
 struct AffineApplyMulConstToEmitC
     : public OpConversionPattern<affine::AffineApplyOp> {
   using OpConversionPattern<affine::AffineApplyOp>::OpConversionPattern;
@@ -1569,7 +1573,7 @@ struct PTOMScatterToMSCATTER : public OpConversionPattern<pto::MScatterDpsOp> {
     rewriter.create<emitc::CallOpaqueOp>(
         op.getLoc(), TypeRange{}, "MSCATTER",
         ArrayAttr{}, ArrayAttr{},
-        ValueRange{mem, src, idx});
+        ValueRange{src, mem, idx});
 
     rewriter.eraseOp(op);
     return success();
@@ -1914,31 +1918,28 @@ struct PTOCmpToEmitC : public OpConversionPattern<pto::CmpOp_DPS> {
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
-
+	
+    Value dst  = peelUnrealized(adaptor.getDst());
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
 
-    std::string tok = "pto::CmpMode::EQ";
+    std::string tok = "CmpMode::EQ";
     if (auto a = op.getCmpModeAttr())
       tok = cmpModeTok(a);
 
-    auto argsAttr = rewriter.getArrayAttr({
-        emitc::OpaqueAttr::get(ctx, tok),
-    });
+     auto modeTy = emitc::OpaqueType::get(ctx, "auto");
+    Value modeVal = rewriter.create<emitc::ConstantOp>(
+        loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
 
-    Type dstTy = getTypeConverter()->convertType(adaptor.getDst().getType());
-    if (!dstTy)
-      return rewriter.notifyMatchFailure(op, "cannot convert dst type");
-
-    auto call = rewriter.create<emitc::CallOpaqueOp>(
+    rewriter.create<emitc::CallOpaqueOp>(
         loc,
-        TypeRange{dstTy},
+        TypeRange{},
         "TCMP",
         /*args=*/argsAttr,
         /*templateArgs=*/ArrayAttr{},
-        /*operands=*/ValueRange{src0, src1});
+        /*operands=*/ValueRange{dst, src0, src1, modeVal});
 
-    rewriter.replaceOp(op, call.getResults()); 
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -2087,7 +2088,7 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::CvtOp_DPS> {
                                : std::string("RoundMode::CAST_RINT");
 
     // 生成: TCVT(dst, src, RoundMode::XXX)
-    auto boolTy = emitc::OpaqueType::get(ctx, "bool");
+    auto boolTy = emitc::OpaqueType::get(ctx, "auto");
     auto tok = rmTok; // 默认是 "RoundMode::CAST_RINT"
     Value rmodeVal = rewriter.create<emitc::ConstantOp>(
         loc, boolTy, emitc::OpaqueAttr::get(ctx, tok));
@@ -2394,7 +2395,8 @@ struct PTOLogToEmitC : public OpConversionPattern<pto::LogOp_DPS> {
 	    Value slope = peelUnrealized(adaptor.getSlope());
 	    Value dst = peelUnrealized(adaptor.getDst());
 
-	    SmallVector<Value, 3> operands{dst, src, slope};
+            SmallVector<Value, 3> operands{dst, src, slope};
+
 	    rewriter.create<emitc::CallOpaqueOp>(
 	        loc, TypeRange{}, "TLRELU",
 	        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -3679,9 +3681,10 @@ struct PTOTransToEmitC : public OpConversionPattern<pto::TransDpsOp> {
     auto loc = op.getLoc();
 
     Value src = peelUnrealized(adaptor.getSrc());
+    Value tmp = peelUnrealized(adaptor.getTmp());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 4> operands{dst, src};
+    SmallVector<Value, 4> operands{dst, tmp, src};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TTRANS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -3716,6 +3719,26 @@ struct PTOXORSToEmitC : public OpConversionPattern<pto::XORSOp_DPS> {
     return success();
   }
 };
+  struct PTOPrintToTPRINT : public OpConversionPattern<pto::PrintOp_DPS> {
+  using OpConversionPattern<pto::PrintOp_DPS>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::PrintOp_DPS op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+
+    SmallVector<Value, 4> operands{src};
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TPRINT",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TSYNC DPS/memref op)
 //===----------------------------------------------------------------------===//
@@ -3934,6 +3957,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOGetBlockNumToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetSubBlockIdxToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetSubBlockNumToEmitC>(typeConverter, ctx);
+  patterns.add<PTOPrintToTPRINT>(typeConverter, ctx);
   patterns.add<
     PTOMatmulBiasDpsToTMATMUL_BIAS,
     PTOMatmulMxDpsToTMATMUL_MX,

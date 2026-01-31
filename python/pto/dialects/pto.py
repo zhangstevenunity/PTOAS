@@ -21,7 +21,9 @@ from .._mlir_libs._pto import (
     PadValue,
     PadValueAttr,
     RoundMode,
-    RoundModeAttr
+    RoundModeAttr，
+    CmpMode,
+    CmpModeAttr
 )
 
 __all__ = [
@@ -39,5 +41,6 @@ __all__ = [
     "SLayout","SLayoutAttr",
     "PadValue","PadValueAttr",
     "RoundMode", "RoundModeAttr",
+    "CmpMode", "CmpModeAttr",
     "get_gm_type", "TileBufConfigAttr"
 ]

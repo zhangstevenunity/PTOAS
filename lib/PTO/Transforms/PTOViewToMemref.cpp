@@ -598,14 +598,14 @@ struct PTOViewToMemrefPass
         rewriter.replaceOpWithNewOp<pto::StoreDpsOp>(op, TypeRange{}, src, dst);
       }
 
-      // --- TTransOp [Src, Dst] ---
+       // --- TTransOp [Src, Tmp, Dst] ---
       SmallVector<mlir::pto::TTransOp, 8> trans;
       func.walk([&](mlir::pto::TTransOp op) { trans.push_back(op); });
       for (auto op : trans) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         rewriter.replaceOpWithNewOp<pto::TransDpsOp>(
-            op, TypeRange{}, op->getOperand(0), op->getOperand(1));
+            op, TypeRange{}, op->getOperand(0), op->getOperand(1), op->getOperand(2));
       }
 
       // --- TExpOp [Src, Dst] ---
@@ -753,6 +753,40 @@ struct PTOViewToMemrefPass
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
+
+      // --- TMatmulMxOp---
+      SmallVector<mlir::pto::TMatmulMxOp , 8> matmulMxs;
+      func.walk([&](mlir::pto::TMatmulMxOp  op) { matmulMxs.push_back(op); });
+      for (auto op : matmulMxs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::MatmulMxDpsOp>(
+          op, TypeRange{}, 
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4));
+      }
+
+      // --- TMatmulMxAccOp  ---
+      SmallVector<mlir::pto::TMatmulMxAccOp , 8> matmulMxAccs;
+      func.walk([&](mlir::pto::TMatmulMxAccOp  op) { matmulMxAccs.push_back(op); });
+      for (auto op : matmulMxAccs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::MatmulMxAccDpsOp>(
+          op, TypeRange{}, 
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
+      }
+
+      // --- TMatmulMxBiasOp ---
+      SmallVector<mlir::pto::TMatmulMxBiasOp , 8> matmulMxBiass;
+      func.walk([&](mlir::pto::TMatmulMxBiasOp  op) { matmulMxBiass.push_back(op); });
+      for (auto op : matmulMxBiass) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::MatmulMxBiasDpsOp>(
+          op, TypeRange{}, 
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
+      }
+
 
       // --- TMovOp [Src, Dst] ---
       SmallVector<mlir::pto::TMovOp , 8> movs;
@@ -1016,12 +1050,17 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::CmpOp_DPS>(
-            op,
+         auto newOp = rewriter.create<pto::CmpOp_DPS>(
+            op.getLoc(),
             TypeRange{},
             src0,
             src1,
             dst);
+         
+          if (auto a = op.getCmpModeAttr())
+            newOp->setAttr("cmpMode", a);
+
+        rewriter.replaceOp(op, newOp->getResults()); // 0 results -> OK
       }
 
       SmallVector<mlir::pto::TColExpandOp, 8> colexpand;
@@ -1145,11 +1184,18 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::CvtOp_DPS>(
-            op,
+        auto rmodeAttr = op.getRmodeAttr(); // PTO_RoundModeAttr
+
+        auto newOp = rewriter.create<pto::CvtOp_DPS>(
+            op.getLoc(),
             TypeRange{},
             src,
             dst);
+
+       if (rmodeAttr)
+         newOp->setAttr("rmode", rmodeAttr);
+ 
+         rewriter.replaceOp(op, newOp->getResults());
       }
 
       SmallVector<mlir::pto::TDivOp, 8> divops;
@@ -2338,6 +2384,83 @@ struct PTOViewToMemrefPass
             src0,
             src1,
             dst);
+      }
+
+      SmallVector<mlir::pto::TMGatherOp, 8> mgatherops;
+      func.walk([&](mlir::pto::TMGatherOp op) { mgatherops.push_back(op); });
+
+      for (auto op : mgatherops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value dst = op.getDst();
+        Value idx = op.getIdx();
+        Value mem = op.getMem();
+
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        auto idxTy = dyn_cast<MemRefType>(idx.getType());
+        auto memTy = dyn_cast<MemRefType>(mem.getType());
+        if (!dstTy || !idxTy || !memTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::MGatherDpsOp>(
+            op,
+            TypeRange{},
+            idx,
+            mem,
+            dst);
+      }
+
+      SmallVector<mlir::pto::TMScatterOp, 8> mascatterops;
+      func.walk([&](mlir::pto::TMScatterOp op) { mascatterops.push_back(op); });
+
+      for (auto op : mascatterops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src = op.getSrc();
+        Value idx = op.getIdx();
+        Value mem = op.getMem();
+
+        auto srcTy = dyn_cast<MemRefType>(src.getType());
+        auto idxTy = dyn_cast<MemRefType>(idx.getType());
+        auto memTy = dyn_cast<MemRefType>(mem.getType());
+        if (!srcTy || !idxTy || !memTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::MScatterDpsOp>(
+            op,
+            TypeRange{},
+            src,
+            idx,
+            mem);
+      }
+      SmallVector<mlir::pto::TPrintOp, 8> printops;
+      func.walk([&](mlir::pto::TPrintOp op) { printops.push_back(op); });
+
+      for (auto op : printops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src = op.getSrc();
+
+        auto srcTy = dyn_cast<MemRefType>(src.getType());
+        if (!srcTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOpWithNewOp<pto::PrintOp_DPS>(
+            op,
+            TypeRange{},
+            src);
       }
     }
     
