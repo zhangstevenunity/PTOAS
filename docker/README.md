@@ -1,18 +1,18 @@
 Build:
 
 ```bash
-docker build . -t ptoas:py3.11
+sudo docker build . -t ptoas:py3.11
 
 # optional, to change python version
-docker build . -t ptoas:py3.12 --build-arg PY_VER=cp312-cp312
+sudo docker build . -t ptoas:py3.12 --build-arg PY_VER=cp312-cp312
 ```
 
 Use:
 
 ```bash
-docker run --rm -it \
+sudo docker run --rm -it \
     -v $HOME:/mounted_home -w /mounted_home \
-    ptoas:py3.12 /bin/bash
+    ptoas:py3.11 /bin/bash
 
 which ptoas  # $PTO_SOURCE_DIR/build/tools/ptoas/ptoas
 
