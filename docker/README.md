@@ -15,6 +15,7 @@ sudo docker run --rm -it \
     ptoas:py3.11 /bin/bash
 
 which ptoas  # $PTO_SOURCE_DIR/build/tools/ptoas/ptoas
+ldd $PTO_SOURCE_DIR/build/tools/ptoas/ptoas  # make sure no dynamic linking
 
 # copy wheel out of container to use in other environment
 mkdir -p /mounted_home/pto_wheels
