@@ -75,7 +75,7 @@ RUN python setup.py bdist_wheel
 # fix missing so
 ARG ARCH
 RUN export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
-    && auditwheel repair --plat manylinux_2_34_${ARCH} dist/ptoas*.whl
+    && auditwheel repair dist/ptoas*.whl
 
 # RUN dnf install -y zip && dnf clean all
 
