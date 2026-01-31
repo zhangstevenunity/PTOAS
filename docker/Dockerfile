@@ -106,9 +106,10 @@ WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
 RUN python ./tmatmulk.py > ./tmatmulk.pto
 RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 
-WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
+WORKDIR $PTO_SOURCE_DIR/test/samples/Abs/
 RUN python ./abs.py > ./abs.pto
 RUN ptoas ./abs.pto --enable-insert-sync -o ./abs.cpp
+# TODO: why no correct set/wait flags in generated cpp?
 
 # NOTE: To test compilation of the cpp file using `bisheng`, see `PTOAS/test/npu` directory
 
