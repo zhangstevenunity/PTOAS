@@ -19,7 +19,9 @@ docker run --rm -it --ipc=host --privileged \
     /bin/bash
 
 # in container
-pip install /mounted_home/pto*.whl
+pip install /mounted_home/pto_wheels/pto*.whl
+cp /mounted_home/pto_wheels/ptoas /usr/local/bin/
+
 cd /mounted_home/work_code/ptoas_fork/test/npu/abs
 bash ./compile.sh
 ```

@@ -2,7 +2,7 @@ ARG ARCH=x86_64
 FROM quay.io/pypa/manylinux_2_34_${ARCH}
 
 # NOTE: change $PY_VER for different Python versions (3.8 - 3.14 available)
-ARG PY_VER=cp312-cp312
+ARG PY_VER=cp311-cp311
 ARG LLVM_TAG=llvmorg-19.1.7
 
 ## -- usually no need to change below --
@@ -77,21 +77,21 @@ ARG ARCH
 RUN export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH \
     && auditwheel repair --plat manylinux_2_34_${ARCH} dist/ptoas*.whl
 
-RUN dnf install -y zip && dnf clean all
+# RUN dnf install -y zip && dnf clean all
 
-# Insert ptoas binary into wheel; pip installs {name}-{version}.data/scripts/ into $PY_PATH/bin
-RUN set -e; \
-    WHEEL=$(ls wheelhouse/ptoas*.whl); \
-    EXTRACT=wheel_extract && mkdir -p "$EXTRACT" && unzip -q -o "$WHEEL" -d "$EXTRACT"; \
-    DATA_BASE=$(basename "$EXTRACT"/ptoas*.dist-info .dist-info); \
-    DATA_DIR="$EXTRACT/$DATA_BASE.data"; \
-    mkdir -p "$DATA_DIR/scripts"; \
-    cp "$PTO_SOURCE_DIR/build/tools/ptoas/ptoas" "$DATA_DIR/scripts/ptoas" && chmod +x "$DATA_DIR/scripts/ptoas"; \
-    RECORD=$(ls "$EXTRACT"/ptoas*.dist-info/RECORD); \
-    python3 -c "import hashlib, base64, os; p='$DATA_DIR/scripts/ptoas'; f=open(p,'rb'); h=base64.urlsafe_b64encode(hashlib.sha256(f.read()).digest()).decode().rstrip('='); f.close(); s=os.path.getsize(p); open('$RECORD','a').write(f'$DATA_BASE.data/scripts/ptoas,sha256={h},{s}\n')"; \
-    rm -f "$WHEEL"; \
-    (cd "$EXTRACT" && zip -q -r "../wheelhouse/$(basename $WHEEL)" .); \
-    rm -rf "$EXTRACT"
+# # Insert ptoas binary into wheel; pip installs {name}-{version}.data/scripts/ into $PY_PATH/bin
+# RUN set -e; \
+#     WHEEL=$(ls wheelhouse/ptoas*.whl); \
+#     EXTRACT=wheel_extract && mkdir -p "$EXTRACT" && unzip -q -o "$WHEEL" -d "$EXTRACT"; \
+#     DATA_BASE=$(basename "$EXTRACT"/ptoas*.dist-info .dist-info); \
+#     DATA_DIR="$EXTRACT/$DATA_BASE.data"; \
+#     mkdir -p "$DATA_DIR/scripts"; \
+#     cp "$PTO_SOURCE_DIR/build/tools/ptoas/ptoas" "$DATA_DIR/scripts/ptoas" && chmod +x "$DATA_DIR/scripts/ptoas"; \
+#     RECORD=$(ls "$EXTRACT"/ptoas*.dist-info/RECORD); \
+#     python3 -c "import hashlib, base64, os; p='$DATA_DIR/scripts/ptoas'; f=open(p,'rb'); h=base64.urlsafe_b64encode(hashlib.sha256(f.read()).digest()).decode().rstrip('='); f.close(); s=os.path.getsize(p); open('$RECORD','a').write(f'$DATA_BASE.data/scripts/ptoas,sha256={h},{s}\n')"; \
+#     rm -f "$WHEEL"; \
+#     (cd "$EXTRACT" && zip -q -r "../wheelhouse/$(basename $WHEEL)" .); \
+#     rm -rf "$EXTRACT"
 
 RUN pip install wheelhouse/ptoas*.whl
 
@@ -103,6 +103,7 @@ RUN python -c "from mlir.dialects import pto"
 WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
 RUN python ./tmatmulk.py > ./tmatmulk.pto
 
+ENV PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
 RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 # TODO: test compilation of the cpp file using `bisheng`
 # TODO: also test `ptoas --enable-insert-sync`
