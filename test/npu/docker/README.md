@@ -24,5 +24,6 @@ cp -r /mounted_home/pto_wheels/bundle_ptoas /usr/local/bin/
 ln -s /usr/local/bin/bundle_ptoas/ptoas /usr/local/bin/ptoas
 
 cd /mounted_home/work_code/ptoas_fork/test/npu/abs
+export PTO_LIB_PATH=/sources/pto-isa
 bash ./compile.sh
 ```
