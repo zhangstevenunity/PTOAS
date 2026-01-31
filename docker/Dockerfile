@@ -113,7 +113,14 @@ RUN ptoas ./abs.pto --enable-insert-sync -o ./abs.cpp
 
 # NOTE: To test compilation of the cpp file using `bisheng`, see `PTOAS/test/npu` directory
 
+# bundle dependencies for `ptoas`
+RUN dnf install -y zip && dnf clean all
+WORKDIR /zip_so
+COPY ./bundle_bin.sh /zip_so/
+RUN bash ./bundle_bin.sh $PTO_SOURCE_DIR/build/tools/ptoas/ptoas
+
 # show the built wheel by default
 WORKDIR $PY_PACKAGE_DIR/wheelhouse
+
 
 CMD ["/bin/bash"]

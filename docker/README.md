@@ -15,10 +15,14 @@ sudo docker run --rm -it \
     ptoas:py3.11 /bin/bash
 
 which ptoas  # $PTO_SOURCE_DIR/build/tools/ptoas/ptoas
-ldd $PTO_SOURCE_DIR/build/tools/ptoas/ptoas  # make sure no dynamic linking
+ldd $PTO_SOURCE_DIR/build/tools/ptoas/ptoas  # many dynamic linking
 
 # copy wheel out of container to use in other environment
 mkdir -p /mounted_home/pto_wheels
 cp $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl /mounted_home/pto_wheels/
-cp $PTO_SOURCE_DIR/build/tools/ptoas/ptoas /mounted_home/pto_wheels/
+cp /zip_so/bundle_ptoas.zip /mounted_home/pto_wheels/
+
+# unzip on host
+cd $HOME/pto_wheels/
+sudo unzip bundle_ptoas.zip
 ```

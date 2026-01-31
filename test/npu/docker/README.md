@@ -20,14 +20,9 @@ sudo docker run --rm -it --ipc=host --privileged \
 
 # in container
 pip install /mounted_home/pto_wheels/pto*.whl
-cp /mounted_home/pto_wheels/ptoas /usr/local/bin/
+cp -r /mounted_home/pto_wheels/bundle_ptoas /usr/local/bin/
+ln -s /usr/local/bin/bundle_ptoas/ptoas /usr/local/bin/ptoas
 
 cd /mounted_home/work_code/ptoas_fork/test/npu/abs
-
-PY_PKG_PATH=$(python -c "import site; print(site.getsitepackages()[0])")
-# /usr/local/python3.11.14/lib/python3.11/site-packages for this particular image
-export LD_LIBRARY_PATH=${PY_PKG_PATH}/ptoas.libs:$LD_LIBRARY_PATH
-
-ldd /usr/local/bin/ptoas | grep libMLIRMlirOptMain  # still missing
 bash ./compile.sh
 ```
