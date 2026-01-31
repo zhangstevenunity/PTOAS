@@ -105,9 +105,17 @@ RUN ptoas --enable-insert-sync ./abs.pto -o ./abs.cpp
 # -----------------------------------------------------------------------------
 FROM quay.io/ascend/python:3.11-ubuntu22.04 AS runtime
 
-# Copy only the wheel and ptoas binary from the builder (no access to build dir)
+# Copy only the wheel, ptoas binary, its .so dependencies, and test scripts from builder
 COPY --from=builder /llvm-workspace/llvm-project/build-shared/tools/mlir/python_packages/mlir_core/wheelhouse/ptoas*.whl /tmp/
 COPY --from=builder /llvm-workspace/PTOAS/build/tools/ptoas/ptoas /usr/local/bin/ptoas
+
+RUN mkdir -p /usr/local/lib/ptoas
+COPY --from=builder /llvm-workspace/llvm-project/build-shared/lib/. /usr/local/lib/ptoas/
+COPY --from=builder /llvm-workspace/PTOAS/install/lib/. /usr/local/lib/ptoas/
+ENV LD_LIBRARY_PATH=/usr/local/lib/ptoas:${LD_LIBRARY_PATH}
+
+COPY --from=builder /llvm-workspace/PTOAS/test/samples/MatMul/tmatmulk.py /test/MatMul/
+COPY --from=builder /llvm-workspace/PTOAS/test/samples/Abs/abs.py /test/Abs/
 
 RUN pip install --no-cache-dir /tmp/ptoas*.whl && rm /tmp/ptoas*.whl
 
@@ -119,8 +127,15 @@ RUN python -c "from mlir.dialects import pto"
 # test ptoas cli
 RUN which ptoas
 
-# NOTE: MatMul/Abs sample tests run only in the builder stage (they need the source tree).
-# show the built wheel location by default
-WORKDIR /tmp
+# same MatMul/Abs sample tests as in builder
+WORKDIR /test/MatMul
+RUN python ./tmatmulk.py > ./tmatmulk.pto
+RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
+
+WORKDIR /test/Abs
+RUN python ./abs.py > ./abs.pto
+RUN ptoas --enable-insert-sync ./abs.pto -o ./abs.cpp
+
+WORKDIR /test
 
 CMD ["/bin/bash"]
