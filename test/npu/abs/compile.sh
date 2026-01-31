@@ -1,2 +1,2 @@
 python ./abs.py > ./abs.pto
-ptoas ./abs.pto > ./abs.cpp
+ptoas ./abs.pto --enable-insert-sync -o ./abs.cpp

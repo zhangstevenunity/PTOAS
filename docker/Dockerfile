@@ -100,13 +100,17 @@ WORKDIR /test
 RUN python -c "from mlir.ir import Context, Location, Module, InsertionPoint"
 RUN python -c "from mlir.dialects import pto"
 
+ENV PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
+
 WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
 RUN python ./tmatmulk.py > ./tmatmulk.pto
-
-ENV PATH=$PTO_SOURCE_DIR/build/tools/ptoas:$PATH
 RUN ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
-# TODO: test compilation of the cpp file using `bisheng`
-# TODO: also test `ptoas --enable-insert-sync`
+
+WORKDIR $PTO_SOURCE_DIR/test/samples/MatMul/
+RUN python ./abs.py > ./abs.pto
+RUN ptoas ./abs.pto --enable-insert-sync -o ./abs.cpp
+
+# NOTE: To test compilation of the cpp file using `bisheng`, see `PTOAS/test/npu` directory
 
 # show the built wheel by default
 WORKDIR $PY_PACKAGE_DIR/wheelhouse
