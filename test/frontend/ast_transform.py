@@ -1,6 +1,7 @@
 """
 AST transformer to convert Pythonic for/if statements into IR builder calls
-(scf.ForOp + InsertionPoint, scf.IfOp + InsertionPoint + scf.YieldOp).
+(scf.ForOp + InsertionPoint + scf.YieldOp at end of loop body,
+ scf.IfOp + InsertionPoint + scf.YieldOp at end of then/else blocks).
 
 Effect is isolated at function level: only the body of specified function(s)
 is transformed; the rest of the module is unchanged.
@@ -56,7 +57,7 @@ def _load_ctx(node: ast.Name):
 class IRBuilderTransformer(ast.NodeTransformer):
     """
     Converts Pythonic control flow to IR builder style:
-    - for i in pto.range(start=a, end=b, step=c): body  ->  loop = scf.ForOp(a,b,c,[]); with InsertionPoint(loop.body): i = loop.induction_variable; body
+    - for i in pto.range(start=a, end=b, step=c): body  ->  loop = scf.ForOp(a,b,c,[]); with InsertionPoint(loop.body): i = loop.induction_variable; body; scf.YieldOp([])
     - if cond: then_body else: else_body  ->  _if = scf.IfOp(cond,[],hasElse=True); with InsertionPoint(_if.then_block): then_body; scf.YieldOp([]); with InsertionPoint(_if.else_block): else_body; scf.YieldOp([])
     """
 
@@ -123,6 +124,16 @@ class IRBuilderTransformer(ast.NodeTransformer):
                 ),
             )
         inner_body = [assign_induction] + self._transform_body(node.body)
+        # Emit scf.YieldOp([]) at end of loop body (like if then/else blocks)
+        inner_body.append(
+            ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(value=ast.Name("scf", ast.Load()), attr="YieldOp", ctx=ast.Load()),
+                    args=[ast.List(elts=[], ctx=ast.Load())],
+                    keywords=[],
+                )
+            )
+        )
         # with InsertionPoint(loop.body): ...
         with_ctx = ast.Call(
             func=ast.Name("InsertionPoint", ast.Load()),
@@ -236,9 +247,21 @@ class IRBuilderTransformer(ast.NodeTransformer):
         new_body = self._transform_body(node.body)
         return ast.With(items=node.items, body=new_body)
 
+    def _ensure_scf_import(self, body: List[ast.AST]) -> None:
+        """Ensure 'scf' is imported from mlir.dialects so transformed code (scf.ForOp/YieldOp/IfOp) runs."""
+        for stmt in body:
+            if isinstance(stmt, ast.ImportFrom) and getattr(stmt, "module", None) == "mlir.dialects":
+                names = [a.name for a in stmt.names]
+                if "scf" not in names:
+                    stmt.names.append(ast.alias(name="scf", asname=None))
+                return
+        # No mlir.dialects import found; prepend one for scf
+        body.insert(0, ast.ImportFrom(module="mlir.dialects", names=[ast.alias(name="scf", asname=None)], level=0))
+
     def visit_Module(self, node: ast.Module):
         """Module body: visit each stmt (transform only inside functions in function_names)."""
         new_body = [self.visit(stmt) for stmt in node.body]
+        self._ensure_scf_import(new_body)
         return ast.Module(body=new_body, type_ignores=getattr(node, "type_ignores", []))
 
 

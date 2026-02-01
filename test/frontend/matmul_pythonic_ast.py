@@ -7,7 +7,7 @@ from mlir.ir import (
     Context, Location, InsertionPoint,
     StringAttr,
 )
-from mlir.dialects import func, scf, builtin
+from mlir.dialects import func, builtin
 import pto_frontend as pto
 
 
@@ -158,8 +158,6 @@ def build(
                 # ---- sync: M -> MTE2 ----
                 pto.set_flag(PIPE_M, PIPE_MTE2, EVENT_ID0)
                 pto.wait_flag(PIPE_M, PIPE_MTE2, EVENT_ID0)
-
-                scf.YieldOp([])
 
             # ---- after loop ----
             pto.set_flag(PIPE_M, PIPE_FIX, EVENT_ID0)
