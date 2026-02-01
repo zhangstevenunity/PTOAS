@@ -1,3 +1,5 @@
+// TODO: let ptoas auto-insert `__DAV_C220_VEC__` guard without manual editing
+
 #if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)
 #include "pto/common/pto_instr.hpp"
 using namespace pto;
