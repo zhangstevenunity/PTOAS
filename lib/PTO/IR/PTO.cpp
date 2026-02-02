@@ -2787,9 +2787,9 @@ mlir::LogicalResult mlir::pto::PrintOp_DPS::verify() {
 
   if (!srcTy)
     return emitOpError() << "expects memref types for src";
-  return mlir::success();
-}
-
+    return mlir::success();
+  }
+  
 
 LogicalResult pto::TAbsOp::verify() {
   auto srcTy = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
@@ -4898,11 +4898,15 @@ mlir::LogicalResult mlir::pto::TSYNCOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-
-  if (!srcTy)
-    return emitOpError() << "expects tilebuf types for src";
-  return mlir::success();
+  auto srcType = getSrc().getType();
+  
+  // Support TileBufType and TileViewType
+  if (mlir::dyn_cast<mlir::pto::TileBufType>(srcType) ||
+      mlir::dyn_cast<mlir::pto::TileViewType>(srcType)) {
+    return mlir::success();
+  }
+  
+  return emitOpError() << "expects tile_buf or tile_view types for src";
 }
 
 //===----------------------------------------------------------------------===//
