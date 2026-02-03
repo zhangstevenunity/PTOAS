@@ -37,13 +37,12 @@ jobs:
           key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
 
       - name: Build LLVM/MLIR
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           if [ ! -d llvm-project ]; then
             git clone --filter=blob:none --no-checkout https://github.com/llvm/llvm-project.git
           fi
           cd llvm-project
-          git fetch --depth 1 origin "${LLVM_COMMIT}"
+          git fetch --depth 1 origin "refs/tags/llvmorg-19.1.6:refs/tags/llvmorg-19.1.6"
           git checkout "${LLVM_COMMIT}"
 
           cmake -G Ninja -S llvm -B llvm/build-shared \
