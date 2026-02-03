@@ -27,9 +27,9 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install pybind11 numpy
 
-      # （可选但很推荐）缓存 LLVM build 目录
-      - name: Cache LLVM build
-        uses: actions/cache@v4
+      # 先恢复 LLVM build 缓存
+      - name: Restore LLVM build cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             llvm-project/llvm/build-shared
@@ -52,6 +52,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_TARGETS_TO_BUILD="host"
           ninja -C llvm/build-shared
+
+      # LLVM build 完成后立即保存缓存，避免后续测试影响缓存内容
+      - name: Save LLVM build cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            llvm-project/llvm/build-shared
+          key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
 
       - name: Build PTOAS
         run: |
@@ -77,5 +85,6 @@ jobs:
           PTO_PYTHON_ROOT: ${{ env.PTO_INSTALL_DIR }}/
           PYTHONPATH: ${{ env.MLIR_PYTHON_ROOT }}:${{ env.PTO_PYTHON_ROOT }}
         run: |
+          export PYTHONPATH="${MLIR_PYTHON_ROOT}:${PTO_PYTHON_ROOT}:${PYTHONPATH}"
           export LD_LIBRARY_PATH="${LLVM_DIR}/lib:${PTO_INSTALL_DIR}/lib:${LD_LIBRARY_PATH}"
           bash test/samples/runop.sh all
