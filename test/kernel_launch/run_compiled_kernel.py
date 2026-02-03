@@ -30,16 +30,23 @@ def load_lib(lib_path):
 
 
 def test_add():
-    device = "npu:0"
+    device = "npu:1"
     torch.set_default_device(device)
     torch.npu.set_device(device)
     dtype = torch.float32
 
-    shape = [32, 32]  # shape hard-coded as the kernel
+    torch.set_printoptions(
+        threshold=10000,
+        linewidth=300,
+    )
+
+
+    # NOTE: fails when k=64/128/256
+    m, k, n = 32, 32, 32
     torch.manual_seed(0)
-    a = torch.randn(shape, device=device, dtype=dtype)
-    b = torch.randn(shape, device=device, dtype=dtype)
-    c = torch.zeros(shape, device=device, dtype=dtype)
+    a = torch.rand((m,k), device=device, dtype=dtype)
+    b = torch.rand((k,n), device=device, dtype=dtype)
+    c = torch.zeros((m, n), device=device, dtype=dtype)
 
     relu_func = load_lib("./mul_kernel.so")
     relu_func(c=c, a=a, b=b)
@@ -54,5 +61,8 @@ def test_add():
     print('max diff:')
     print((c-a@b).abs().max())
 
+    print('diff')
+    print(c-a@b)
+    
 if __name__ == "__main__":
     test_add()
