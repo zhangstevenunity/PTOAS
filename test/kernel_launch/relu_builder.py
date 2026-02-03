@@ -1,4 +1,4 @@
-# Adapted from test/samples/Sync/sync.py
+# Adapted from https://github.com/zhangstevenunity/PTOAS/blob/main/test/samples/Sync/sync.py
 
 from mlir.ir import Context, Location, Module, InsertionPoint, Attribute
 from mlir.dialects import func, arith, pto
@@ -15,7 +15,7 @@ def build():
         ptr_f32 = pto.PtrType.get(f32)
 
         tv2_f32 = pto.TensorViewType.get(2, f32)
-        tile_view_32 = pto.TileViewType.get([32, 32], f32)
+        tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32)
         ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB)
         bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor)
         sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox)
@@ -44,8 +44,8 @@ def build():
             tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
             tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
 
-            sv0 = pto.SubviewOp(tile_view_32, tv0, [c0, c0], [c32, c32]).result
-            sv1 = pto.SubviewOp(tile_view_32, tv1, [c0, c0], [c32, c32]).result
+            sv0 = pto.PartitionViewOp(tile_view_32, tv0, [c0, c0], [c32, c32]).result
+            sv1 = pto.PartitionViewOp(tile_view_32, tv1, [c0, c0], [c32, c32]).result
 
             tb0 = pto.AllocTileOp(tile_buf_32).result
             tb1 = pto.AllocTileOp(tile_buf_32).result

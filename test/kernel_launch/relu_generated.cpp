@@ -15,12 +15,12 @@ __global__ AICORE void sync_kernel_2d(__gm__ float* v1, __gm__ float* v2) {
   unsigned v13 = v4 * v12;
   unsigned v14 = v11 + v13;
   __gm__ float* v15 = v1 + v14;
-  using GTShape_142773872 = pto::Shape<32, 32>;
-  using GTStride_142773872 = pto::Stride<32, 1>;
-  GTShape_142773872 v16 = GTShape_142773872();
-  GTStride_142773872 v17 = GTStride_142773872();
-  using GT_142773872 = GlobalTensor<float, GTShape_142773872, GTStride_142773872>;
-  GT_142773872 v18 = GT_142773872(v15, v16, v17);
+  using GTShape_72927360 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_72927360 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_72927360 v16 = GTShape_72927360();
+  GTStride_72927360 v17 = GTStride_72927360();
+  using GT_72927360 = GlobalTensor<float, GTShape_72927360, GTStride_72927360>;
+  GT_72927360 v18 = GT_72927360(v15, v16, v17);
   unsigned v19 = (unsigned) v5;
   unsigned v20 = v4 * v19;
   unsigned v21 = v4 + v20;
@@ -28,12 +28,12 @@ __global__ AICORE void sync_kernel_2d(__gm__ float* v1, __gm__ float* v2) {
   unsigned v23 = v4 * v22;
   unsigned v24 = v21 + v23;
   __gm__ float* v25 = v2 + v24;
-  using GTShape_142774048 = pto::Shape<32, 32>;
-  using GTStride_142774048 = pto::Stride<32, 1>;
-  GTShape_142774048 v26 = GTShape_142774048();
-  GTStride_142774048 v27 = GTStride_142774048();
-  using GT_142774048 = GlobalTensor<float, GTShape_142774048, GTStride_142774048>;
-  GT_142774048 v28 = GT_142774048(v25, v26, v27);
+  using GTShape_72927536 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_72927536 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_72927536 v26 = GTShape_72927536();
+  GTStride_72927536 v27 = GTStride_72927536();
+  using GT_72927536 = GlobalTensor<float, GTShape_72927536, GTStride_72927536>;
+  GT_72927536 v28 = GT_72927536(v25, v26, v27);
   Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> v29;
   TASSIGN(v29, v7);
   Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> v30;
@@ -47,3 +47,5 @@ __global__ AICORE void sync_kernel_2d(__gm__ float* v1, __gm__ float* v2) {
   TSTORE(v28, v30);
   return;
 }
+
+

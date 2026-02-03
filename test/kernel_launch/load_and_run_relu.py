@@ -43,13 +43,8 @@ def test_add():
     torch.npu.synchronize()
 
     y_ref = torch.nn.functional.relu(x)
-    print("first row of y", y[0,:])
-    print("first row of y_ref", y_ref[0,:])
-    torch.testing.assert_close(y[0,:], y_ref[0,:])
-    print("first row equal!")
-
-    print("second row of y", y[1,:])
-    print("second row of y_ref", y_ref[1,:])
+    torch.testing.assert_close(y, y_ref)
+    print("result equal!")
 
 if __name__ == "__main__":
     test_add()
