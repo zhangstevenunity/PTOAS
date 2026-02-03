@@ -16,6 +16,7 @@
 #include "mlir-c/BuiltinTypes.h"
 #include "mlir-c/BuiltinAttributes.h"
 #include "mlir-c/Support.h"
+#include "mlir/IR/BuiltinTypes.h"
 namespace py = pybind11;
 using namespace mlir::python::adaptors;
 
@@ -254,40 +255,53 @@ PYBIND11_MODULE(_pto, m) {
             });
 
     // --------------------------------------------------------------------------
-    // !pto.tensor_view<rank x elem>
+    // !pto.tensor_view<shape x elem>
     // --------------------------------------------------------------------------
     mlir_type_subclass(
         m, "TensorViewType",
         [](MlirType type) -> bool { return mlirPTOTypeIsATensorViewType(type); })
         .def_classmethod(
             "get",
-            [](py::object cls, int64_t rank, MlirType elementType, MlirContext context) -> py::object {
-                MlirType t = mlirPTOTensorViewTypeGet(context, rank, elementType);
+            [](py::object cls, py::object shape_or_rank, MlirType elementType, MlirContext context) -> py::object {
+                std::vector<int64_t> shp;
+                if (py::isinstance<py::int_>(shape_or_rank)) {
+                    auto rank = shape_or_rank.cast<int64_t>();
+                    shp.assign(static_cast<size_t>(rank), mlir::ShapedType::kDynamic);
+                } else {
+                    shp = toInt64Vector(shape_or_rank.cast<py::sequence>());
+                }
+                MlirType t = mlirPTOTensorViewTypeGet(
+                    context, (intptr_t)shp.size(), shp.data(), elementType);
                 return cls.attr("__call__")(t);
             },
-            py::arg("cls"), py::arg("rank"), py::arg("element_type"),
+            py::arg("cls"), py::arg("shape_or_rank"), py::arg("element_type"),
             py::arg("context") = py::none())
         .def_property_readonly(
             "rank",
-            [](MlirType self) -> int64_t {
-                return mlirPTOTensorViewTypeGetRank(self);
-            })
+            [](MlirType self) -> intptr_t { return mlirPTOTensorViewTypeGetRank(self); })
         .def_property_readonly(
             "element_type",
             [](MlirType self) -> MlirType {
                 return mlirPTOTensorViewTypeGetElementType(self);
+            })
+        .def_property_readonly(
+            "shape",
+            [](MlirType self) -> py::list {
+                intptr_t n = 0;
+                const int64_t *data = mlirPTOTensorViewTypeGetShape(self, &n);
+                return shapeToPyList(data, n);
             });
         // --------------------------------------------------------------------------
     // !pto.tile_view<shape x elem>
     // --------------------------------------------------------------------------
     mlir_type_subclass(
-        m, "TileViewType",
-        [](MlirType t) -> bool { return mlirPTOTypeIsATileViewType(t); })
+        m, "PartitionTensorViewType",
+        [](MlirType t) -> bool { return mlirPTOTypeIsAPartitionTensorViewType(t); })
     .def_classmethod(
         "get",
         [](py::object cls, py::sequence shape, MlirType elementType, MlirContext context) -> py::object {
         auto shp = toInt64Vector(shape);
-        MlirType t = mlirPTOTileViewTypeGet(context,
+        MlirType t = mlirPTOPartitionTensorViewTypeGet(context,
                                             (intptr_t)shp.size(),
                                             shp.data(),
                                             elementType);
@@ -297,15 +311,15 @@ PYBIND11_MODULE(_pto, m) {
         py::arg("context") = py::none())
     .def_property_readonly(
         "rank",
-        [](MlirType self) -> intptr_t { return mlirPTOTileViewTypeGetRank(self); })
+        [](MlirType self) -> intptr_t { return mlirPTOPartitionTensorViewTypeGetRank(self); })
     .def_property_readonly(
         "element_type",
-        [](MlirType self) -> MlirType { return mlirPTOTileViewTypeGetElementType(self); })
+        [](MlirType self) -> MlirType { return mlirPTOPartitionTensorViewTypeGetElementType(self); })
     .def_property_readonly(
         "shape",
         [](MlirType self) -> py::list {
         intptr_t n = 0;
-        const int64_t *data = mlirPTOTileViewTypeGetShape(self, &n);
+        const int64_t *data = mlirPTOPartitionTensorViewTypeGetShape(self, &n);
         return shapeToPyList(data, n);
         });
 

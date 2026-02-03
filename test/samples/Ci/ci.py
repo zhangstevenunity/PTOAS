@@ -14,7 +14,7 @@ def build():
             ptr_i32 = pto.PtrType.get(i32, ctx)
 
             tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], i32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -45,7 +45,7 @@ def build():
                 pto.TCIOp(arg1, tb_dst, descending=descending_attr)
 
                 # Use constants for the subview offsets and sizes
-                sv_dst = pto.SubviewOp(tile_view_32, tv_dst, [subview_offset, subview_offset], [subview_size, subview_size]).result
+                sv_dst = pto.PartitionViewOp(tile_view_32, tv_dst, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
                 pto.TStoreOp(None, tb_dst, sv_dst)
 
                 func.ReturnOp([])

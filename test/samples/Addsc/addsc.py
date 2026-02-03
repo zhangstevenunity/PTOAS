@@ -14,7 +14,7 @@ def build():
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], f32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -43,8 +43,8 @@ def build():
                 tv_dst = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
 
                 # Using constants for offsets and sizes in SubviewOp
-                sv_src0 = pto.SubviewOp(tile_view_32, tv_src0, [c0, c0], [c32, c32]).result
-                sv_src1 = pto.SubviewOp(tile_view_32, tv_src1, [c0, c0], [c32, c32]).result
+                sv_src0 = pto.PartitionViewOp(tile_view_32, tv_src0, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv_src1 = pto.PartitionViewOp(tile_view_32, tv_src1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # Allocate tiles
                 tb_src0 = pto.AllocTileOp(tile_buf_32).result
@@ -59,7 +59,7 @@ def build():
                 pto.TAddSCOp(tb_src0, scale, tb_src1, tb_dst)
 
                 # Subview on output tensor view
-                sv_dst = pto.SubviewOp(tile_view_32, tv_dst, [c0, c0], [c32, c32]).result
+                sv_dst = pto.PartitionViewOp(tile_view_32, tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # Store the result
                 pto.TStoreOp(None, tb_dst, sv_dst)

@@ -35,7 +35,7 @@ def TensorOrMemref :
   AnyTypeOf<[AnyMemRef, AnyRankedTensor], "Tensor or Memref">;
 
 def PTODpsType :
-  AnyTypeOf<[AnyRankedTensor, AnyMemRef, TileViewType, TileBufType]>;
+  AnyTypeOf<[AnyRankedTensor, AnyMemRef, PartitionTensorViewType, TileBufType]>;
 
 //===----------------------------------------------------------------------===//
 // Op Class
@@ -45,7 +45,7 @@ class PTO_TOp<string mnemonic, list<Trait> traits = []>
 
 class PTO_DpsOp<string mnemonic, list<Trait> traits = []>
     : Op<PTO_Dialect, mnemonic, traits # [DestinationStyleOpInterface]> {
-  code extraClassDeclaration = [{
+  let extraClassDeclaration = [{
     ::mlir::MutableOperandRange getDpsInitsMutable() {
       return getDstMutable();
     }
@@ -74,16 +74,27 @@ def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
+// =============================================================================
+// PartitionViewOp
+// =============================================================================
+def PartitionViewOp : PTO_Op<"partition_view", [AttrSizedOperandSegments]> {
+  let summary = "Partition a tensor view into a smaller logical view (logical slicing).";
+  let description = [{
+    Captures a specific calculation region from a large view.
+    It carries offsets (where to read) and sizes (how much to read).
+    
+    IR Example:
+      %1 = pto.partition_view %0, offsets=[...], sizes=[...] 
+           : !pto.tensor_view -> !pto.partition_tensor_view
+  }];
 
-def SubviewOp : PTO_Op<"subview", [AttrSizedOperandSegments]> {
-  let summary = "Subview on tensor_view to tile_view (view-only, no copy).";
   let arguments = (ins
-    AnyType:$source,
-    Variadic<Index>:$offsets,
-    Variadic<Index>:$sizes
+    TensorViewType:$source,    // 输入: 物理大底座 (MakeTensorViewOp 的结果)
+    Variadic<Index>:$offsets,  // 动态 offsets
+    Variadic<Index>:$sizes     // 动态 sizes
   );
 
-  let results = (outs AnyType:$result);
+  let results = (outs PartitionTensorViewType:$result); // 输出: 逻辑切片
 
   let assemblyFormat = [{
     $source `,` `offsets` `=` `[` $offsets `]` `,` `sizes` `=` `[` $sizes `]`
@@ -193,14 +204,16 @@ def TLoadOp  : PTO_TOp<"tload", [
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "PTO data load operation (destination-style, DPS) in tile world.";
+  let summary = "PTO data load operation (Dimension Collapse: PartitionView -> TileBuf).";
   let description = [{
+    Loads data from a high-dimensional logical partition view into a 2D physical tile buffer.
+    Constraint: The product of partition view sizes must match the product of tile buffer valid dims.
     DPS form:
-      TileBuf:  pto.tload ins(%src) outs(%dst)
+      pto.tload ins(%partition_view) outs(%tile_buf)
   }];
 
   let arguments = (ins 
-    TileViewType:$src,
+    PartitionTensorViewType:$src,
     TileBufType:$dst,
     OptionalAttr<PTO_PadModeAttr>:$pad_mode,
     Optional<AnyType>:$pad_value,
@@ -297,15 +310,17 @@ def TStoreOp: PTO_TOp<"tstore", [
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "PTO data store operation (destination-style, DPS).";
+  let summary = "PTO data store operation (TileBuf -> PartitionView).";
   let description = [{
+    Stores data from a 2D physical tile buffer back to a high-dimensional logical partition view.
+    
     DPS form:
-      tile buf:  pto.tstore ins(%src) outs(%dst)
+      pto.tstore ins(%tile_buf) outs(%partition_view)
   }];
 
   let arguments = (ins
     TileBufType:$src,
-    TileViewType:$dst
+    PartitionTensorViewType:$dst
   );
 
   let results = (outs
@@ -1681,7 +1696,10 @@ def PTO_MScatterOp : PTO_Op<"mscatter", []> {
 // dst = abs(src) elementwise
 //===----------------------------------------------------------------------===//
 
-def PTO_AbsOp_DPS : PTO_DpsOp<"abs_dps", []> {
+def PTO_AbsOp_DPS : PTO_DpsOp<"abs_dps", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Elementwise absolute value of a tile ";
   let description = [{
     For each element (i, j): dst[i,j] = |src[i,j]|.
@@ -1709,6 +1727,11 @@ def PTO_AbsOp_DPS : PTO_DpsOp<"abs_dps", []> {
     }]>];
 
   let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -1735,9 +1758,16 @@ def PTO_AddOp_DPS : PTO_DpsOp<"add_dps", []> {
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
-  }];
+  }]; 
 
   let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() {
+      return ::mlir::pto::PIPE::PIPE_V;
+    }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
 }
 //===----------------------------------------------------------------------===//
 // TADDC (sync, tilebuf-based tile ternary add)
@@ -2736,7 +2766,10 @@ def PTO_RecipOp_DPS : PTO_DpsOp<"recip_dps", []> {
 // PTOOps.td  (add TRELU DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
 
-def PTO_ReluOp_DPS : PTO_DpsOp<"relu_dps", []> {
+def PTO_ReluOp_DPS : PTO_DpsOp<"relu_dps", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "TRELU: elementwise ReLU (tilebuf, DPS)";
 
   let arguments = (ins
@@ -2752,6 +2785,11 @@ def PTO_ReluOp_DPS : PTO_DpsOp<"relu_dps", []> {
     `ins` `(` $src `:` qualified(type($src)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }
 //===----------------------------------------------------------------------===//
@@ -3386,7 +3424,10 @@ def PTO_XOROp_DPS : PTO_DpsOp<"xor_dps", []> {
 // PTO_TOPs(Tilebuffer, DPS)
 //===----------------------------------------------------------------------===//
 
-def PTO_TAbsOp : PTO_TOp<"tabs", []> {
+def PTO_TAbsOp : PTO_TOp<"tabs", [
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
   let summary = "Elementwise absolute value of a tile ";
   let description = [{
     For each element (i, j): dst[i,j] = |src[i,j]|.
@@ -3407,6 +3448,12 @@ def PTO_TAbsOp : PTO_TOp<"tabs", []> {
   }];
 
   let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() {
+      return ::mlir::pto::PIPE::PIPE_V; // Vector pipe for elementwise ops
+    }
+  }];
 }
 
 def PTO_TAddOp : PTO_TOp<"tadd", [

@@ -38,6 +38,8 @@ target_link_libraries(_pto PRIVATE
 # 关键：放到 mlir/_mlir_libs 下（匹配 MLIR dialect python 的 import 习惯）
 set_target_properties(_pto PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/mlir/_mlir_libs"
+  BUILD_RPATH "${LLVM_BUILD_LIBRARY_DIR}"
+  INSTALL_RPATH "${LLVM_BUILD_LIBRARY_DIR}"
 )
 # macOS: 避免 ld 警告 "-undefined suppress is deprecated"，仅保留 -undefined dynamic_lookup
 if(APPLE)

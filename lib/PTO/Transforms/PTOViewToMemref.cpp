@@ -340,12 +340,12 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
-      // Stage 2: Lower pto.subview -> memref.subview
+      // Stage 2: Lower pto.partition_tensor_view -> memref.subview
       // ------------------------------------------------------------------
-      SmallVector<mlir::pto::SubviewOp, 8> subviews;
-      func.walk([&](mlir::pto::SubviewOp op) { subviews.push_back(op); });
+      SmallVector<mlir::pto::PartitionViewOp, 8> partitiontensorviews;
+      func.walk([&](mlir::pto::PartitionViewOp op) { partitiontensorviews.push_back(op); });
 
-      for (auto op : subviews) {
+      for (auto op : partitiontensorviews) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         Location loc = op.getLoc();

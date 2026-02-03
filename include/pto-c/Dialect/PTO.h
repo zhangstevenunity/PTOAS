@@ -24,21 +24,23 @@ MlirAttribute mlirPTOAddressSpaceAttrGet(MlirContext ctx, int32_t value);
 // Read back enum value (0..6)
 int32_t mlirPTOAddressSpaceAttrGetValue(MlirAttribute attr);
 
-// ---- !pto.tensor_view<rank x elem> ----
+// ---- !pto.tensor_view<shape x elem> ----
 bool mlirPTOTypeIsATensorViewType(MlirType type);
-MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, int64_t rank,
-                                  MlirType elementType);
-int64_t mlirPTOTensorViewTypeGetRank(MlirType type);
+MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, intptr_t rank,
+                                  const int64_t *shape, MlirType elementType);
+intptr_t mlirPTOTensorViewTypeGetRank(MlirType type);
 MlirType mlirPTOTensorViewTypeGetElementType(MlirType type);
-
-// ---- !pto.tile_view<shape x elem> ----
-bool mlirPTOTypeIsATileViewType(MlirType type);
-MlirType mlirPTOTileViewTypeGet(MlirContext ctx, intptr_t rank,
-                                const int64_t *shape, MlirType elementType);
-intptr_t mlirPTOTileViewTypeGetRank(MlirType type);
-MlirType mlirPTOTileViewTypeGetElementType(MlirType type);
 // 返回内部 shape 数组指针（只读）；numDimsOut 返回维度数
-const int64_t *mlirPTOTileViewTypeGetShape(MlirType type, intptr_t *numDimsOut);
+const int64_t *mlirPTOTensorViewTypeGetShape(MlirType type, intptr_t *numDimsOut);
+
+// ---- !pto.partition_tensor_view<shape x elem> ----
+bool mlirPTOTypeIsAPartitionTensorViewType(MlirType type);
+MlirType mlirPTOPartitionTensorViewTypeGet(MlirContext ctx, intptr_t rank,
+                                           const int64_t *shape, MlirType elementType);
+intptr_t mlirPTOPartitionTensorViewTypeGetRank(MlirType type);
+MlirType mlirPTOPartitionTensorViewTypeGetElementType(MlirType type);
+// 返回内部 shape 数组指针（只读）；numDimsOut 返回维度数
+const int64_t *mlirPTOPartitionTensorViewTypeGetShape(MlirType type, intptr_t *numDimsOut);
 
 // ---- !pto.tile<shape x elem> ----
 bool mlirPTOTypeIsATileType(MlirType type);
@@ -78,7 +80,6 @@ typedef enum MlirPTOCmpMode {
 MLIR_CAPI_EXPORTED bool mlirAttributeIsAPTOCmpModeAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOCmpModeAttrGet(MlirContext ctx, MlirPTOCmpMode value);
 MLIR_CAPI_EXPORTED MlirPTOCmpMode mlirPTOCmpModeAttrGetValue(MlirAttribute attr);
-
 // ---- TileBufConfigAttr ----
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsATileBufConfigAttr(MlirAttribute attr);
 

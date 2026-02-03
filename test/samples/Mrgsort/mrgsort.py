@@ -13,15 +13,16 @@ def build():
             f32 = F32Type.get(ctx)
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
-            tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], f32, ctx)
+            # Mergesort on a 32x32 tile (flattened to a 1x1024 list for TMrgSort)
+            tv2_f32 = pto.TensorViewType.get([32, 32], f32, ctx)
+            part_view_32x32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
-            tile_buf_32 = pto.TileBufType.get([1, 256], f32, ub, [1, 256], cfg, ctx)
+            tile_buf_1x1024 = pto.TileBufType.get([1, 1024], f32, ub, [1, 1024], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
@@ -37,23 +38,23 @@ def build():
 
                 arg0, arg1 = entry.arguments
 
-                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c1,%c256] strides=[%c256,%c1]
-                tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c1, c256], [c256, c1]).result
-                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c1, c256], [c256, c1]).result
+                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c256,%c1]
+                tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c256, c1]).result
+                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c256, c1]).result
 
-                # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[%c1,%c256]
-                sv0 = pto.SubviewOp(tile_view_32, tv0, [c0, c0], [c1, c256]).result
+                # %3/%4/%8 = pto.partition_view %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
+                sv0 = pto.PartitionViewOp(part_view_32x32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
 
-                # %5/%6/%7 = pto.alloc_tile : <1x256xf32>
-                tb0 = pto.AllocTileOp(tile_buf_32).result
-                tb1 = pto.AllocTileOp(tile_buf_32).result
+                # %5/%6/%7 = pto.alloc_tile : <1x1024xf32>
+                tb0 = pto.AllocTileOp(tile_buf_1x1024).result
+                tb1 = pto.AllocTileOp(tile_buf_1x1024).result
 
                 pto.TLoadOp(None, sv0, tb0)  # result=None
 
                 pto.TMrgSortOp(tb0, tb1, 64)
 
-                # %8 = subview on output tensor_view
-                sv1 = pto.SubviewOp(tile_view_32, tv1, [c0, c0], [c32, c32]).result
+                # %8 = partition_view on output tensor_view
+                sv1 = pto.PartitionViewOp(part_view_32x32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # pto.store_dps_tb ins(%tb1) outs(%sv1)
                 pto.TStoreOp(None, tb1, sv1)

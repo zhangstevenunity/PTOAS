@@ -18,8 +18,8 @@ def build():
             ptr_i8 = pto.PtrType.get(i8, ctx)
             tv2_i8 = pto.TensorViewType.get(2, i8, ctx)
 
-            tile_view_f32 = pto.TileViewType.get([32, 32], f32, ctx)
-            tile_view_i8 = pto.TileViewType.get([32, 32], i8, ctx)
+            tile_view_f32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
+            tile_view_i8 = pto.PartitionTensorViewType.get([32, 32], i8, ctx)
 
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
@@ -50,9 +50,9 @@ def build():
                 tv3 = pto.MakeTensorViewOp(tv2_f32, arg3, [c32, c32], [c32, c1]).result
 
                 # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[32,32]
-                sv0 = pto.SubviewOp(tile_view_i8, tv0, [c0, c0], [c32, c32]).result
-                sv1 = pto.SubviewOp(tile_view_f32, tv1, [c0, c0], [c32, c32]).result
-                sv2 = pto.SubviewOp(tile_view_f32, tv2, [c0, c0], [c32, c32]).result
+                sv0 = pto.PartitionViewOp(tile_view_i8, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv1 = pto.PartitionViewOp(tile_view_f32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv2 = pto.PartitionViewOp(tile_view_f32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_i8).result
@@ -69,7 +69,7 @@ def build():
                 pto.TSelOp(tb0, tb1, tb2, tb3)
 
                 # %8 = subview on output tensor_view
-                sv3 = pto.SubviewOp(tile_view_f32, tv3, [c0, c0], [c32, c32]).result
+                sv3 = pto.PartitionViewOp(tile_view_f32, tv3, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # pto.store_dps_tb ins(%tb2) outs(%sv2)
                 pto.TStoreOp(None, tb3, sv3)

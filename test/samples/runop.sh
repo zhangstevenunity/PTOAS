@@ -89,12 +89,10 @@ has_exact_file() {
 process_one_dir() {
   local A="$1" # folder name (e.g. Abs)
   local out_dir="$2"
-  local dir py mlir cpp ptoas python out_subdir
+  local dir ptoas python out_subdir
   dir="${BASE_DIR}/${A}"
   out_subdir="${out_dir}/${A}"
   mkdir -p "${out_subdir}"
-  mlir="${out_subdir}/$(lcfirst "$A")-pto-ir.pto"
-  cpp="${out_subdir}/$(lcfirst "$A")-pto.cpp"
 
   ptoas="$(resolve_ptoas_bin)"
   python="$(resolve_python_bin)"
@@ -112,25 +110,41 @@ process_one_dir() {
     return 0
   fi
 
-  py="${dir}/$(lcfirst "$A").py"
-  if ! has_exact_file "$dir" "$(basename "$py")"; then
-    echo -e "${A}\tSKIP\tMissing python: $(basename "$py")"
-    return 0
+  # Some folders host multiple scripts; enumerate explicitly.
+  local files=()
+  if [[ "$A" == "Partition5D" ]]; then
+    files=("partition5d.py" "partition5d_dynamic.py")
+  else
+    files=("$(lcfirst "$A").py")
   fi
 
-  if ! "$python" "$py" > "$mlir"; then
-    echo -e "${A}\tFAIL\tpython failed: $(basename "$py")"
-    return 0
-  fi
+  local f mlir cpp base overall=0
+  for f in "${files[@]}"; do
+    if ! has_exact_file "$dir" "$f"; then
+      echo -e "${A}(${f})\tSKIP\tMissing python: ${f}"
+      continue
+    fi
+    base="${f%.py}"
+    mlir="${out_subdir}/${base}-pto-ir.pto"
+    cpp="${out_subdir}/${base}-pto.cpp"
 
-  # Write output via -o to avoid mixing debug prints with generated C++.
-  if ! "$ptoas" "$mlir" -o "$cpp" >/dev/null 2>&1; then
-    echo -e "${A}\tFAIL\tptoas failed: $(basename "$mlir")"
-    return 0
-  fi
+    if ! "$python" "${dir}/${f}" > "$mlir"; then
+      echo -e "${A}(${f})\tFAIL\tpython failed: ${f}"
+      overall=1
+      continue
+    fi
 
-  echo -e "${A}\tOK\tgenerated: $(basename "$cpp")"
-  return 0
+    # Write output via -o to avoid mixing debug prints with generated C++.
+    if ! "$ptoas" "$mlir" -o "$cpp" >/dev/null 2>&1; then
+      echo -e "${A}(${f})\tFAIL\tptoas failed: $(basename "$mlir")"
+      overall=1
+      continue
+    fi
+
+    echo -e "${A}(${f})\tOK\tgenerated: $(basename "$cpp")"
+  done
+
+  return $overall
 }
 
 run_all() {

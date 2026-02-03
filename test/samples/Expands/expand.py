@@ -14,7 +14,7 @@ def build():
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], f32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -42,7 +42,7 @@ def build():
                 pto.TExpandsOp(scale, tb1)
 
                 # Using constant c32 for subview size
-                sv1 = pto.SubviewOp(tile_view_32, tv1, [c0, c0], [c32, c32]).result
+                sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
                 pto.TStoreOp(None, tb1, sv1)
 
                 func.ReturnOp([])

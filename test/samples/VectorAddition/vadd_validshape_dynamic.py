@@ -14,7 +14,7 @@ def build():
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], f32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -56,8 +56,8 @@ def build():
                 tv2 = pto.MakeTensorViewOp(tv2_f32, arg2, [c32, c32], [c32, c1]).result
 
                 # Subviews
-                sv0 = pto.SubviewOp(tile_view_32, tv0, [c0, c0], [c32, c32]).result
-                sv1 = pto.SubviewOp(tile_view_32, tv1, [c0, c0], [c32, c32]).result
+                sv0 = pto.PartitionViewOp(tile_view_32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # [修改] AllocTileOp 使用动态参数
                 # 对应 MLIR: %5 = pto.alloc_tile valid_row=%v_row valid_col=%v_col : <..., v_row=?, v_col=?>
@@ -74,7 +74,7 @@ def build():
 
                 pto.TAddOp(tb0, tb1, tb2)
 
-                sv2 = pto.SubviewOp(tile_view_32, tv2, [c0, c0], [c32, c32]).result
+                sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
                 pto.TStoreOp(None, tb2, sv2)
 
                 func.ReturnOp([])

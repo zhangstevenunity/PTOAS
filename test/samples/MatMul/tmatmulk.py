@@ -55,10 +55,10 @@ def build(
         tv2_bias = pto.TensorViewType.get(2, t_bias)  # [1, validN]
 
         # ---- tile view types ----
-        tile_view_a = pto.TileViewType.get([M, BASEK], t_a)
-        tile_view_b = pto.TileViewType.get([BASEK, N], t_b)
-        tile_view_out = pto.TileViewType.get([M, N], t_out)
-        tile_view_bias = pto.TileViewType.get([1, N], t_bias)
+        tile_view_a = pto.PartitionTensorViewType.get([M, BASEK], t_a)
+        tile_view_b = pto.PartitionTensorViewType.get([BASEK, N], t_b)
+        tile_view_out = pto.PartitionTensorViewType.get([M, N], t_out)
+        tile_view_bias = pto.PartitionTensorViewType.get([1, N], t_bias)
 
         # ---- address spaces ----
         mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT)
@@ -191,9 +191,9 @@ def build(
                 kOff = arith.MulIOp(i, cBASEK).result
 
                 # subviews for this split-K
-                svA = pto.SubviewOp(tile_view_a, tvA, [c0, kOff], [cTileM, cBASEK]).result
-                svB = pto.SubviewOp(tile_view_b, tvB, [kOff, c0], [cBASEK, cTileN]).result
-                svBias = pto.SubviewOp(tile_view_bias, tvBias, [c0, c0], [cOne, cTileN]).result
+                svA = pto.PartitionViewOp(tile_view_a, tvA, offsets=[c0, kOff], sizes=[cTileM, cBASEK]).result
+                svB = pto.PartitionViewOp(tile_view_b, tvB, offsets=[kOff, c0], sizes=[cBASEK, cTileN]).result
+                svBias = pto.PartitionViewOp(tile_view_bias, tvBias, offsets=[c0, c0], sizes=[cOne, cTileN]).result
 
                 # ---- TLOAD ----
                 # 注意：TLOAD 的 valid dims 一般对应目标 tile 的有效区域（a/b/bias）
@@ -263,7 +263,7 @@ def build(
 
             # ---- TSTORE ----
             # 写回 OUT，传 C 的 valid dims
-            svOut = pto.SubviewOp(tile_view_out, tvOut, [c0, c0], [cTileM, cTileN]).result
+            svOut = pto.PartitionViewOp(tile_view_out, tvOut, offsets=[c0, c0], sizes=[cTileM, cTileN]).result
             pto.TStoreOp(None, cTile, svOut)
 
             func.ReturnOp([])
@@ -274,4 +274,3 @@ def build(
 if __name__ == "__main__":
     m = build()
     print(m)
-

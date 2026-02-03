@@ -619,54 +619,83 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         elemTypeStr = "int64_t";
     }
 
-    // 2. 生成 Shape 模板参数
-    std::string shapeParams;
+    // 2. 生成 Shape 模板参数，之后会右对齐有效维度并补齐到 5 维（高维填 1）
+    SmallVector<std::string> shapeParamsVec;
     auto resShape = resTy.getShape();
     for (int i = 0; i < resTy.getRank(); ++i) {
-        if (i > 0) shapeParams += ", ";
         if (resShape[i] == ShapedType::kDynamic) {
-            shapeParams += "-1";
+            shapeParamsVec.push_back("-1");
         } else {
-            shapeParams += std::to_string(resShape[i]);
+            shapeParamsVec.push_back(std::to_string(resShape[i]));
         }
     }
 
-    // 3. 生成 Stride 模板参数 & 收集动态 Stride 变量
-    std::string strideParams;
+    // 3. 生成 Stride 动态值收集（保留，用于动态 stride 传参）
+    SmallVector<std::string> dummyStrideVec;
     auto subViewSteps = op.getMixedStrides();
-
     for (int i = 0; i < rank; ++i) {
-        if (i > 0) strideParams += ", ";
         int64_t finalStride = 1;
         bool isDynamic = false;
-
-        // 检查 Source Stride
         if (i < (int)sourceStrides.size()) {
             if (auto val = extractStaticInt(sourceStrides[i])) {
                 finalStride = *val;
             } else {
                 isDynamic = true;
-                // 这是一个动态 Stride Value，收集它
                 if (auto v = sourceStrides[i].dyn_cast<Value>()) {
                     dynamicStrideValues.push_back(rewriter.getRemappedValue(v));
                 }
             }
         }
-        
-        // 叠加 SubView 的 Step (通常是静态的)
         if (i < (int)subViewSteps.size()) {
-             if (auto val = extractStaticInt(subViewSteps[i])) {
-                 finalStride *= *val;
-             }
-             // 如果 step 也是动态的 (极少见)，这里暂未处理收集逻辑，默认乘法会由模板处理
+            if (auto val = extractStaticInt(subViewSteps[i])) {
+                finalStride *= *val;
+            }
         }
-
-        if (isDynamic) {
-            strideParams += "-1";
-        } else {
-            strideParams += std::to_string(finalStride);
-        }
+        dummyStrideVec.push_back(isDynamic ? "-1" : std::to_string(finalStride));
     }
+
+    // 3.1 右对齐有效维度，前部补 1；再按连续规则重新推导 5 维 stride
+    // 选择“有效”维度（非 1 或 动态），右对齐到 5 维尾部
+    SmallVector<std::string, 5> finalShape(5, "1");
+    SmallVector<std::string> effectiveDims;
+    for (const auto &d : shapeParamsVec) {
+        if (d != "1")
+            effectiveDims.push_back(d);
+    }
+    int eff = std::min<int>(effectiveDims.size(), 5);
+    int shift = 5 - eff;
+    for (int i = 0; i < eff; ++i) {
+        finalShape[shift + i] = effectiveDims[effectiveDims.size() - eff + i];
+    }
+
+    SmallVector<std::string, 5> finalStride(5, "1");
+
+    auto mulOrDyn = [](const std::string &a, const std::string &b) -> std::string {
+        if (a == "-1" || b == "-1")
+            return "-1";
+        int64_t va = 1, vb = 1;
+        (void)llvm::to_integer(a, va);
+        (void)llvm::to_integer(b, vb);
+        return std::to_string(va * vb);
+    };
+
+    // 最低维 stride 固定为 1（或动态）
+    finalStride[4] = (finalShape[4] == "-1") ? "-1" : "1";
+    for (int i = 3; i >= 0; --i) {
+        finalStride[i] = mulOrDyn(finalStride[i + 1], finalShape[i + 1]);
+    }
+
+    auto joinParams = [](llvm::ArrayRef<std::string> vec) {
+        std::string out;
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) out += ", ";
+            out += vec[i];
+        }
+        return out;
+    };
+
+    std::string shapeParams = joinParams(finalShape);
+    std::string strideParams = joinParams(finalStride);
 
     // 4. 发射 typedef 语句
     rewriter.create<emitc::VerbatimOp>(loc, "using " + shapeTypeName + " = pto::Shape<" + shapeParams + ">;");
@@ -1930,6 +1959,8 @@ struct PTOCmpToEmitC : public OpConversionPattern<pto::CmpOp_DPS> {
      auto modeTy = emitc::OpaqueType::get(ctx, "auto");
     Value modeVal = rewriter.create<emitc::ConstantOp>(
         loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
+
+    auto argsAttr = rewriter.getArrayAttr({});
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc,

@@ -138,7 +138,7 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     else if (auto bindTileOp = dyn_cast<pto::BindTileOp>(op)) {
       UpdateAliasBufferInfo(bindTileOp.getResult(), bindTileOp.getSource());
     }
-    else if (auto subViewOp = dyn_cast<pto::SubviewOp>(op)) {
+    else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
       UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
     } 
     else if (auto memrefSubView = dyn_cast<memref::SubViewOp>(op)) {

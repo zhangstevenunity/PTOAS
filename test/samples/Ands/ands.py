@@ -14,7 +14,7 @@ def build():
             ptr_i32 = pto.PtrType.get(i32, ctx)
 
             tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], i32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -43,7 +43,7 @@ def build():
 
                 # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
                 # 这里修改了立即数为常量 c0 和 c32
-                sv_src = pto.SubviewOp(tile_view_32, tv_src, [c0, c0], [c32, c32]).result
+                sv_src = pto.PartitionViewOp(tile_view_32, tv_src, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xi32>
                 tb_src = pto.AllocTileOp(tile_buf_32).result
@@ -54,7 +54,7 @@ def build():
                 pto.TAndSOp(tb_src, scale, tb_dst)
 
                 # %8 = subview on output tensor_view
-                sv_dst = pto.SubviewOp(tile_view_32, tv_dst, [c0, c0], [c32, c32]).result
+                sv_dst = pto.PartitionViewOp(tile_view_32, tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # pto.store_dps_tb ins(%tb1) outs(%sv1)
                 pto.TStoreOp(None, tb_dst, sv_dst)

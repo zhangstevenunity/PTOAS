@@ -14,7 +14,7 @@ def build():
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_f32 = pto.TileViewType.get([32, 32], f32, ctx)
+            tile_view_f32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -27,7 +27,7 @@ def build():
             ptr_i32 = pto.PtrType.get(i32, ctx)
 
             tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_i32 = pto.TileViewType.get([32, 32], i32, ctx)
+            tile_view_i32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
             tile_buf_i32 = pto.TileBufType.get([32, 32], i32, ub, [32, 32], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_i32], [])
@@ -52,8 +52,8 @@ def build():
                 tv2 = pto.MakeTensorViewOp(tv2_i32, arg2, [c32, c32], [c32, c1]).result
 
                 # Use constants for subview offsets and sizes
-                sv0 = pto.SubviewOp(tile_view_f32, tv0, [subview_offset, subview_offset], [subview_size, subview_size]).result
-                sv1 = pto.SubviewOp(tile_view_f32, tv1, [subview_offset, subview_offset], [subview_size, subview_size]).result
+                sv0 = pto.PartitionViewOp(tile_view_f32, tv0, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
+                sv1 = pto.PartitionViewOp(tile_view_f32, tv1, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
 
                 tb0 = pto.AllocTileOp(tile_buf_f32).result
                 tb1 = pto.AllocTileOp(tile_buf_f32).result
@@ -64,7 +64,7 @@ def build():
 
                 pto.TCmpOp(tb0, tb1, tb2)
 
-                sv2 = pto.SubviewOp(tile_view_i32, tv2, [subview_offset, subview_offset], [subview_size, subview_size]).result
+                sv2 = pto.PartitionViewOp(tile_view_i32, tv2, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
 
                 pto.TStoreOp(None, tb2, sv2)
 

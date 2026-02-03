@@ -25,6 +25,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
@@ -34,6 +35,20 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+
+// Forward declarations for custom shape/type printers used by tensor_view and
+// partition_tensor_view.
+namespace mlir {
+namespace pto {
+static LogicalResult parseShapeAndElem(AsmParser &parser,
+                                       SmallVectorImpl<int64_t> &shape,
+                                       Type &elementType,
+                                       bool allowDynamic = true);
+static void printShapeAndElem(AsmPrinter &printer,
+                              ArrayRef<int64_t> shape,
+                              Type elementType);
+} // namespace pto
+} // namespace mlir
 
 // =============================================================================
 // TileBufType 的自定义 Shape 解析与打印函数
@@ -98,10 +113,13 @@ static int64_t getPTOTypeRank(Type type) {
   }
   
   // 2. 处理 PTO 自定义类型
+  if (auto tvTy = dyn_cast<pto::TensorViewType>(type))
+    return tvTy.getRank();
+
   if (auto tileTy = dyn_cast<pto::TileType>(type))
     return tileTy.getRank();
     
-  if (auto tileViewTy = dyn_cast<pto::TileViewType>(type))
+  if (auto tileViewTy = dyn_cast<pto::PartitionTensorViewType>(type))
     return tileViewTy.getRank();
 
   if (auto tileBufTy = dyn_cast<pto::TileBufType>(type))
@@ -147,7 +165,7 @@ static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
     mlir::Type elem;
     if (failed(parseShapeElemForOpParser(shape, elem)))
       return mlir::Type();
-    return mlir::pto::TileViewType::get(ctx, shape, elem);
+    return mlir::pto::PartitionTensorViewType::get(ctx, shape, elem);
   }
 
   if (head == "pto.tile") {
@@ -168,17 +186,11 @@ static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
   }
 
   if (head == "pto.tensor_view") {
-    if (failed(parser.parseLess()))
-      return mlir::Type();
-    int64_t rank = 0;
-    if (failed(parser.parseInteger(rank)))
-      return mlir::Type();
-    if (failed(parser.parseKeyword("x")))
-      return mlir::Type();
+    llvm::SmallVector<int64_t, 4> shape;
     mlir::Type elem;
-    if (failed(parser.parseType(elem)) || failed(parser.parseGreater()))
+    if (failed(parseShapeElemForOpParser(shape, elem)))
       return mlir::Type();
-    return mlir::pto::TensorViewType::get(ctx, rank, elem);
+    return mlir::pto::TensorViewType::get(ctx, shape, elem);
   }
 
   return mlir::Type();
@@ -219,45 +231,15 @@ void LoadOp::print(OpAsmPrinter &p) {
 }
 
 mlir::Type TensorViewType::parse(::mlir::AsmParser &parser) {
-  MLIRContext *ctx = parser.getContext();
-
-  if (failed(parser.parseLess()))
+  SmallVector<int64_t, 4> shape;
+  Type elementType;
+  if (failed(parseShapeAndElem(parser, shape, elementType, /*allowDynamic=*/true)))
     return Type();
-
-  int64_t rank = 0;
-  if (failed(parser.parseInteger(rank)))
-    return Type();
-
-  if (succeeded(parser.parseOptionalKeyword("x"))) {
-    Type elementType;
-    if (failed(parser.parseType(elementType)) || failed(parser.parseGreater()))
-      return Type();
-    return TensorViewType::get(ctx, rank, elementType);
-  }
-
-  llvm::StringRef kw;
-  if (failed(parser.parseKeyword(&kw)))
-    return Type();
-
-  if (!kw.starts_with("x"))
-    return Type();
-
-  llvm::StringRef rest = kw.drop_front(); 
-  if (rest.empty())
-    return Type();
-
-  Type elementType = mlir::parseType(rest, ctx);
-  if (!elementType)
-    return Type();
-
-  if (failed(parser.parseGreater()))
-    return Type();
-
-  return TensorViewType::get(ctx, rank, elementType);
+  return TensorViewType::get(parser.getContext(), shape, elementType);
 }
 
 void TensorViewType::print(::mlir::AsmPrinter &printer) const {
-  printer << "<" << getRank() << "x" << getElementType() << ">";
+  printShapeAndElem(printer, getShape(), getElementType());
 }
 
 //===----------------------------------------------------------------------===//
@@ -643,14 +625,43 @@ LogicalResult LoadDpsOp::verify() {
 }
 
 LogicalResult TLoadOp ::verify() {
-  Type srcType = getSrc().getType();
-  
-  int64_t rank = getPTOTypeRank(srcType);
+  auto srcType = dyn_cast<pto::PartitionTensorViewType>(getSrc().getType());
+  if (!srcType)
+    return emitOpError("expects src to be !pto.partition_tensor_view, got ")
+           << getSrc().getType();
 
-  if (rank == -1) {
-    return emitOpError("source type ") << srcType << " does not support PTO type";
+  auto dstType = dyn_cast<pto::TileBufType>(getDst().getType());
+  if (!dstType)
+    return emitOpError("expects dst to be !pto.tile_buf, got ")
+           << getDst().getType();
+
+  // TileBuf must always be 2D for PTO hardware tiles.
+  if (dstType.getShape().size() != 2)
+    return emitOpError("dst tile_buf rank must be 2, got ")
+           << dstType.getShape().size();
+  if (dstType.getValidShape().size() != 2)
+    return emitOpError("dst tile_buf valid_shape rank must be 2, got ")
+           << dstType.getValidShape().size();
+
+  // Only check element counts when both sides are statically known.
+  int64_t partElems = srcType.getNumElements();
+  int64_t tileValidElems = mlir::ShapedType::kDynamic;
+  if (!llvm::is_contained(dstType.getValidShape(),
+                          mlir::ShapedType::kDynamic)) {
+    tileValidElems = 1;
+    for (int64_t dim : dstType.getValidShape())
+      tileValidElems *= dim;
   }
-  
+
+  if (partElems != mlir::ShapedType::kDynamic &&
+      tileValidElems != mlir::ShapedType::kDynamic &&
+      partElems != tileValidElems) {
+    return emitOpError("partition element count (")
+           << partElems
+           << ") must match tile_buf valid element count ("
+           << tileValidElems << ")";
+  }
+
   return success();
 }
 
@@ -688,7 +699,7 @@ LogicalResult mlir::pto::LoadOp::inferReturnTypes(
     return success();
   }
 
-  if (auto tv = dyn_cast<mlir::pto::TileViewType>(srcTy)) {
+  if (auto tv = dyn_cast<mlir::pto::PartitionTensorViewType>(srcTy)) {
     SmallVector<int64_t, 4> shape;
     shape.append(tv.getShape().begin(), tv.getShape().end());
     inferredReturnTypes.push_back(
@@ -2787,9 +2798,9 @@ mlir::LogicalResult mlir::pto::PrintOp_DPS::verify() {
 
   if (!srcTy)
     return emitOpError() << "expects memref types for src";
-  return mlir::success();
-}
-
+    return mlir::success();
+  }
+  
 
 LogicalResult pto::TAbsOp::verify() {
   auto srcTy = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
@@ -2823,14 +2834,14 @@ LogicalResult pto::TAbsOp::verify() {
 
 static bool isPTOShapedLike(Type ty) {
   return ty.isa<MemRefType, RankedTensorType,
-                pto::TileBufType, pto::TileViewType>();
+                pto::TileBufType, pto::PartitionTensorViewType>();
 }
 
 static Type getElemTy(Type ty) {
   if (auto mr = ty.dyn_cast<MemRefType>()) return mr.getElementType();
   if (auto tt = ty.dyn_cast<RankedTensorType>()) return tt.getElementType();
   if (auto tb = ty.dyn_cast<pto::TileBufType>()) return tb.getElementType();
-  if (auto tv = ty.dyn_cast<pto::TileViewType>()) return tv.getElementType();
+  if (auto tv = ty.dyn_cast<pto::PartitionTensorViewType>()) return tv.getElementType();
   return Type();
 }
 
@@ -2842,7 +2853,7 @@ static SmallVector<int64_t, 4> getShapeVec(Type ty) {
     return SmallVector<int64_t,4>(tt.getShape().begin(), tt.getShape().end());
   if (auto tb = ty.dyn_cast<pto::TileBufType>())
     return SmallVector<int64_t,4>(tb.getShape().begin(), tb.getShape().end());
-  if (auto tv = ty.dyn_cast<pto::TileViewType>())
+  if (auto tv = ty.dyn_cast<pto::PartitionTensorViewType>())
     return SmallVector<int64_t,4>(tv.getShape().begin(), tv.getShape().end());
   return {};
 }
@@ -3683,15 +3694,15 @@ mlir::LogicalResult mlir::pto::TMovFPOp::verify() {
 static int64_t getRankHelper(Type t) {
   if (auto s = dyn_cast<ShapedType>(t)) return s.getRank();
   if (auto tile = dyn_cast<pto::TileBufType>(t)) return tile.getRank();
-  if (auto view = dyn_cast<pto::TileViewType>(t)) return view.getRank();
+  if (auto view = dyn_cast<pto::PartitionTensorViewType>(t)) return view.getRank();
   return -1;
 }
 
 static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type dstTy, bool checkRank = true) {
   // 1. 检查类型 (ShapedType 或 Tile 类型)
-  bool aValid = isa<ShapedType, pto::TileBufType, pto::TileViewType>(aTy);
-  bool bValid = isa<ShapedType, pto::TileBufType, pto::TileViewType>(bTy);
-  bool dValid = isa<ShapedType, pto::TileBufType, pto::TileViewType>(dstTy);
+  bool aValid = isa<ShapedType, pto::TileBufType, pto::PartitionTensorViewType>(aTy);
+  bool bValid = isa<ShapedType, pto::TileBufType, pto::PartitionTensorViewType>(bTy);
+  bool dValid = isa<ShapedType, pto::TileBufType, pto::PartitionTensorViewType>(dstTy);
 
   if (!aValid || !bValid || !dValid)
     return op->emitOpError("expects inputs/outputs to be shaped types or PTO tile types");
@@ -4898,11 +4909,15 @@ mlir::LogicalResult mlir::pto::TSYNCOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TPrintOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-
-  if (!srcTy)
-    return emitOpError() << "expects tilebuf types for src";
-  return mlir::success();
+  auto srcType = getSrc().getType();
+  
+  // Support TileBufType and PartitionTensorViewType (replaces legacy TileView).
+  if (mlir::dyn_cast<mlir::pto::TileBufType>(srcType) ||
+      mlir::dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
+    return mlir::success();
+  }
+  
+  return emitOpError() << "expects tile_buf or partition_tensor_view types for src";
 }
 
 //===----------------------------------------------------------------------===//
@@ -5403,7 +5418,7 @@ namespace pto {
 static LogicalResult parseShapeAndElem(AsmParser &parser,
                                        SmallVectorImpl<int64_t> &shape,
                                        Type &elementType,
-                                       bool allowDynamic = true) {
+                                       bool allowDynamic) {
   if (parser.parseLess())
     return failure();
 
@@ -5434,16 +5449,20 @@ static void printShapeAndElem(AsmPrinter &printer,
   printer << ">";
 }
 
-// ---- TileViewType ----
-Type TileViewType::parse(AsmParser &parser) {
+// =============================================================================
+// PartitionTensorViewType Implementation
+// =============================================================================
+
+Type PartitionTensorViewType::parse(AsmParser &parser) {
   SmallVector<int64_t, 4> shape;
   Type elemTy;
   if (failed(parseShapeAndElem(parser, shape, elemTy, /*allowDynamic=*/true)))
     return Type();
-  return TileViewType::get(parser.getContext(), shape, elemTy);
+  
+  return PartitionTensorViewType::get(parser.getContext(), shape, elemTy);
 }
 
-void TileViewType::print(AsmPrinter &printer) const {
+void PartitionTensorViewType::print(AsmPrinter &printer) const {
   printShapeAndElem(printer, getShape(), getElementType());
 }
 
@@ -5843,7 +5862,14 @@ void AddFDpsOp::getEffects(
   addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
- 
+
+// AbsDpsOp: Read src -> Write dst
+void AbsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
 // 6. MovDpsOp
 void MovDpsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
@@ -5860,6 +5886,14 @@ void TLoadOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffec
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
+// === TAbsOp ===
+// Read: src, Write: dst
+void TAbsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
 // === TStoreOp ===
 // Read: src, Write: dst (GM)
 void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
@@ -5870,6 +5904,14 @@ void TStoreOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffe
 // === TMovOp ===
 // Read: src, Write: dst
 void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === ReluOp_DPS ===
+// Read: src, Write: dst
+void ReluOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }

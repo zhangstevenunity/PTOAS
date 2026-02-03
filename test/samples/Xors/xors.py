@@ -14,7 +14,7 @@ def build():
             ptr_i32 = pto.PtrType.get(i32, ctx)
 
             tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_32 = pto.TileViewType.get([32, 32], i32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
             ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -42,7 +42,7 @@ def build():
                 tv_dst = pto.MakeTensorViewOp(tv2_i32, arg1, [c32, c32], [c32, c1]).result
 
                 # input subview
-                sv_src = pto.SubviewOp(tile_view_32, tv_src, [c0, c0], [c32, c32]).result
+                sv_src = pto.PartitionViewOp(tile_view_32, tv_src, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # alloc tiles: src, dst
                 tb_src = pto.AllocTileOp(tile_buf_32).result
@@ -53,7 +53,7 @@ def build():
                 pto.TXORSOp(tb_src, scale, tb_dst)
 
                 # output subview
-                sv_dst = pto.SubviewOp(tile_view_32, tv_dst, [c0, c0], [c32, c32]).result
+                sv_dst = pto.PartitionViewOp(tile_view_32, tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # store result in destination
                 pto.TStoreOp(None, tb_dst, sv_dst)

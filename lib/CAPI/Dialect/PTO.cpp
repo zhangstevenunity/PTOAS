@@ -63,23 +63,24 @@ int32_t mlirPTOAddressSpaceAttrGetValue(MlirAttribute attr) {
 }
 
 //===----------------------------------------------------------------------===//
-// Type queries / constructors for !pto.tensor_view<rank x elem>
+// Type queries / constructors for !pto.tensor_view<shape x elem>
 //===----------------------------------------------------------------------===//
 
 bool mlirPTOTypeIsATensorViewType(MlirType type) {
   return isa<mlir::pto::TensorViewType>(unwrap(type));
 }
 
-MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, int64_t rank,
-                                  MlirType elementType) {
+MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, intptr_t rank,
+                                  const int64_t *shape, MlirType elementType) {
   auto c = unwrap(ctx);
   auto elem = unwrap(elementType);
-  return wrap(mlir::pto::TensorViewType::get(c, rank, elem));
+  llvm::ArrayRef<int64_t> shp(shape, static_cast<size_t>(rank));
+  return wrap(mlir::pto::TensorViewType::get(c, shp, elem));
 }
 
-int64_t mlirPTOTensorViewTypeGetRank(MlirType type) {
+intptr_t mlirPTOTensorViewTypeGetRank(MlirType type) {
   auto t = cast<mlir::pto::TensorViewType>(unwrap(type));
-  return t.getRank();
+  return static_cast<intptr_t>(t.getShape().size());
 }
 
 MlirType mlirPTOTensorViewTypeGetElementType(MlirType type) {
@@ -87,34 +88,41 @@ MlirType mlirPTOTensorViewTypeGetElementType(MlirType type) {
   return wrap(t.getElementType());
 }
 
+const int64_t *mlirPTOTensorViewTypeGetShape(MlirType type, intptr_t *numDimsOut) {
+  auto t = cast<mlir::pto::TensorViewType>(unwrap(type));
+  auto shape = t.getShape();
+  *numDimsOut = static_cast<intptr_t>(shape.size());
+  return shape.data();
+}
+
 //===----------------------------------------------------------------------===//
 // !pto.tile_view<shape x elem>
 //===----------------------------------------------------------------------===//
 
-bool mlirPTOTypeIsATileViewType(MlirType type) {
-  return isa<mlir::pto::TileViewType>(unwrap(type));
+bool mlirPTOTypeIsAPartitionTensorViewType(MlirType type) {
+  return isa<mlir::pto::PartitionTensorViewType>(unwrap(type));
 }
 
-MlirType mlirPTOTileViewTypeGet(MlirContext ctx, intptr_t rank,
+MlirType mlirPTOPartitionTensorViewTypeGet(MlirContext ctx, intptr_t rank,
                                 const int64_t *shape, MlirType elementType) {
   auto c = unwrap(ctx);
   auto elem = unwrap(elementType);
   llvm::ArrayRef<int64_t> shp(shape, static_cast<size_t>(rank));
-  return wrap(mlir::pto::TileViewType::get(c, shp, elem));
+  return wrap(mlir::pto::PartitionTensorViewType::get(c, shp, elem));
 }
 
-intptr_t mlirPTOTileViewTypeGetRank(MlirType type) {
-  auto t = cast<mlir::pto::TileViewType>(unwrap(type));
+intptr_t mlirPTOPartitionTensorViewTypeGetRank(MlirType type) {
+  auto t = cast<mlir::pto::PartitionTensorViewType>(unwrap(type));
   return static_cast<intptr_t>(t.getShape().size());
 }
 
-MlirType mlirPTOTileViewTypeGetElementType(MlirType type) {
-  auto t = mlir::cast<mlir::pto::TileViewType>(unwrap(type));
+MlirType mlirPTOPartitionTensorViewTypeGetElementType(MlirType type) {
+  auto t = mlir::cast<mlir::pto::PartitionTensorViewType>(unwrap(type));
   return wrap(t.getElementType());
 }
 
-const int64_t *mlirPTOTileViewTypeGetShape(MlirType type, intptr_t *numDimsOut) {
-  auto t = cast<mlir::pto::TileViewType>(unwrap(type));
+const int64_t *mlirPTOPartitionTensorViewTypeGetShape(MlirType type, intptr_t *numDimsOut) {
+  auto t = cast<mlir::pto::PartitionTensorViewType>(unwrap(type));
   auto shape = t.getShape();
   *numDimsOut = static_cast<intptr_t>(shape.size());
   return shape.data();

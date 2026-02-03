@@ -7,7 +7,7 @@ from .._mlir_libs._pto import (
     register_dialect,
     PtrType,
     TensorViewType,
-    TileViewType,
+    PartitionTensorViewType,
     TileType,
     TileBufType,
     AddressSpace,
@@ -33,7 +33,7 @@ __all__ = [
     # Types
     "PtrType",
     "TensorViewType",
-    "TileViewType",
+    "PartitionTensorViewType",
     "TileType",
     "TileBufType",
     "AddressSpace", "AddressSpaceAttr",

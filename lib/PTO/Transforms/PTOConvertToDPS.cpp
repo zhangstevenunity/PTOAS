@@ -95,8 +95,8 @@ struct StoreToDPSPattern : public OpRewritePattern<pto::StoreOp> {
     }
 
     // === Path B: TileView (High-Level) ===
-    // 如果 dst 是 TileViewType，那么 src 应该是 TileBufType (因为之前的 Pattern 已经把 Tile 替换为 Alloc 了)
-    if (mlir::isa<pto::TileViewType>(dstType)) {
+    // 如果 dst 是 PartitionTensorViewType，那么 src 应该是 TileBufType (因为之前的 Pattern 已经把 Tile 替换为 Alloc 了)
+    if (mlir::isa<pto::PartitionTensorViewType>(dstType)) {
       // 确认 src 是否已经被转换为了 Buffer (AllocTile 的结果)
       // 如果 src 还是 TileType (值语义)，这说明上游的 Op 还没被转换，或者转换顺序有问题。
       // 但 greedy pattern rewrite 会自动处理依赖。
