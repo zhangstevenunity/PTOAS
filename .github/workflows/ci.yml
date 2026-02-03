@@ -36,15 +36,24 @@ jobs:
             llvm-project/llvm/build-shared
           key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
 
-      - name: Build LLVM/MLIR
+      - name: Prepare LLVM source (no rebuild)
         run: |
-          if [ ! -d llvm-project ]; then
-            git clone --filter=blob:none --no-checkout https://github.com/llvm/llvm-project.git
-          fi
+          mkdir -p llvm-project
           cd llvm-project
-          git fetch --depth 1 origin "refs/tags/llvmorg-19.1.6:refs/tags/llvmorg-19.1.6"
+
+          # 如果 restore 只带来了 build-shared，这里补一个 git repo
+          if [ ! -d .git ]; then
+            git init
+            git remote add origin https://github.com/llvm/llvm-project.git
+          fi
+
+          git fetch --depth 1 origin tag llvmorg-19.1.6
           git checkout "${LLVM_COMMIT}"
 
+      - name: Build LLVM/MLIR (only if cache miss)
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          cd llvm-project
           cmake -G Ninja -S llvm -B llvm/build-shared \
             -DLLVM_ENABLE_PROJECTS="mlir;clang" \
             -DBUILD_SHARED_LIBS=ON \
@@ -52,7 +61,9 @@ jobs:
             -DPython3_EXECUTABLE=python3 \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_TARGETS_TO_BUILD="host"
+
           ninja -C llvm/build-shared
+         
 
       # LLVM build 完成后立即保存缓存，避免后续测试影响缓存内容
       - name: Save LLVM build cache
