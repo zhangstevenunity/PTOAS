@@ -30,7 +30,9 @@ def load_lib(lib_path):
 
 
 def test_add():
-    device = "npu"
+    device = "npu:0"
+    torch.set_default_device(device)
+    torch.npu.set_device(device)
     dtype = torch.float32
 
     shape = [32, 32]  # shape hard-coded as the kernel
