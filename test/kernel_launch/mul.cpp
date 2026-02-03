@@ -1,12 +1,6 @@
-#include "pto/common/pto_instr.hpp"
+#include "common/pto_instr.hpp"
 using namespace pto;
-
-
-// This is a matmul for out, src0, src1, src2, is_bias
 __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm__ float* v3, __gm__ float* v4, bool v5) {
-
-  #if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)
-  #else  // else branch for `#if defined(__DAV_C220_VEC__)`
   unsigned v6 = 1;
   unsigned v7 = 0;
   int32_t v8 = 8;
@@ -42,12 +36,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v30 = v28 * v29;
     unsigned v31 = v27 + v30;
     __gm__ float* v32 = v2 + v31;
-    using GTShape_505640400 = pto::Shape<32, 32>;;
-    using GTStride_505640400 = pto::Stride<256, 1>;;
-    GTShape_505640400 v33 = GTShape_505640400();
-    GTStride_505640400 v34 = GTStride_505640400();
-    using GT_505640400 = GlobalTensor<float, GTShape_505640400, GTStride_505640400>;;
-    GT_505640400 v35 = GT_505640400(v32, v33, v34);
+    using GTShape_489524496 = pto::Shape<1, 1, 1, 32, 32>;;
+    using GTStride_489524496 = pto::Stride<1024, 1024, 1024, 32, 1>;;
+    GTShape_489524496 v33 = GTShape_489524496();
+    GTStride_489524496 v34 = GTStride_489524496();
+    using GT_489524496 = GlobalTensor<float, GTShape_489524496, GTStride_489524496>;;
+    GT_489524496 v35 = GT_489524496(v32, v33, v34);
     unsigned v36 = (unsigned) v24;
     unsigned v37 = (unsigned) v10;
     unsigned v38 = v36 * v37;
@@ -56,12 +50,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v41 = v7 * v40;
     unsigned v42 = v39 + v41;
     __gm__ float* v43 = v3 + v42;
-    using GTShape_505640608 = pto::Shape<32, 32>;;
-    using GTStride_505640608 = pto::Stride<32, 1>;;
-    GTShape_505640608 v44 = GTShape_505640608();
-    GTStride_505640608 v45 = GTStride_505640608();
-    using GT_505640608 = GlobalTensor<float, GTShape_505640608, GTStride_505640608>;;
-    GT_505640608 v46 = GT_505640608(v43, v44, v45);
+    using GTShape_489524704 = pto::Shape<1, 1, 1, 32, 32>;;
+    using GTStride_489524704 = pto::Stride<1024, 1024, 1024, 32, 1>;;
+    GTShape_489524704 v44 = GTShape_489524704();
+    GTStride_489524704 v45 = GTStride_489524704();
+    using GT_489524704 = GlobalTensor<float, GTShape_489524704, GTStride_489524704>;;
+    GT_489524704 v46 = GT_489524704(v43, v44, v45);
     unsigned v47 = (unsigned) v10;
     unsigned v48 = v7 * v47;
     unsigned v49 = v7 + v48;
@@ -69,12 +63,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v51 = v7 * v50;
     unsigned v52 = v49 + v51;
     __gm__ float* v53 = v4 + v52;
-    using GTShape_505640816 = pto::Shape<1, 32>;;
-    using GTStride_505640816 = pto::Stride<32, 1>;;
-    GTShape_505640816 v54 = GTShape_505640816();
-    GTStride_505640816 v55 = GTStride_505640816();
-    using GT_505640816 = GlobalTensor<float, GTShape_505640816, GTStride_505640816>;;
-    GT_505640816 v56 = GT_505640816(v53, v54, v55);
+    using GTShape_489524912 = pto::Shape<1, 1, 1, 1, 32>;;
+    using GTStride_489524912 = pto::Stride<32, 32, 32, 32, 1>;;
+    GTShape_489524912 v54 = GTShape_489524912();
+    GTStride_489524912 v55 = GTStride_489524912();
+    using GT_489524912 = GlobalTensor<float, GTShape_489524912, GTStride_489524912>;;
+    GT_489524912 v56 = GT_489524912(v53, v54, v55);
     TLOAD(v16, v35);
     TLOAD(v17, v46);
     if (v5) {
@@ -113,26 +107,15 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
   unsigned v62 = v7 * v61;
   unsigned v63 = v60 + v62;
   __gm__ float* v64 = v1 + v63;
-  using GTShape_505640992 = pto::Shape<32, 32>;
-  using GTStride_505640992 = pto::Stride<32, 1>;
-  GTShape_505640992 v65 = GTShape_505640992();
-  GTStride_505640992 v66 = GTStride_505640992();
-  using GT_505640992 = GlobalTensor<float, GTShape_505640992, GTStride_505640992>;
-  GT_505640992 v67 = GT_505640992(v64, v65, v66);
+  using GTShape_489525088 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_489525088 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_489525088 v65 = GTShape_489525088();
+  GTStride_489525088 v66 = GTStride_489525088();
+  using GT_489525088 = GlobalTensor<float, GTShape_489525088, GTStride_489525088>;
+  GT_489525088 v67 = GT_489525088(v64, v65, v66);
   TSTORE(v67, v21);
-  #endif
   return;
 }
 
 
-extern "C" void call_kernel(
-    uint32_t blockDim, void* stream,
-    uint8_t* a, uint8_t* b, uint8_t c)
-{
-    RunTMATMULSplitK<<<blockDim, nullptr, stream>>>(
-      reinterpret_cast<float*>(c),
-      reinterpret_cast<float*>(a),
-      reinterpret_cast<float*>(b),
-      nullptr, false
-    );
-}
+PTO Driver Success!!!
