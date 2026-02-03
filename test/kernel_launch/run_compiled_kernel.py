@@ -35,8 +35,8 @@ def test_add():
 
     shape = [32, 32]  # shape hard-coded as the kernel
     torch.manual_seed(0)
-    a = torch.nrand(shape, device=device, dtype=dtype)
-    b = torch.nrand(shape, device=device, dtype=dtype)
+    a = torch.randn(shape, device=device, dtype=dtype)
+    b = torch.randn(shape, device=device, dtype=dtype)
     c = torch.zeros(shape, device=device, dtype=dtype)
 
     relu_func = load_lib("./mul_kernel.so")
