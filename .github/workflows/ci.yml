@@ -29,6 +29,7 @@ jobs:
 
       # 先恢复 LLVM build 缓存
       - name: Restore LLVM build cache
+        id: cache-llvm
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -36,6 +37,7 @@ jobs:
           key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
 
       - name: Build LLVM/MLIR
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           if [ ! -d llvm-project ]; then
             git clone --filter=blob:none --no-checkout https://github.com/llvm/llvm-project.git
@@ -55,6 +57,7 @@ jobs:
 
       # LLVM build 完成后立即保存缓存，避免后续测试影响缓存内容
       - name: Save LLVM build cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
