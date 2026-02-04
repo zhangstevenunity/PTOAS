@@ -29,18 +29,18 @@ module {
     %18 = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>
     %19 = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=1>
     %20 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=1>
-    %21 = pto.alloc_tile : !pto.tile_buf<loc=ub, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>
-    %22 = pto.alloc_tile : !pto.tile_buf<loc=ub, dtype=f32, rows=32, cols=1, v_row=32, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=1>
+    %21 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+    %22 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=1, v_row=32, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=1>
     pto.tload ins(%14 : !pto.partition_tensor_view<32x32xf32>) outs(%16 : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>)
     pto.tload ins(%15 : !pto.partition_tensor_view<32x32xf32>) outs(%17 : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>)
     pto.tmov ins(%16 : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>) outs(%18 : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>)
     pto.tmov ins(%17 : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>) outs(%19 : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=1>)
     pto.tmatmul ins(%18, %19 : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=1>, !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=1>) outs(%20 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=1>)
-    pto.tmov ins(%20 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=1>) outs(%21 : !pto.tile_buf<loc=ub, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
+    pto.tmov ins(%20 : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=1>) outs(%21 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>)
     pto.sync.set <PIPE_FIX>, 0
     pto.sync.set <PIPE_FIX>, 16
     pto.sync.wait <PIPE_V>, 0
-    pto.trowmax ins(%21 : !pto.tile_buf<loc=ub, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>) outs(%22 : !pto.tile_buf<loc=ub, dtype=f32, rows=32, cols=1, v_row=32, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=1>)
+    pto.trowmax ins(%21 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=1>) outs(%22 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=1, v_row=32, v_col=1, blayout=col_major, slayout=none_box, fractal=512, pad=1>)
     return
   }
 }
