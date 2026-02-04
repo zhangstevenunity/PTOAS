@@ -2111,6 +2111,7 @@ struct PTOCmpSToEmitC : public OpConversionPattern<pto::CmpSOp_DPS> {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
 
+    Value dst    = peelUnrealized(adaptor.getDst());
     Value src    = peelUnrealized(adaptor.getSrc());
     Value scalar = peelUnrealized(adaptor.getScalar());
 
@@ -2118,24 +2119,19 @@ struct PTOCmpSToEmitC : public OpConversionPattern<pto::CmpSOp_DPS> {
     auto cmpAttr = op.getCmpModeAttr();          // PTO_CmpModeAttr
     std::string tok = cmpModeTok(cmpAttr);
 
-    auto argsAttr = rewriter.getArrayAttr({
-      emitc::OpaqueAttr::get(ctx, tok),
-    });
+    auto modeTy = emitc::OpaqueType::get(ctx, "auto");
+    Value modeVal = rewriter.create<emitc::ConstantOp>(
+        loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
 
-    Type dstTy = getTypeConverter()->convertType(adaptor.getDst().getType());
-    if (!dstTy)
-      return rewriter.notifyMatchFailure(op, "cannot convert dst type");
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc,
+        TypeRange{},
+        "TCMPS",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, scalar, modeVal});
 
-    auto call = rewriter.create<emitc::CallOpaqueOp>(
-      loc,
-      TypeRange{dstTy},
-      "TCMPS",
-      /*args=*/argsAttr,
-      /*templateArgs=*/ArrayAttr{},
-      /*operands=*/ValueRange{src, scalar}
-    );
-
-    rewriter.replaceOp(op, call.getResults());
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -2287,6 +2283,8 @@ struct PTODivToTDIV : public OpConversionPattern<pto::DivOp_DPS> {
 };
 //===----------------------------------------------------------------------===//
 // pto.tdivs lowering -> TDIVS(dst, src, scalar)  or  TDIVS(dst, scalar, src)
+// Order is determined by operand types: if src is tile_buf, order is (tile, scalar)
+// Otherwise, order is (scalar, tile)
 //===----------------------------------------------------------------------===//
 
 struct PTODivSToEmitC : public OpConversionPattern<pto::DivSOp_DPS> {
@@ -2300,22 +2298,87 @@ struct PTODivSToEmitC : public OpConversionPattern<pto::DivSOp_DPS> {
     Value scalar = peelUnrealized(adaptor.getScalar());
     Value dst    = peelUnrealized(adaptor.getDst());
 
-    bool scalarLhs = false;
-    if (auto a = op.getScalarLhsAttr())
-      scalarLhs = a.getValue();
+    // Determine order based on operand types
+    bool srcIsTile = isa<mlir::pto::TileBufType>(src.getType());
+    bool scalarIsTile = isa<mlir::pto::TileBufType>(scalar.getType());
 
-    if (!scalarLhs) {
+    if (srcIsTile && !scalarIsTile) {
       // tile/scalar: TDIVS(dst, src, scalar)
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TDIVS",
           ArrayAttr{}, ArrayAttr{},
           ValueRange{dst, src, scalar});
-    } else {
+    } else if (!srcIsTile && scalarIsTile) {
       // scalar/tile: TDIVS(dst, scalar, src)
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TDIVS",
           ArrayAttr{}, ArrayAttr{},
           ValueRange{dst, scalar, src});
+    } else {
+      // Fallback: use scalar_lhs attribute if types are ambiguous
+      bool scalarLhs = false;
+      if (auto a = op.getScalarLhsAttr())
+        scalarLhs = a.getValue();
+
+      if (!scalarLhs) {
+        // tile/scalar: TDIVS(dst, src, scalar)
+        rewriter.create<emitc::CallOpaqueOp>(
+            loc, TypeRange{}, "TDIVS",
+            ArrayAttr{}, ArrayAttr{},
+            ValueRange{dst, src, scalar});
+      } else {
+        // scalar/tile: TDIVS(dst, scalar, src)
+        rewriter.create<emitc::CallOpaqueOp>(
+            loc, TypeRange{}, "TDIVS",
+            ArrayAttr{}, ArrayAttr{},
+            ValueRange{dst, scalar, src});
+      }
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// pto.tdivs (TDivSOp) lowering -> TDIVS(dst, src, scalar)  or  TDIVS(dst, scalar, src)
+// Order is determined by operand types: if src is tile_buf, order is (tile, scalar)
+// Otherwise, order is (scalar, tile)
+//===----------------------------------------------------------------------===//
+
+struct PTOTDivSToEmitC : public OpConversionPattern<pto::TDivSOp> {
+  using OpConversionPattern<pto::TDivSOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TDivSOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src    = peelUnrealized(adaptor.getSrc());
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    Value dst    = peelUnrealized(adaptor.getDst());
+
+    // Determine order based on operand types
+    bool srcIsTile = isa<mlir::pto::TileBufType>(src.getType());
+    bool scalarIsTile = isa<mlir::pto::TileBufType>(scalar.getType());
+
+    if (srcIsTile && !scalarIsTile) {
+      // tile/scalar: TDIVS(dst, src, scalar)
+      rewriter.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "TDIVS",
+          ArrayAttr{}, ArrayAttr{},
+          ValueRange{dst, src, scalar});
+    } else if (!srcIsTile && scalarIsTile) {
+      // scalar/tile: TDIVS(dst, scalar, src)
+      rewriter.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "TDIVS",
+          ArrayAttr{}, ArrayAttr{},
+          ValueRange{dst, scalar, src});
+    } else {
+      // Default: assume src is tile (should not happen if types are correct)
+      rewriter.create<emitc::CallOpaqueOp>(
+          loc, TypeRange{}, "TDIVS",
+          ArrayAttr{}, ArrayAttr{},
+          ValueRange{dst, src, scalar});
     }
 
     rewriter.eraseOp(op);
@@ -4050,6 +4113,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTORowSumToEmitC>(typeConverter, ctx);
   patterns.add<PTORowMinToEmitC>(typeConverter, ctx);
   patterns.add<PTODivSToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTDivSToEmitC>(typeConverter, ctx);
   patterns.add<PTORemToEmitC>(typeConverter, ctx);
   patterns.add<PTOReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTORecipToEmitC>(typeConverter, ctx);
@@ -4077,6 +4141,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTONegToEmitC>(typeConverter, ctx);
   patterns.add<PTOCIToEmitC>(typeConverter, ctx);
   patterns.add<PTOCmpToEmitC>(typeConverter, ctx);
+  patterns.add<PTOCmpSToEmitC>(typeConverter, ctx);
   patterns.add<PTOColSumToEmitC>(typeConverter, ctx);
   patterns.add<PTOLReluToEmitC>(typeConverter, ctx);
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);

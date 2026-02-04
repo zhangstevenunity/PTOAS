@@ -1063,6 +1063,39 @@ struct PTOViewToMemrefPass
         rewriter.replaceOp(op, newOp->getResults()); // 0 results -> OK
       }
 
+      SmallVector<mlir::pto::TCmpSOp, 8> cmpsops;
+      func.walk([&](mlir::pto::TCmpSOp op) { cmpsops.push_back(op); });
+
+      for (auto op : cmpsops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+
+        Value src = op.getSrc();
+        Value scalar = op.getScalar();
+        Value dst = op.getDst();
+
+        auto srcTy = dyn_cast<MemRefType>(src.getType());
+        auto scalarTy = dyn_cast<FloatType>(scalar.getType());
+        auto dstTy = dyn_cast<MemRefType>(dst.getType());
+        if (!srcTy || !scalarTy || !dstTy) {
+          op.emitError("ins/outs are not memref yet");
+          signalPassFailure();
+          return;
+        }
+
+        auto newOp = rewriter.create<pto::CmpSOp_DPS>(
+            op.getLoc(),
+            TypeRange{},
+            src,
+            scalar,
+            dst);
+
+        if (auto a = op.getCmpModeAttr())
+          newOp->setAttr("cmpMode", a);
+
+        rewriter.replaceOp(op, newOp->getResults()); // 0 results -> OK
+      }
+
       SmallVector<mlir::pto::TColExpandOp, 8> colexpand;
       func.walk([&](mlir::pto::TColExpandOp op) { colexpand.push_back(op); });
 
@@ -1236,13 +1269,42 @@ struct PTOViewToMemrefPass
         Value src = op.getSrc();
         Value scale = op.getScalar();
         Value dst = op.getDst();
-        BoolAttr scalar_lhs = op.getScalarLhsAttr();
 
+        // Check types - they might still be TileBufType or already converted to MemRefType
         auto srcTy = dyn_cast<MemRefType>(src.getType());
+        auto srcTileTy = dyn_cast<mlir::pto::TileBufType>(src.getType());
         auto scaleTy = dyn_cast<FloatType>(scale.getType());
+        auto scaleTileTy = dyn_cast<mlir::pto::TileBufType>(scale.getType());
         auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !scaleTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
+        auto dstTileTy = dyn_cast<mlir::pto::TileBufType>(dst.getType());
+        
+        // Determine scalar_lhs based on operand types
+        // Check which operand is actually the tile/memref and which is the scalar
+        bool srcIsTile = (srcTy != nullptr) || (srcTileTy != nullptr);
+        bool scalarIsTile = (isa<MemRefType>(scale.getType())) || (scaleTileTy != nullptr);
+        
+        BoolAttr scalar_lhs;
+        if (!srcIsTile && scalarIsTile) {
+          // src is scalar, scalar is tile -> scalar_lhs = true
+          scalar_lhs = rewriter.getBoolAttr(true);
+        } else {
+          // src is tile, scalar is scalar -> scalar_lhs = false (normal case)
+          scalar_lhs = rewriter.getBoolAttr(false);
+        }
+
+        // Type validation - ensure we have the right types
+        if (!srcTy && !srcTileTy) {
+          op.emitError("src operand must be tile_buf or memref");
+          signalPassFailure();
+          return;
+        }
+        if (!dstTy && !dstTileTy) {
+          op.emitError("dst operand must be tile_buf or memref");
+          signalPassFailure();
+          return;
+        }
+        if (!scaleTy && !scaleTileTy) {
+          op.emitError("scale operand must be scalar or tile_buf");
           signalPassFailure();
           return;
         }

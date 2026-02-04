@@ -287,8 +287,8 @@ void StoreOp::print(OpAsmPrinter &p) {
 // pto.tdivs custom asm to support both:
 //   pto.tdivs ins(%src, %scalar : !pto.tile_buf<...>, f32) outs(%dst : !pto.tile_buf<...>)
 //   pto.tdivs ins(%scalar, %src : f32, !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
-// The operand order in the op remains (src, scalar, dst); scalar_lhs is derived
-// from the textual order when not explicitly specified.
+// The operand order in the op remains (src, scalar, dst); order is determined
+// by the type of the first operand in the textual format.
 //===----------------------------------------------------------------------===//
 
 ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -320,28 +320,19 @@ ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &resul
     return parser.emitError(parser.getCurrentLocation(),
                             "expected outs type to be !pto.tile_buf<...>");
 
+  // Determine order based on types: if first operand is tile_buf, order is (tile, scalar)
+  // Otherwise, order is (scalar, tile)
   const bool scalarFirst = (tile1 != nullptr);
-  const bool scalarLhs = scalarFirst;
-
-  if (Attribute a = attrs.get("scalar_lhs")) {
-    auto b = dyn_cast<BoolAttr>(a);
-    if (!b)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "expected scalar_lhs to be a bool attribute");
-    if (b.getValue() != scalarLhs)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "scalar_lhs attribute conflicts with operand order");
-  } else if (scalarLhs) {
-    attrs.set("scalar_lhs", BoolAttr::get(parser.getContext(), true));
-  }
 
   if (!scalarFirst) {
     // ins(%src, %scalar : tile_buf, scalar_ty)
+    // Operands in op: (src, scalar, dst)
     if (parser.resolveOperand(op0, ty0, result.operands) ||
         parser.resolveOperand(op1, ty1, result.operands))
       return failure();
   } else {
     // ins(%scalar, %src : scalar_ty, tile_buf)
+    // Operands in op: (src, scalar, dst) - need to swap
     if (parser.resolveOperand(op1, ty1, result.operands) ||
         parser.resolveOperand(op0, ty0, result.operands))
       return failure();
@@ -355,22 +346,32 @@ ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &resul
 }
 
 void mlir::pto::TDivSOp::print(OpAsmPrinter &p) {
-  bool scalarLhs = false;
-  if (auto a = getScalarLhsAttr())
-    scalarLhs = a.getValue();
-
+  // Determine order based on operand types
+  // If src is tile_buf and scalar is not, print (src, scalar)
+  // If src is scalar and scalar is tile_buf, print (scalar, src)
+  auto srcType = getSrc().getType();
+  auto scalarType = getScalar().getType();
+  
+  bool srcIsTile = isa<mlir::pto::TileBufType>(srcType);
+  bool scalarIsTile = isa<mlir::pto::TileBufType>(scalarType);
+  
   p << " ins(";
-  if (!scalarLhs) {
+  if (srcIsTile && !scalarIsTile) {
+    // Print: (tile, scalar) - operands are already in correct order
     p << getSrc() << ", " << getScalar() << " : "
       << getSrc().getType() << ", " << getScalar().getType();
-  } else {
+  } else if (!srcIsTile && scalarIsTile) {
+    // Print: (scalar, tile) - need to swap operands in output
     p << getScalar() << ", " << getSrc() << " : "
       << getScalar().getType() << ", " << getSrc().getType();
+  } else {
+    // Default: assume src is tile (should not happen if types are correct)
+    p << getSrc() << ", " << getScalar() << " : "
+      << getSrc().getType() << ", " << getScalar().getType();
   }
   p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
 
-  p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{"scalar_lhs"});
+  p.printOptionalAttrDict((*this)->getAttrs());
 }
 
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
@@ -861,31 +862,7 @@ LogicalResult mlir::pto::TransOp::verify() {
   return success();
 }
 
-LogicalResult pto::MScatterOp::verify() {
-  auto srcTy = llvm::dyn_cast<MemRefType>(getSrc().getType());
-  auto memTy = llvm::dyn_cast<MemRefType>(getMem().getType());
-  auto idxTy = llvm::dyn_cast<MemRefType>(getIdx().getType());
-  if (!srcTy || !memTy || !idxTy)
-    return emitOpError("expects src, mem, idx to be memref types");
 
-  // element type match: store src element into mem element
-  if (srcTy.getElementType() != memTy.getElementType())
-    return emitOpError("src element type must match mem element type");
-
-  // idx element type: integer or index
-  Type idxElem = idxTy.getElementType();
-  if (!idxElem.isa<IntegerType>() && !idxElem.isa<IndexType>())
-    return emitOpError("idx element type must be integer or index");
-
-  // idx shape matches src shape (static case strict; otherwise require rank equal)
-  if (idxTy.getRank() != srcTy.getRank())
-    return emitOpError("idx rank must match src rank");
-  if (idxTy.hasStaticShape() && srcTy.hasStaticShape() &&
-      idxTy.getShape() != srcTy.getShape())
-    return emitOpError("idx shape must match src shape");
-
-  return success();
-}
 LogicalResult pto::AbsOp_DPS::verify() {
   auto srcTy = llvm::dyn_cast<mlir::MemRefType>(getSrc().getType());
   auto dstTy = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
