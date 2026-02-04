@@ -18,7 +18,7 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
             tile_view_a = pto.PartitionTensorViewType.get([TM, TK], f32, ctx)
             tile_view_b = pto.PartitionTensorViewType.get([TK, TN], f32, ctx)
 
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
             left = pto.AddressSpaceAttr.get(pto.AddressSpace.LEFT, ctx)
             right = pto.AddressSpaceAttr.get(pto.AddressSpace.RIGHT, ctx)

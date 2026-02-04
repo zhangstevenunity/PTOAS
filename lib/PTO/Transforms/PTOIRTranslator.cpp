@@ -594,10 +594,10 @@ void PTOIRTranslator::printMemInfoList(llvm::raw_ostream &os,
   for (const auto *info : list) {
     if (!first) os << ", ";
     info->rootBuffer.printAsOperand(os, state);
-    // [Fix] 打印 MAT 或 UB 或 GM
+    // [Fix] 打印 MAT 或 VEC 或 GM
     if (info->scope == pto::AddressSpace::GM) os << "(GM)";
     else if (info->scope == pto::AddressSpace::MAT) os << "(MAT)";
-    else if (info->scope == pto::AddressSpace::UB) os << "(UB)";
+    else if (info->scope == pto::AddressSpace::VEC) os << "(VEC)";
     else os << "(Other)"; // 处理 LEFT/RIGHT/ACC 等其他情况
     first = false;
   }

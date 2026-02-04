@@ -126,7 +126,7 @@ public:
          qualifier = "__gm__";
       } else if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(memorySpace)) {
          switch (ptoAttr.getAddressSpace()) {
-           case pto::AddressSpace::UB: qualifier = "__ub__"; break;
+           case pto::AddressSpace::VEC: qualifier = "__ub__"; break;
            case pto::AddressSpace::GM: qualifier = "__gm__"; break;
            case pto::AddressSpace::MAT:   qualifier = "__mat__"; break; 
            case pto::AddressSpace::ACC:   qualifier = "__acc__"; break; 
@@ -373,7 +373,7 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
 
             std::string addrSpaceStr = "__gm__ "; 
             if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(memRefTy.getMemorySpace())) {
-                if (attr.getAddressSpace() == pto::AddressSpace::UB) addrSpaceStr = "__ub__ ";
+                if (attr.getAddressSpace() == pto::AddressSpace::VEC) addrSpaceStr = "__ub__ ";
             }
 
             newType = emitc::PointerType::get(
@@ -1738,6 +1738,135 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     // 4. 用新的指针 (加法结果) 替换原 Op
     rewriter.replaceOp(op, addOp.getResult());
     
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// memref.load/store lowering (scalar access)
+//===----------------------------------------------------------------------===//
+
+struct MemrefLoadToEmitC : public OpConversionPattern<memref::LoadOp> {
+  using OpConversionPattern<memref::LoadOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(memref::LoadOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+
+    auto memrefTy = mlir::cast<MemRefType>(op.getMemref().getType());
+    Type resultTy = getTypeConverter()->convertType(memrefTy.getElementType());
+    if (!resultTy)
+      return rewriter.notifyMatchFailure(op, "failed to convert memref element type");
+
+    Value basePtr = adaptor.getMemref();
+    if (!isa<emitc::PointerType>(basePtr.getType()))
+      return rewriter.notifyMatchFailure(op, "expected lowered memref as emitc pointer");
+
+    SmallVector<int64_t> strides;
+    int64_t offset = 0;
+    if (failed(getStridesAndOffset(memrefTy, strides, offset)))
+      return rewriter.notifyMatchFailure(op, "unsupported memref layout (expected strided)");
+
+    if (offset == ShapedType::kDynamic)
+      return rewriter.notifyMatchFailure(op, "dynamic memref offset not supported");
+    for (int64_t s : strides)
+      if (s == ShapedType::kDynamic)
+        return rewriter.notifyMatchFailure(op, "dynamic memref strides not supported");
+
+    Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
+    auto mkU32 = [&](int64_t v) -> Value {
+      return rewriter.create<emitc::ConstantOp>(
+          loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(v)));
+    };
+    auto toU32 = [&](Value v) -> Value {
+      if (v.getType() == u32Ty)
+        return v;
+      return rewriter.create<emitc::CastOp>(loc, u32Ty, v).getResult();
+    };
+
+    Value linear = mkU32(offset);
+    ValueRange indices = adaptor.getIndices();
+    if (static_cast<int64_t>(indices.size()) != memrefTy.getRank())
+      return rewriter.notifyMatchFailure(op, "rank/indices mismatch");
+
+    for (int64_t i = 0, e = memrefTy.getRank(); i < e; ++i) {
+      Value idx = toU32(indices[i]);
+      Value stride = mkU32(strides[i]);
+      Value term = rewriter.create<emitc::MulOp>(loc, u32Ty, idx, stride);
+      linear = rewriter.create<emitc::AddOp>(loc, u32Ty, linear, term);
+    }
+
+    Type pointeeTy = mlir::cast<emitc::PointerType>(basePtr.getType()).getPointee();
+    auto sub = rewriter.create<emitc::SubscriptOp>(
+        loc, pointeeTy, basePtr, ValueRange{linear});
+
+    Value loaded = sub.getResult();
+    if (loaded.getType() != resultTy)
+      loaded = rewriter.create<emitc::CastOp>(loc, resultTy, loaded).getResult();
+
+    rewriter.replaceOp(op, loaded);
+    return success();
+  }
+};
+
+struct MemrefStoreToEmitC : public OpConversionPattern<memref::StoreOp> {
+  using OpConversionPattern<memref::StoreOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(memref::StoreOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+
+    auto memrefTy = mlir::cast<MemRefType>(op.getMemref().getType());
+    Value basePtr = adaptor.getMemref();
+    if (!isa<emitc::PointerType>(basePtr.getType()))
+      return rewriter.notifyMatchFailure(op, "expected lowered memref as emitc pointer");
+
+    SmallVector<int64_t> strides;
+    int64_t offset = 0;
+    if (failed(getStridesAndOffset(memrefTy, strides, offset)))
+      return rewriter.notifyMatchFailure(op, "unsupported memref layout (expected strided)");
+
+    if (offset == ShapedType::kDynamic)
+      return rewriter.notifyMatchFailure(op, "dynamic memref offset not supported");
+    for (int64_t s : strides)
+      if (s == ShapedType::kDynamic)
+        return rewriter.notifyMatchFailure(op, "dynamic memref strides not supported");
+
+    Type u32Ty = emitc::OpaqueType::get(ctx, "unsigned");
+    auto mkU32 = [&](int64_t v) -> Value {
+      return rewriter.create<emitc::ConstantOp>(
+          loc, u32Ty, emitc::OpaqueAttr::get(ctx, std::to_string(v)));
+    };
+    auto toU32 = [&](Value v) -> Value {
+      if (v.getType() == u32Ty)
+        return v;
+      return rewriter.create<emitc::CastOp>(loc, u32Ty, v).getResult();
+    };
+
+    Value linear = mkU32(offset);
+    ValueRange indices = adaptor.getIndices();
+    if (static_cast<int64_t>(indices.size()) != memrefTy.getRank())
+      return rewriter.notifyMatchFailure(op, "rank/indices mismatch");
+
+    for (int64_t i = 0, e = memrefTy.getRank(); i < e; ++i) {
+      Value idx = toU32(indices[i]);
+      Value stride = mkU32(strides[i]);
+      Value term = rewriter.create<emitc::MulOp>(loc, u32Ty, idx, stride);
+      linear = rewriter.create<emitc::AddOp>(loc, u32Ty, linear, term);
+    }
+
+    Type pointeeTy = mlir::cast<emitc::PointerType>(basePtr.getType()).getPointee();
+    auto lhs = rewriter.create<emitc::SubscriptOp>(
+        loc, pointeeTy, basePtr, ValueRange{linear});
+
+    Value value = adaptor.getValue();
+    if (value.getType() != pointeeTy)
+      value = rewriter.create<emitc::CastOp>(loc, pointeeTy, value).getResult();
+
+    rewriter.create<emitc::AssignOp>(loc, lhs.getResult(), value);
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -3978,6 +4107,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMatmulDpsToTMATMUL>(typeConverter, ctx);
   patterns.add<PTOMatmulAccDpsToTMATMULACC>(typeConverter, ctx);
   patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
+  patterns.add<MemrefLoadToEmitC>(typeConverter, ctx);
+  patterns.add<MemrefStoreToEmitC>(typeConverter, ctx);
   patterns.add<PTOAbsToTABS>(typeConverter, ctx);
   patterns.add<PTOAddToTADD>(typeConverter, ctx);
   patterns.add<PTOAddSCToTADDSC>(typeConverter, ctx);

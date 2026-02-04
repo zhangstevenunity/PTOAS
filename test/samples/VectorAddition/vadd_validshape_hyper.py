@@ -15,7 +15,7 @@ def build_mixed_shape():
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
             tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
             # Configs
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
@@ -26,10 +26,10 @@ def build_mixed_shape():
             # [核心定义 1] 混合类型的 TileBufType
             # valid_shape=[-1, 32] 表示: Row 是动态的(?), Col 是静态的(32)
             # 对应 IR 类型: !pto.tile_buf<..., v_row=?, v_col=32 ...>
-            tile_buf_mixed = pto.TileBufType.get([32, 32], f32, ub, [-1, 32], cfg, ctx)
+            tile_buf_mixed = pto.TileBufType.get([32, 32], f32, vec, [-1, 32], cfg, ctx)
 
             # 全静态 TileBufType (用于对比)
-            tile_buf_static = pto.TileBufType.get([32, 32], f32, ub, [32, 32], cfg, ctx)
+            tile_buf_static = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
             # [核心定义 2] 函数签名
             # 只需要 1 个 i32 参数，因为只有一个维度是动态的

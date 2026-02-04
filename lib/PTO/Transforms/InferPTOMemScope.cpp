@@ -189,7 +189,7 @@ LogicalResult pto::inferAndPropagateMemScopeForMovDps(pto::MovDpsOp op) {
   auto l0bSpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::RIGHT);
   auto l0cSpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::ACC);
   auto l1SpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::MAT);
-  auto ubSpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::UB);
+  auto ubSpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::VEC);
   auto biasSpaceAttr = AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::BIAS);
 
   MemScopeInferAndPropagateHelper helper;
@@ -538,7 +538,7 @@ LogicalResult pto::inferAndPropagateMemScopeForFunc(func::FuncOp op) {
   auto gmSpaceAttr =
       AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::GM);
   auto ubSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::UB);
+      AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::VEC);
   auto args = op.getArguments();
   for (auto arg : args) {
     if (!isa<BaseMemRefType>(arg.getType())) {
@@ -604,7 +604,7 @@ LogicalResult pto::inferAndPropagateUbufMemScope(memref::AllocOp op) {
 
   MemScopeInferAndPropagateHelper helper;
   auto ubSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::UB);
+      AddressSpaceAttr::get(op->getContext(), pto::AddressSpace::VEC);
   if (failed(helper.Run(op, ubSpaceAttr))) {
     return op->emitOpError("Failed to propagate memory scope ub for allocOp");
   }
