@@ -614,8 +614,8 @@ SmallVector<Value> BlockSyncAnalysis::GetMemInfoBuffers(
 int BlockSyncAnalysis::GetEventIdNum(const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
     for (const auto &pair : depBaseMemInfosVec) {
         // 逻辑含义：只要涉及 Matrix Buffer (MAT) 或者 Vector Buffer (UB)，都视为片上依赖，可能需要 Double Buffer。
-        bool isLocalA = pair.first && (pair.first->scope == pto::AddressSpace::MAT || pair.first->scope == pto::AddressSpace::UB);
-        bool isLocalB = pair.second && (pair.second->scope == pto::AddressSpace::MAT || pair.second->scope == pto::AddressSpace::UB);
+        bool isLocalA = pair.first && (pair.first->scope == pto::AddressSpace::MAT || pair.first->scope == pto::AddressSpace::VEC);
+        bool isLocalB = pair.second && (pair.second->scope == pto::AddressSpace::MAT || pair.second->scope == pto::AddressSpace::VEC);
         if (isLocalA || isLocalB) return 2;
     }
     return 1; 

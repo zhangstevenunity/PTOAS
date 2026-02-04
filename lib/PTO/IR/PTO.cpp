@@ -5768,8 +5768,8 @@ PIPE CopyOp::getPipe() {
   bool isDstGlobal = (dstSpace == AddressSpace::GM || srcSpace == AddressSpace::MAT);
 
   // L0A->LEFT, L0B->RIGHT, L0C->ACC
-  bool isSrcLocal  = (srcSpace == AddressSpace::UB || srcSpace == AddressSpace::LEFT || srcSpace == AddressSpace::RIGHT || srcSpace == AddressSpace::ACC);
-  bool isDstLocal  = (dstSpace == AddressSpace::UB || dstSpace == AddressSpace::LEFT || dstSpace == AddressSpace::RIGHT || dstSpace == AddressSpace::ACC);
+  bool isSrcLocal  = (srcSpace == AddressSpace::VEC || srcSpace == AddressSpace::LEFT || srcSpace == AddressSpace::RIGHT || srcSpace == AddressSpace::ACC);
+  bool isDstLocal  = (dstSpace == AddressSpace::VEC || dstSpace == AddressSpace::LEFT || dstSpace == AddressSpace::RIGHT || dstSpace == AddressSpace::ACC);
 
   if (isSrcGlobal && isDstLocal) {
     return PIPE::PIPE_MTE2;

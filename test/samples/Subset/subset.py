@@ -13,14 +13,14 @@ def build():
             f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
 
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
 
             # Workspace in UB: 32x64, split into two 32x32 tiles (ping/pong).
-            ws_type = pto.TileBufType.get([32, 64], f32, ub, [32, 64], cfg, ctx)
+            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 64], cfg, ctx)
 
             fn_ty = func.FunctionType.get([], [])
             with InsertionPoint(m.body):

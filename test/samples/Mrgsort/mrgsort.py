@@ -16,13 +16,13 @@ def build():
             # Mergesort on a 32x32 tile (flattened to a 1x1024 list for TMrgSort)
             tv2_f32 = pto.TensorViewType.get([32, 32], f32, ctx)
             part_view_32x32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
-            tile_buf_1x1024 = pto.TileBufType.get([1, 1024], f32, ub, [1, 1024], cfg, ctx)
+            tile_buf_1x1024 = pto.TileBufType.get([1, 1024], f32, vec, [1, 1024], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):

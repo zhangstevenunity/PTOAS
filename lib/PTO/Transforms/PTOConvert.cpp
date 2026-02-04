@@ -126,7 +126,7 @@ public:
          qualifier = "__gm__";
       } else if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(memorySpace)) {
          switch (ptoAttr.getAddressSpace()) {
-           case pto::AddressSpace::UB: qualifier = "__ub__"; break;
+           case pto::AddressSpace::VEC: qualifier = "__ub__"; break;
            case pto::AddressSpace::GM: qualifier = "__gm__"; break;
            case pto::AddressSpace::MAT:   qualifier = "__mat__"; break; 
            case pto::AddressSpace::ACC:   qualifier = "__acc__"; break; 
@@ -373,7 +373,7 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
 
             std::string addrSpaceStr = "__gm__ "; 
             if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(memRefTy.getMemorySpace())) {
-                if (attr.getAddressSpace() == pto::AddressSpace::UB) addrSpaceStr = "__ub__ ";
+                if (attr.getAddressSpace() == pto::AddressSpace::VEC) addrSpaceStr = "__ub__ ";
             }
 
             newType = emitc::PointerType::get(

@@ -63,7 +63,7 @@ PYBIND11_MODULE(_pto, m) {
     .value("LEFT",  mlir::pto::AddressSpace::LEFT)
     .value("RIGHT",  mlir::pto::AddressSpace::RIGHT)
     .value("ACC",  mlir::pto::AddressSpace::ACC)
-    .value("UB",   mlir::pto::AddressSpace::UB)
+    .value("VEC",   mlir::pto::AddressSpace::VEC)
     .value("BIAS",   mlir::pto::AddressSpace::BIAS)
     .export_values();
     py::enum_<BLayout>(m, "BLayout")

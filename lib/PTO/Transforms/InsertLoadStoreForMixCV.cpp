@@ -283,7 +283,7 @@ struct InsertLoadStoreForMixCVPass
     Attribute gmSpace = gmSubviewTy.getMemorySpace();
 
     // (C) create ubSpace using enum API
-    Attribute ubSpace = pto::AddressSpaceAttr::get(func.getContext(), pto::AddressSpace::UB);
+    Attribute ubSpace = pto::AddressSpaceAttr::get(func.getContext(), pto::AddressSpace::VEC);
     if (!ubSpace) {
       llvm::errs() << "[InsertLoadStoreForMixCV] ERROR: cannot create ub address_space attr\n";
       signalPassFailure();
