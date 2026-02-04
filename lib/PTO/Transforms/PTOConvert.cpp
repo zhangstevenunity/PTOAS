@@ -654,21 +654,17 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         dummyStrideVec.push_back(isDynamic ? "-1" : std::to_string(finalStride));
     }
 
-    // 3.1 右对齐有效维度，前部补 1；再按连续规则重新推导 5 维 stride
-    // 选择“有效”维度（非 1 或 动态），右对齐到 5 维尾部
+    // 3.1 右对齐到 5 维：shape 补 1；已有维度继承原 stride；
+    //      被补出来的高维按“紧密升维”规则连续推导：stride[i] = shape[i+1] * stride[i+1]
     SmallVector<std::string, 5> finalShape(5, "1");
-    SmallVector<std::string> effectiveDims;
-    for (const auto &d : shapeParamsVec) {
-        if (d != "1")
-            effectiveDims.push_back(d);
-    }
-    int eff = std::min<int>(effectiveDims.size(), 5);
-    int shift = 5 - eff;
-    for (int i = 0; i < eff; ++i) {
-        finalShape[shift + i] = effectiveDims[effectiveDims.size() - eff + i];
-    }
-
     SmallVector<std::string, 5> finalStride(5, "1");
+    int shift = 5 - rank;
+
+    // 先放入原始 shape/stride（保持用户提供的值）
+    for (int i = 0; i < rank && i < 5; ++i) {
+        finalShape[shift + i] = shapeParamsVec[i];
+        finalStride[shift + i] = dummyStrideVec[i];
+    }
 
     auto mulOrDyn = [](const std::string &a, const std::string &b) -> std::string {
         if (a == "-1" || b == "-1")
@@ -679,10 +675,13 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         return std::to_string(va * vb);
     };
 
-    // 最低维 stride 固定为 1（或动态）
-    finalStride[4] = (finalShape[4] == "-1") ? "-1" : "1";
+    // 从低维到高维倒推补齐 stride（仅对补出来的前置维度生效）
     for (int i = 3; i >= 0; --i) {
-        finalStride[i] = mulOrDyn(finalStride[i + 1], finalShape[i + 1]);
+        // 如果该维已由原始 rank 覆盖，则保持原值
+        if (i >= shift)
+            continue;
+        // 补维：shape 已经是 1，stride = shape[i+1] * stride[i+1]（或动态）
+        finalStride[i] = mulOrDyn(finalShape[i + 1], finalStride[i + 1]);
     }
 
     auto joinParams = [](llvm::ArrayRef<std::string> vec) {
