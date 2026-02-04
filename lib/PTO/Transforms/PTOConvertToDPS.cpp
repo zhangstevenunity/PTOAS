@@ -51,7 +51,7 @@ struct LoadToDPSPattern : public OpRewritePattern<pto::LoadOp> {
     }
 
     // === Path B: Tile 流程 (Alloc Tile) ===
-    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::UB)) {
+    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 显式分配 Buffer
       Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType, Value(), /*valid_col*/Value());
       
@@ -260,7 +260,7 @@ struct MovToDPSPattern : public OpRewritePattern<pto::MovOp> {
     }
 
     // === Path B: Tile (Alloc) ===
-    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::UB)) {
+    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 分配目标 Buffer
       Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
 
@@ -302,7 +302,7 @@ struct TransposeToDPSPattern : public OpRewritePattern<pto::TransOp> {
     }
 
     // === Path B: Tile 流程 (Alloc Tile) ===
-    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::UB)) {
+    if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 显式分配 Buffer
       Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
       

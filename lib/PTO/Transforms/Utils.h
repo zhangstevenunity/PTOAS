@@ -24,7 +24,7 @@
 namespace mlir {
 namespace pto {
   const std::set<pto::AddressSpace> LocalBufferSpace{
-    pto::AddressSpace::UB, pto::AddressSpace::MAT, pto::AddressSpace::ACC, pto::AddressSpace::LEFT, pto::AddressSpace::RIGHT, pto::AddressSpace::BIAS};
+    pto::AddressSpace::VEC, pto::AddressSpace::MAT, pto::AddressSpace::ACC, pto::AddressSpace::LEFT, pto::AddressSpace::RIGHT, pto::AddressSpace::BIAS};
   constexpr const uint8_t kBitsToByte = 8;
   func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
   std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);

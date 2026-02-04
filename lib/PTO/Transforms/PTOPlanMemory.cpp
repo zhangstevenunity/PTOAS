@@ -739,7 +739,7 @@ void MemPlan::GenerateStorageEntry() {
 }
 
 void MemPlan::PrintSuccessfulAllocatedMaxBits() {
-  auto it = memscope2rootStorageEntry.find(pto::AddressSpace::UB);
+  auto it = memscope2rootStorageEntry.find(pto::AddressSpace::VEC);
   if (it != memscope2rootStorageEntry.end()) {
     assert(it->second != nullptr);
     uint64_t ubAllocBits = it->second->alignedConstBits + it->second->bitsOffset;
@@ -1136,7 +1136,7 @@ void MemPlan::ReportCurEntryDebugInfo(const StorageEntry *curEntry) {
 
 StorageEntry *
 MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
-  if (rootStorageEntry->bufInfo->bufferScope != pto::AddressSpace::UB) {
+  if (rootStorageEntry->bufInfo->bufferScope != pto::AddressSpace::VEC) {
     return rootStorageEntry;
   }
   SmallVector<StorageEntry *> origStorageEntryVec = {rootStorageEntry};
@@ -1207,7 +1207,7 @@ void MemPlan::ReorderContinuousPingPongEntry(
 std::pair<size_t, size_t>
 MemPlan::GetBufferSpaceInfo(pto::AddressSpace &space) const {
   switch (space) {
-  case pto::AddressSpace::UB:
+  case pto::AddressSpace::VEC:
     return std::make_pair(ubAlignSize, ubSpaceSize);
   case pto::AddressSpace::MAT:
     return std::make_pair(l1AlignSize, l1SpaceSize);

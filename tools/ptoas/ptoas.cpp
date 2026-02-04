@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
   
   pm.addPass(pto::createPTOViewToMemrefPass());
   // bufferizationPipeline(pm);
-  pm.addPass(createInferPTOMemScopePass());
+  //pm.addPass(createInferPTOMemScopePass());
   
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;

@@ -1,0 +1,9 @@
+module {
+  func.func @scalar_load_store_kernel_2d(%arg0: memref<32x32xf32>, %arg1: memref<32x32xf32>) {
+    %c0 = arith.constant 0 : index
+    %0 = memref.load %arg0[%c0, %c0] : memref<32x32xf32>
+    memref.store %0, %arg1[%c0, %c0] : memref<32x32xf32>
+    return
+  }
+}
+

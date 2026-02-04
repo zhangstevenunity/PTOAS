@@ -175,7 +175,14 @@ Type TileBufType::parse(AsmParser &parser) {
     return Type();
   }
 
-  auto memorySpace = symbolizeAddressSpace(locStr);
+  auto memorySpace = ::llvm::StringSwitch<::std::optional<AddressSpace>>(locStr)
+        .Case("mat", AddressSpace::MAT)
+        .Case("left", AddressSpace::LEFT)
+        .Case("right", AddressSpace::RIGHT)
+        .Case("acc", AddressSpace::ACC)
+        .Case("vec", AddressSpace::VEC)
+        .Case("bias", AddressSpace::BIAS)
+        .Default(::std::nullopt);
   if (!memorySpace.has_value()) {
     parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
     return Type();
@@ -213,7 +220,15 @@ Type TileBufType::parse(AsmParser &parser) {
 
 static llvm::StringRef stringifyLocFromMemorySpace(mlir::Attribute memorySpace) {
   auto asAttr = llvm::dyn_cast_or_null<AddressSpaceAttr>(memorySpace);
-  return stringifyAddressSpace(asAttr.getAddressSpace());
+  switch (asAttr.getAddressSpace()) {
+    case AddressSpace::MAT: return "mat";
+    case AddressSpace::LEFT: return "left";
+    case AddressSpace::RIGHT: return "right";
+    case AddressSpace::ACC: return "acc";
+    case AddressSpace::VEC: return "vec";
+    case AddressSpace::BIAS: return "bias";
+    default: return "illegal";
+  }
 }
 
 static llvm::StringRef stringifyLocFromPad(mlir::Attribute pad) {

@@ -45,7 +45,7 @@ def PTO_AddressSpace_MAT : I32EnumAttrCase<"MAT", 2, "mat">;
 def PTO_AddressSpace_LEFT : I32EnumAttrCase<"LEFT", 3, "left">;
 def PTO_AddressSpace_RIGHT : I32EnumAttrCase<"RIGHT", 4, "right">;
 def PTO_AddressSpace_ACC : I32EnumAttrCase<"ACC", 5, "acc">;
-def PTO_AddressSpace_UB : I32EnumAttrCase<"UB", 6, "ub">;
+def PTO_AddressSpace_VEC : I32EnumAttrCase<"VEC", 6, "vec">;
 def PTO_AddressSpace_BIAS : I32EnumAttrCase<"BIAS", 7, "bias">;
 
 def PTO_AddressSpaceEnum : PTO_I32Enum<
@@ -56,7 +56,7 @@ def PTO_AddressSpaceEnum : PTO_I32Enum<
     PTO_AddressSpace_LEFT,
     PTO_AddressSpace_RIGHT,
     PTO_AddressSpace_ACC,
-    PTO_AddressSpace_UB,
+    PTO_AddressSpace_VEC,
     PTO_AddressSpace_BIAS
   ]>;
 

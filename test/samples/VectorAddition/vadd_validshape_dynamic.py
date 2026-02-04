@@ -15,7 +15,7 @@ def build():
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
             tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
@@ -23,10 +23,10 @@ def build():
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             
             # [修改] 定义全动态 valid shape 的 TileBufType: valid_shape=[-1, -1] 对应 MLIR 中的 <..., v_row=?, v_col=?>
-            tile_buf_dynamic = pto.TileBufType.get([32, 32], f32, ub, [-1, -1], cfg, ctx)
+            tile_buf_dynamic = pto.TileBufType.get([32, 32], f32, vec, [-1, -1], cfg, ctx)
             
             # 静态 TileBufType (用于对比)
-            tile_buf_static = pto.TileBufType.get([32, 32], f32, ub, [32, 32], cfg, ctx)
+            tile_buf_static = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
             # [修改] 函数签名增加两个 i32 参数: (ptr, ptr, ptr, i32, i32) -> ()
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_f32, i32, i32], [])

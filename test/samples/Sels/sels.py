@@ -14,13 +14,13 @@ def build():
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
             tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
-            tile_buf_32 = pto.TileBufType.get([32, 32], f32, ub, [32, 32], cfg, ctx)
+            tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):

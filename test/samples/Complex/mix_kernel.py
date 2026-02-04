@@ -18,7 +18,7 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
             tile_view_a = pto.PartitionTensorViewType.get([TM, TK], f32, ctx)
             tile_view_b = pto.PartitionTensorViewType.get([TK, TN], f32, ctx)
 
-            ub = pto.AddressSpaceAttr.get(pto.AddressSpace.UB, ctx)
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
             left = pto.AddressSpaceAttr.get(pto.AddressSpace.LEFT, ctx)
             right = pto.AddressSpaceAttr.get(pto.AddressSpace.RIGHT, ctx)
@@ -37,9 +37,9 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
                 pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx), 1024, pd, ctx)
 
             # ub type and layout
-            ub_tile = pto.TileBufType.get([TM, TN], f32, ub, [TM, TN], ub_nd_cfg, ctx)
+            ub_tile = pto.TileBufType.get([TM, TN], f32, vec, [TM, TN], ub_nd_cfg, ctx)
             ub_reduce_tile = pto.TileBufType.get(
-                [TM, 1], f32, ub, [TM, 1], ub_dn_cfg, ctx)
+                [TM, 1], f32, vec, [TM, 1], ub_dn_cfg, ctx)
 
             # cbuf type and layout
             mat_tile_a = pto.TileBufType.get([TM, TK], f32, mat, [TM, TK], cfg_mat, ctx)
