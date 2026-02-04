@@ -1,4 +1,4 @@
-#include "common/pto_instr.hpp"
+#include "pto/pto-inst.hpp"
 using namespace pto;
 __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm__ float* v3, __gm__ float* v4, bool v5) {
   unsigned v6 = 1;
@@ -36,12 +36,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v30 = v28 * v29;
     unsigned v31 = v27 + v30;
     __gm__ float* v32 = v2 + v31;
-    using GTShape_489524496 = pto::Shape<1, 1, 1, 32, 32>;;
-    using GTStride_489524496 = pto::Stride<1024, 1024, 1024, 32, 1>;;
-    GTShape_489524496 v33 = GTShape_489524496();
-    GTStride_489524496 v34 = GTStride_489524496();
-    using GT_489524496 = GlobalTensor<float, GTShape_489524496, GTStride_489524496>;;
-    GT_489524496 v35 = GT_489524496(v32, v33, v34);
+    using GTShape_453814928 = pto::Shape<1, 1, 1, 32, 32>;;
+    using GTStride_453814928 = pto::Stride<8192, 8192, 8192, 256, 1>;;
+    GTShape_453814928 v33 = GTShape_453814928();
+    GTStride_453814928 v34 = GTStride_453814928();
+    using GT_453814928 = GlobalTensor<float, GTShape_453814928, GTStride_453814928>;;
+    GT_453814928 v35 = GT_453814928(v32, v33, v34);
     unsigned v36 = (unsigned) v24;
     unsigned v37 = (unsigned) v10;
     unsigned v38 = v36 * v37;
@@ -50,12 +50,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v41 = v7 * v40;
     unsigned v42 = v39 + v41;
     __gm__ float* v43 = v3 + v42;
-    using GTShape_489524704 = pto::Shape<1, 1, 1, 32, 32>;;
-    using GTStride_489524704 = pto::Stride<1024, 1024, 1024, 32, 1>;;
-    GTShape_489524704 v44 = GTShape_489524704();
-    GTStride_489524704 v45 = GTStride_489524704();
-    using GT_489524704 = GlobalTensor<float, GTShape_489524704, GTStride_489524704>;;
-    GT_489524704 v46 = GT_489524704(v43, v44, v45);
+    using GTShape_453815136 = pto::Shape<1, 1, 1, 32, 32>;;
+    using GTStride_453815136 = pto::Stride<1024, 1024, 1024, 32, 1>;;
+    GTShape_453815136 v44 = GTShape_453815136();
+    GTStride_453815136 v45 = GTStride_453815136();
+    using GT_453815136 = GlobalTensor<float, GTShape_453815136, GTStride_453815136>;;
+    GT_453815136 v46 = GT_453815136(v43, v44, v45);
     unsigned v47 = (unsigned) v10;
     unsigned v48 = v7 * v47;
     unsigned v49 = v7 + v48;
@@ -63,12 +63,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
     unsigned v51 = v7 * v50;
     unsigned v52 = v49 + v51;
     __gm__ float* v53 = v4 + v52;
-    using GTShape_489524912 = pto::Shape<1, 1, 1, 1, 32>;;
-    using GTStride_489524912 = pto::Stride<32, 32, 32, 32, 1>;;
-    GTShape_489524912 v54 = GTShape_489524912();
-    GTStride_489524912 v55 = GTStride_489524912();
-    using GT_489524912 = GlobalTensor<float, GTShape_489524912, GTStride_489524912>;;
-    GT_489524912 v56 = GT_489524912(v53, v54, v55);
+    using GTShape_453817616 = pto::Shape<1, 1, 1, 1, 32>;;
+    using GTStride_453817616 = pto::Stride<32, 32, 32, 32, 1>;;
+    GTShape_453817616 v54 = GTShape_453817616();
+    GTStride_453817616 v55 = GTStride_453817616();
+    using GT_453817616 = GlobalTensor<float, GTShape_453817616, GTStride_453817616>;;
+    GT_453817616 v56 = GT_453817616(v53, v54, v55);
     TLOAD(v16, v35);
     TLOAD(v17, v46);
     if (v5) {
@@ -107,12 +107,12 @@ __global__ AICORE void RunTMATMULSplitK(__gm__ float* v1, __gm__ float* v2, __gm
   unsigned v62 = v7 * v61;
   unsigned v63 = v60 + v62;
   __gm__ float* v64 = v1 + v63;
-  using GTShape_489525088 = pto::Shape<1, 1, 1, 32, 32>;
-  using GTStride_489525088 = pto::Stride<1024, 1024, 1024, 32, 1>;
-  GTShape_489525088 v65 = GTShape_489525088();
-  GTStride_489525088 v66 = GTStride_489525088();
-  using GT_489525088 = GlobalTensor<float, GTShape_489525088, GTStride_489525088>;
-  GT_489525088 v67 = GT_489525088(v64, v65, v66);
+  using GTShape_453817792 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_453817792 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_453817792 v65 = GTShape_453817792();
+  GTStride_453817792 v66 = GTStride_453817792();
+  using GT_453817792 = GlobalTensor<float, GTShape_453817792, GTStride_453817792>;
+  GT_453817792 v67 = GT_453817792(v64, v65, v66);
   TSTORE(v67, v21);
   return;
 }

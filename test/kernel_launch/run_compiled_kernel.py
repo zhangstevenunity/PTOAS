@@ -30,19 +30,14 @@ def load_lib(lib_path):
 
 
 def test_add():
-    device = "npu:1"
+    device = "npu:0"
     torch.set_default_device(device)
     torch.npu.set_device(device)
     dtype = torch.float32
 
-    torch.set_printoptions(
-        threshold=10000,
-        linewidth=300,
-    )
-
 
     # NOTE: fails when k=64/128/256
-    m, k, n = 32, 32, 32
+    m, k, n = 32, 256, 32
     torch.manual_seed(0)
     a = torch.rand((m,k), device=device, dtype=dtype)
     b = torch.rand((k,n), device=device, dtype=dtype)
@@ -59,10 +54,13 @@ def test_add():
     print(a@b)
 
     print('max diff:')
-    print((c-a@b).abs().max())
+    diff = (c-a@b).abs().max()
+    print(diff)
 
-    print('diff')
-    print(c-a@b)
+    if diff != 0.:
+        print('diff')
+        print(c-a@b)
+        assert False, 'Does not match..'
     
 if __name__ == "__main__":
     test_add()
