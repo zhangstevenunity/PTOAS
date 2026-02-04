@@ -36,7 +36,6 @@ def test_add():
     dtype = torch.float32
 
 
-    # NOTE: fails when k=64/128/256
     m, k, n = 32, 256, 32
     torch.manual_seed(0)
     a = torch.rand((m,k), device=device, dtype=dtype)
