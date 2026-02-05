@@ -3620,6 +3620,47 @@ struct PTOShrSToEmitC : public OpConversionPattern<pto::ShrOp_DPS> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// PTOConvert.cpp  (add lowering for TSHLS/TSHRS DPS: shift by scalar)
+//===----------------------------------------------------------------------===//
+
+struct PTOShlSConstToEmitC : public OpConversionPattern<pto::ShlSOp_DPS> {
+  using OpConversionPattern<pto::ShlSOp_DPS>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::ShlSOp_DPS op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value dst    = peelUnrealized(adaptor.getDst());
+    Value src    = peelUnrealized(adaptor.getSrc());
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    SmallVector<Value, 3> operands{dst, src, scalar};
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TSHLS",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOShrSConstToEmitC : public OpConversionPattern<pto::ShrSOp_DPS> {
+  using OpConversionPattern<pto::ShrSOp_DPS>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::ShrSOp_DPS op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value dst    = peelUnrealized(adaptor.getDst());
+    Value src    = peelUnrealized(adaptor.getSrc());
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    SmallVector<Value, 3> operands{dst, src, scalar};
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TSHRS",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TSORT32 DPS/memref op)
@@ -4034,6 +4075,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTORowExpandSubToEmitC>(typeConverter, ctx);
   patterns.add<PTOShrSToEmitC>(typeConverter, ctx);
   patterns.add<PTOShlSToEmitC>(typeConverter, ctx);
+  patterns.add<PTOShlSConstToEmitC>(typeConverter, ctx);
+  patterns.add<PTOShrSConstToEmitC>(typeConverter, ctx);
   patterns.add<PTOSORT32SToEmitC>(typeConverter, ctx);
   patterns.add<PTOSelToEmitC>(typeConverter, ctx);
   patterns.add<PTORowExpandToEmitC>(typeConverter, ctx);

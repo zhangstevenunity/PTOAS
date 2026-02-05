@@ -3132,6 +3132,41 @@ def PTO_ShlOp_DPS : PTO_DpsOp<"shl_dps", []> {
   }];
 }
 //===----------------------------------------------------------------------===//
+// PTOOps.td  (add TSHLS/TSHRS DPS: shift-left/right by scalar)
+//===----------------------------------------------------------------------===//
+
+def PTO_ShlSOp_DPS : PTO_DpsOp<"shls_dps", []> {
+  let summary = "TSHLS: elementwise shift-left by scalar (tilebuf, DPS)";
+  let arguments = (ins
+    PTODpsType:$src,
+    AnyTypeOf<[AnyFloat, AnySignlessInteger, Index]>:$scalar,
+    PTODpsType:$dst
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+
+def PTO_ShrSOp_DPS : PTO_DpsOp<"shrs_dps", []> {
+  let summary = "TSHRS: elementwise shift-right by scalar (tilebuf, DPS)";
+  let arguments = (ins
+    PTODpsType:$src,
+    AnyTypeOf<[AnyFloat, AnySignlessInteger, Index]>:$scalar,
+    PTODpsType:$dst
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+//===----------------------------------------------------------------------===//
 // PTOOps.td  (add TSHR DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
 
@@ -3638,8 +3673,7 @@ def PTO_TCmpOp : PTO_TOp<"tcmp", []> {
     `ins` `(` $src0 `,` $src1
             attr-dict
           `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`   
   }];
 
    let builders = [
@@ -4732,6 +4766,41 @@ def PTO_TShrOp: PTO_TOp<"tshr", []> {
 
   let assemblyFormat = [{
     `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+//===----------------------------------------------------------------------===//
+// PTOOps.td  (add TSHLS/TSHRS TBDPS: shift-left/right by scalar)
+//===----------------------------------------------------------------------===//
+
+def PTO_TShlSOp : PTO_TOp<"tshls", []> {
+  let summary = "TSHLS: Elementwise shift-left of a tile by a scalar (shift count).";
+  let arguments = (ins
+    PTODpsType:$src,
+    AnyTypeOf<[AnyFloat, AnySignlessInteger, Index]>:$scalar,
+    PTODpsType:$dst
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+}
+
+def PTO_TShrSOp : PTO_TOp<"tshrs", []> {
+  let summary = "TSHRS: Elementwise shift-right of a tile by a scalar (shift count).";
+  let arguments = (ins
+    PTODpsType:$src,
+    AnyTypeOf<[AnyFloat, AnySignlessInteger, Index]>:$scalar,
+    PTODpsType:$dst
+  );
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];

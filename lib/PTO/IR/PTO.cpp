@@ -2673,6 +2673,51 @@ mlir::LogicalResult mlir::pto::ShrOp_DPS::verify() {
 
   return mlir::success();
 }
+//===----------------------------------------------------------------------===//
+// PTO.cpp  (add verifier for TSHLS/TSHRS DPS/memref op)
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult mlir::pto::ShlSOp_DPS::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects memref types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped memrefs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::ShrSOp_DPS::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects memref types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped memrefs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
 
 //===----------------------------------------------------------------------===//
 // PTO.cpp - Fixes for deprecated and erroneous Type methods
@@ -4019,6 +4064,52 @@ mlir::LogicalResult mlir::pto::TMulsOp::verify() {
 
   return mlir::success();
 }
+//===----------------------------------------------------------------------===//
+// PTO.cpp  (add verifier for TSHLS/TSHRS tilebuf op)
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult mlir::pto::TShlSOp::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects tilebuf types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped tilebufs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::TShrSOp::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects tilebuf types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped tilebufs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TNEG DPS/tilebuf op)
 //===----------------------------------------------------------------------===//

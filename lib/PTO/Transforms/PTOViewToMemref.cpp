@@ -2206,6 +2206,24 @@ struct PTOViewToMemrefPass
             dst);
       }
 
+      SmallVector<mlir::pto::TShlSOp, 8> shlsops;
+      func.walk([&](mlir::pto::TShlSOp op) { shlsops.push_back(op); });
+      for (auto op : shlsops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::ShlSOp_DPS>(
+            op, op.getSrc(), op.getScalar(), op.getDst());
+      }
+
+      SmallVector<mlir::pto::TShrSOp, 8> shrsops;
+      func.walk([&](mlir::pto::TShrSOp op) { shrsops.push_back(op); });
+      for (auto op : shrsops) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::ShrSOp_DPS>(
+            op, op.getSrc(), op.getScalar(), op.getDst());
+      }
+
       SmallVector<mlir::pto::TSort32Op , 8> sort32ops;
       func.walk([&](mlir::pto::TSort32Op  op) { sort32ops.push_back(op); });
 
