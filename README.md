@@ -222,4 +222,24 @@ python3 ./tmatmulk.py > ./tmatmulk.pto
 ./build/tools/ptoas/ptoas ./tmatmulk.pto -o ./tmatmulk.cpp
 ```
 
+### 5.4 上板验证
+
+该流程用于将 `test/samples` 下生成的 `.cpp`（PTOAS 输出）自动生成 NPU 验证用例，并在 NPU 上运行。
+
+```bash
+# 1) 生成 npu_validation 测试目录（会在当前 sample 目录下创建 npu_validation/）
+python3 test/npu_validation/scripts/generate_testcase.py \
+  --input test/samples/Abs/abs-pto.cpp \
+  --run-mode npu \
+  --soc-version Ascend910B1
+
+# 2) 运行验证（run.sh 无需额外参数）
+test/samples/Abs/npu_validation/run.sh
+```
+
+说明：
+- `npu_validation/` 下会生成 `abs_kernel.cpp / main.cpp / golden.py / compare.py / run.sh / CMakeLists.txt`
+- `golden.py` 默认生成随机输入，输出默认全零（只保证输入/输出数量、shape、datatype 与 kernel 参数一致）
+- `compare.py` 负责对比 `golden*.bin` 与 `output*.bin`，不一致时会报错
+
 ---

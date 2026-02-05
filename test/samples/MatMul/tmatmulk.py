@@ -1,16 +1,13 @@
 from mlir.ir import (
     Context, Location, InsertionPoint,
-    Attribute, IndexType, IntegerType, F16Type, F32Type, StringAttr
+    IndexType, IntegerType, F16Type, F32Type, StringAttr
 )
 from mlir.dialects import func, arith, scf, pto, builtin
+from mlir.dialects.pto import (
+    TLOAD, TMOV_M2L, TMATMUL, TSTORE_ACC,
+    EVENT_ID0
+)
 from mlir.dialects.arith import CmpIPredicate
-
-
-def parse_attr(s: str, what: str):
-    try:
-        return Attribute.parse(s)
-    except Exception as e:
-        raise RuntimeError(f"Failed to parse {what} attr from: {s}\nError: {e}")
 
 
 def _idx_const(v: int):
@@ -127,13 +124,6 @@ def build(
         tile_buf_cTile = pto.TileBufType.get([M, N], t_out, acc, [M,N], cfg_acc)
         tile_buf_biasTile = pto.TileBufType.get([1, N], t_bias, bias, [1, N], cfg_bias)
 
-        # ---- enum attrs ----
-        EVENT_ID0 = parse_attr("#pto.event<EVENT_ID0>", "EVENT_ID0")
-        PIPE_MTE2 = parse_attr("#pto.pipe<PIPE_MTE2>", "PIPE_MTE2")
-        PIPE_MTE1 = parse_attr("#pto.pipe<PIPE_MTE1>", "PIPE_MTE1")
-        PIPE_M = parse_attr("#pto.pipe<PIPE_M>", "PIPE_M")
-        PIPE_FIX = parse_attr("#pto.pipe<PIPE_FIX>", "PIPE_FIX")
-
         # ---- function ----
         # (out, A, B, bias, isBias)
         fn_ty = func.FunctionType.get([ptr_out, ptr_a, ptr_b, ptr_bias, i1], [])
@@ -208,8 +198,8 @@ def build(
                     scf.YieldOp([])
 
                 # ---- sync: MTE2 -> MTE1 ----
-                pto.SetFlagOp(PIPE_MTE2, PIPE_MTE1, EVENT_ID0)
-                pto.WaitFlagOp(PIPE_MTE2, PIPE_MTE1, EVENT_ID0)
+                pto.record_event(TLOAD, TMOV_M2L, EVENT_ID0)
+                pto.wait_event  (TLOAD, TMOV_M2L, EVENT_ID0)
 
                 # ---- TMOV ----
                 # TMOV 也传对应 tile 的 valid dims（a/b/bias）
@@ -224,8 +214,8 @@ def build(
                     scf.YieldOp([])
 
                 # ---- sync: MTE1 -> M ----
-                pto.SetFlagOp(PIPE_MTE1, PIPE_M, EVENT_ID0)
-                pto.WaitFlagOp(PIPE_MTE1, PIPE_M, EVENT_ID0)
+                pto.record_event(TMOV_M2L, TMATMUL, EVENT_ID0)
+                pto.wait_event  (TMOV_M2L, TMATMUL, EVENT_ID0)
 
                 # ---- i == 0 ? (bias? TMATMUL_BIAS : TMATMUL) : TMATMUL_ACC ----
                 is_i0 = arith.CmpIOp(CmpIPredicate.eq, i, c0).result
@@ -252,14 +242,14 @@ def build(
                     scf.YieldOp([])
 
                 # ---- sync: M -> MTE2 ----
-                pto.SetFlagOp(PIPE_M, PIPE_MTE2, EVENT_ID0)
-                pto.WaitFlagOp(PIPE_M, PIPE_MTE2, EVENT_ID0)
+                pto.record_event(TMATMUL, TLOAD, EVENT_ID0)
+                pto.wait_event  (TMATMUL, TLOAD, EVENT_ID0)
 
                 scf.YieldOp([])
 
             # ---- after loop ----
-            pto.SetFlagOp(PIPE_M, PIPE_FIX, EVENT_ID0)
-            pto.WaitFlagOp(PIPE_M, PIPE_FIX, EVENT_ID0)
+            pto.record_event(TMATMUL, TSTORE_ACC, EVENT_ID0)
+            pto.wait_event  (TMATMUL, TSTORE_ACC, EVENT_ID0)
 
             # ---- TSTORE ----
             # 写回 OUT，传 C 的 valid dims

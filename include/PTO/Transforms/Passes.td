@@ -58,6 +58,17 @@ def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   ];
 }
 
+def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
+  let summary = "Infer GlobalTensor layout (ND/DN/NZ) for make_tensor_view";
+  let description = [{
+    For each pto.make_tensor_view with fully static shape/stride, compute layout
+    (ND/DN/NZ) per design rules and attach the optional `layout` attribute.
+    Dynamic stride/shape are left unset.
+  }];
+  let constructor = "mlir::pto::createInferPTOLayoutPass()";
+  let dependentDialects = ["pto::PTODialect", "arith::ArithDialect"];
+}
+
 
 def InferPTOMemScope : Pass<"pto-infer-mem-scope"> {
   let summary = "Infer memory scope for PTO Ops";
@@ -89,6 +100,19 @@ def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
     Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
            /*default=*/"false",
            "restrict memory inplace as isa, default : false">,
+  ];
+}
+def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
+  let summary = "Lower high-level sync ops to low-level pipe ops";
+  let description = [{
+    Converts high-level `pto.record_event` and `pto.wait_event` operations
+    into low-level `pto.set_flag` and `pto.wait_flag` operations based on
+    hardware pipe mapping logic.
+  }];
+
+  let constructor = "mlir::pto::createLoweringSyncToPipePass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
   ];
 }
 

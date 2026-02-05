@@ -65,7 +65,8 @@ def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyType:$ptr,
     Variadic<Index>:$shape,
-    Variadic<Index>:$strides
+    Variadic<Index>:$strides,
+    OptionalAttr<PTO_LayoutAttr>:$layout
   );
 
   let results = (outs AnyType:$result);
@@ -1187,6 +1188,60 @@ def GetSubBlockNumOp : PTO_Op<"get_subblock_num", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
+// High-Level Synchronization Ops
+//===----------------------------------------------------------------------===//
+
+def PTO_RecordEventOp : PTO_Op<"record_event"> {
+  let summary = "Record an event for synchronization (High Level)";
+  let description = [{
+    Records an event from a source operation type to a destination operation type.
+    Will be lowered to `pto.set_flag` based on op-to-pipe mapping.
+  }];
+  let arguments = (ins
+    PTO_SyncOpTypeAttr:$src_op,
+    PTO_SyncOpTypeAttr:$dst_op,
+    PTO_EventAttr:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_op `,` $dst_op `,` $event_id `]` attr-dict
+  }];
+}
+
+def PTO_WaitEventOp : PTO_Op<"wait_event"> {
+  let summary = "Wait for an event (High Level)";
+  let description = [{
+    Waits for an event from a source operation type to a destination operation type.
+    Will be lowered to `pto.wait_flag` based on op-to-pipe mapping.
+  }];
+  let arguments = (ins
+    PTO_SyncOpTypeAttr:$src_op,
+    PTO_SyncOpTypeAttr:$dst_op,
+    PTO_EventAttr:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_op `,` $dst_op `,` $event_id `]` attr-dict
+  }];
+}
+
+// High-Level Barrier (single pipe) with op type mapping
+def PTO_BarrierSyncOp : PTO_Op<"barrier_sync"> {
+  let summary = "High-level barrier mapped from SyncOpType to PIPE";
+  let description = [{
+    A convenience barrier that specifies a SyncOpType instead of PIPE. The lowering
+    pass maps the op type to the corresponding hardware pipe and emits `pto.barrier`.
+  }];
+  let arguments = (ins
+    PTO_SyncOpTypeAttr:$op_type
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $op_type `]` attr-dict
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 
@@ -1463,7 +1518,7 @@ def MGatherDpsOp : PTO_DpsOp<"mgather_dps", []> {
 
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
-def TMGatherOp : PTO_TOp<"tmgather", []> {
+def TMGatherOp : PTO_TOp<"mgather", []> {
   let summary = "Gather-load elements from memory into a tile using per-element indices (tile world, ins/outs).";
 
   let arguments = (ins
@@ -1638,7 +1693,7 @@ def TGetValOp : PTO_TOp<"tgetval", []> {
 
 // ---- tile-world TOp version (with 't') ----
 // pto.tmscatter ins(%src, %idx) outs(%mem) [ ...]
-def TMScatterOp : PTO_TOp<"tmscatter", []> {
+def TMScatterOp : PTO_TOp<"mscatter", []> {
   let summary = "Scatter-store elements from a tile into memory using per-element indices (tile world, ins/outs).";
 
   let arguments = (ins
@@ -1663,35 +1718,6 @@ def TMScatterOp : PTO_TOp<"tmscatter", []> {
 }
 
 //===----------------------------------------------------------------------===//
-// MSCATTER (sync form)
-// pto.mscatter %src, %mem, %idx : memref<...>, memref<...>, memref<...>
-//===----------------------------------------------------------------------===//
-
-def PTO_MScatterOp : PTO_Op<"mscatter", []> {
-  let summary = "Scatter-store elements from a tile into global memory using per-element indices";
-  let description = [{
-    For each element (i, j): mem[idx[i,j]] = src[i,j].
-    If multiple elements map to same destination, final value is impl-defined.
-  }];
-
-  let arguments = (ins
-    AnyMemRef:$src,
-    AnyMemRef:$mem,
-    AnyMemRef:$idx
-  );
-
-  let results = (outs);
-
-  let assemblyFormat = [{
-    $src `,` $mem `,` $idx `:` qualified(type($src)) `,` type($mem) `,` type($idx) attr-dict
-  }];
-
-  let hasVerifier = 1;
-}
-
-
-
-//===----------------------------------------------------------------------===//
 // TABS (sync, dps style)
 // dst = abs(src) elementwise
 //===----------------------------------------------------------------------===//
@@ -1707,24 +1733,16 @@ def PTO_AbsOp_DPS : PTO_DpsOp<"abs_dps", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs); 
 
   let assemblyFormat = [{
     `ins` `(` $src `:` qualified(type($src)) `)` `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
-  let builders = [
-    // 1. Basic: (src, dst)
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst), [{
-      build($_builder, $_state, res, src, dst, 
-            /*init_out_buffer=*/nullptr); 
-    }]>];
 
   let hasVerifier = 1;
 
@@ -1747,8 +1765,7 @@ def PTO_AddOp_DPS : PTO_DpsOp<"add_dps", []> {
   let arguments = (ins
     PTODpsType:$src0,
     PTODpsType:$src1,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -1756,7 +1773,6 @@ def PTO_AddOp_DPS : PTO_DpsOp<"add_dps", []> {
   let assemblyFormat = [{
     `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }]; 
 
@@ -1784,24 +1800,15 @@ def PTO_AddCOp_DPS : PTO_DpsOp<"addc_dps", []> {
     PTODpsType:$src0,
     PTODpsType:$src1,
     PTODpsType:$src2,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
-  let builders = [
-    // 1. Basic: (src, dst)
-    OpBuilder<(ins "TypeRange":$res, "Value":$src0, "Value":$src1, "Value":$src2, "Value":$dst), [{
-      build($_builder, $_state, res, src0, src1, src2, dst, 
-            /*init_out_buffer=*/nullptr); 
-    }]>
-  ];
 
   let assemblyFormat = [{
     `ins` `(` $src0 `,` $src1 `,` $src2 `:`
           qualified(type($src0)) `,` qualified(type($src1)) `,` qualified(type($src2)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
@@ -1822,8 +1829,7 @@ def PTO_AddSOp_DPS : PTO_DpsOp<"adds_dps", []> {
   let arguments = (ins
     PTODpsType:$src,
     AnyType:$scalar,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -1831,17 +1837,8 @@ def PTO_AddSOp_DPS : PTO_DpsOp<"adds_dps", []> {
   let assemblyFormat = [{
     `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
-
-  let builders = [
-    // 1. Basic: (src, dst)
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$scalar, "Value":$dst), [{
-      build($_builder, $_state, res, src, scalar, dst, 
-            /*init_out_buffer=*/nullptr); 
-    }]>
-  ];
 
   let hasVerifier = 1;
 }
@@ -2319,7 +2316,7 @@ def PTO_GatherbOp_DPS : PTO_DpsOp<"gatherb_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $offsets `:` type($offsets) `)`
+    `ins` `(` $src `,` $offsets `:` qualified(type($src)) `,` type($offsets) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2366,7 +2363,7 @@ def PTO_LReluOp_DPS : PTO_DpsOp<"lrelu_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $slope `)`
+    `ins` `(` $src `,` $slope `:` qualified(type($src)) `,` type($slope) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2389,7 +2386,7 @@ def PTO_MaxOp_DPS : PTO_DpsOp<"max_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2412,7 +2409,7 @@ def PTO_MaxSOp_DPS : PTO_DpsOp<"maxs_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $scalar `)`
+    `ins` `(` $src0 `,` $scalar `:` qualified(type($src0)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2435,7 +2432,7 @@ def PTO_MinOp_DPS : PTO_DpsOp<"min_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2459,7 +2456,7 @@ def PTO_MinsOp_DPS : PTO_DpsOp<"mins_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2483,7 +2480,7 @@ def PTO_MovFPOp_DPS : PTO_DpsOp<"mov_fp_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $fp `:` qualified(type($fp)) `)`
+    `ins` `(` $src `,` $fp `:` qualified(type($src)) `,` qualified(type($fp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2530,7 +2527,7 @@ def PTO_MulOp_DPS : PTO_DpsOp<"mul_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2620,7 +2617,7 @@ def PTO_OrOp_DPS : PTO_DpsOp<"or_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2643,7 +2640,7 @@ def PTO_OrsOp_DPS : PTO_DpsOp<"ors_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $scalar `:` type($scalar) `)`
+    `ins` `(` $src0 `,` $scalar `:` qualified(type($src0)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2666,7 +2663,7 @@ def PTO_PartAddOp_DPS : PTO_DpsOp<"partadd_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2689,7 +2686,7 @@ def PTO_PartMaxOp_DPS : PTO_DpsOp<"partmax_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2712,7 +2709,7 @@ def PTO_PartMinOp_DPS : PTO_DpsOp<"partmin_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2735,7 +2732,7 @@ def PTO_PreluOp_DPS : PTO_DpsOp<"prelu_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2810,7 +2807,7 @@ def PTO_RemOp_DPS : PTO_DpsOp<"rem_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2833,7 +2830,7 @@ def PTO_RemSOp_DPS : PTO_DpsOp<"rems_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3129,7 +3126,7 @@ def PTO_ShlOp_DPS : PTO_DpsOp<"shl_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3152,7 +3149,7 @@ def PTO_ShrOp_DPS : PTO_DpsOp<"shr_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3435,15 +3432,13 @@ def PTO_TAbsOp : PTO_TOp<"tabs", [
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs); 
 
   let assemblyFormat = [{
     `ins` `(` $src `:` qualified(type($src)) `)` `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
@@ -3467,8 +3462,7 @@ def PTO_TAddOp : PTO_TOp<"tadd", [
   let arguments = (ins
     PTODpsType:$src0,
     PTODpsType:$src1,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -3476,7 +3470,6 @@ def PTO_TAddOp : PTO_TOp<"tadd", [
   let assemblyFormat = [{
     `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
@@ -3503,8 +3496,7 @@ def PTO_TAddCOp : PTO_TOp<"taddc", []> {
     PTODpsType:$src0,
     PTODpsType:$src1,
     PTODpsType:$src2,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -3513,7 +3505,6 @@ def PTO_TAddCOp : PTO_TOp<"taddc", []> {
     `ins` `(` $src0 `,` $src1 `,` $src2 `:`
           qualified(type($src0)) `,` qualified(type($src1)) `,` qualified(type($src2)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
@@ -3530,8 +3521,7 @@ def PTO_TAddSOp : PTO_TOp<"tadds", []> {
   let arguments = (ins
     PTODpsType:$src,
     AnyType:$scalar,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$init_out_buffer
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -3539,7 +3529,6 @@ def PTO_TAddSOp : PTO_TOp<"tadds", []> {
   let assemblyFormat = [{
     `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`init_out_buffer` `=` $init_out_buffer^)?
     attr-dict
   }];
 
@@ -3647,10 +3636,10 @@ def PTO_TCmpOp : PTO_TOp<"tcmp", []> {
 
   let assemblyFormat = [{
     `ins` `(` $src0 `,` $src1
-          (`{` `cmpMode` `=` $cmpMode^ `}`)?
+            attr-dict
           `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
+    
   }];
 
    let builders = [
@@ -3676,10 +3665,10 @@ def PTO_TCmpSOp : PTO_TOp<"tcmps", []> {
 
   let assemblyFormat = [{
     `ins` `(` $src `,` $scalar
-          (`{` `cmpMode` `=` $cmpMode^ `}`)?
+          attr-dict
           `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
+    
   }];
 }
 
@@ -3775,9 +3764,10 @@ def PTO_TCvtOp : PTO_TOp<"tcvt", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    `ins` `(` $src 
     attr-dict
+    `:` qualified(type($src)) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
   }];
 }
 
@@ -3812,8 +3802,7 @@ def PTO_TDivSOp : PTO_TOp<"tdivs", []> {
   let arguments = (ins
     PTODpsType:$src,
     AnyType:$scalar,
-    PTODpsType:$dst,
-    OptionalAttr<BoolAttr>:$scalar_lhs
+    PTODpsType:$dst
   );
 
   let results = (outs);
@@ -3822,10 +3811,6 @@ def PTO_TDivSOp : PTO_TOp<"tdivs", []> {
 
   let hasCustomAssemblyFormat = 1;
 
-  let builders = [
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$scalar, "Value":$dst), [{
-      build($_builder, $_state, res, src, scalar, dst, /*scalar_lhs=*/nullptr); 
-    }]>];
 }
 
 def PTO_TExpOp : PTO_TOp<"texp", []> {
@@ -3951,7 +3936,7 @@ def PTO_TGatherbOp : PTO_TOp<"tgatherb", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $offsets `:` type($offsets) `)`
+    `ins` `(` $src `,` $offsets `:` qualified(type($src)) `,` type($offsets) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3990,7 +3975,7 @@ def PTO_TLReluOp : PTO_TOp<"tlrelu", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $slope `)`
+    `ins` `(` $src `,` $slope `:` qualified(type($src)) `,` type($slope) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4010,7 +3995,7 @@ def PTO_TMaxOp : PTO_TOp<"tmax", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4030,7 +4015,7 @@ def PTO_TMaxSOp : PTO_TOp<"tmaxs", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4050,7 +4035,7 @@ def PTO_TMinOp : PTO_TOp<"tmin", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4070,7 +4055,7 @@ def PTO_TMinsOp : PTO_TOp<"tmins", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4090,7 +4075,7 @@ def PTO_TMovFPOp : PTO_TOp<"tmov_fp", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $fp `:` qualified(type($fp)) `)`
+    `ins` `(` $src `,` $fp `:` qualified(type($src)) `,` qualified(type($fp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4131,7 +4116,7 @@ def PTO_TMulOp: PTO_TOp<"tmul", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4222,7 +4207,7 @@ def PTO_TOrOp: PTO_TOp<"tor", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4245,7 +4230,7 @@ def PTO_TOrsOp: PTO_TOp<"tors", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `:` type($scalar) `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4268,7 +4253,7 @@ def PTO_TPartAddOp: PTO_TOp<"tpartadd", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4291,7 +4276,7 @@ def PTO_TPartMaxOp: PTO_TOp<"tpartmax", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4314,7 +4299,7 @@ def PTO_TPartMinOp: PTO_TOp<"tpartmin", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4337,7 +4322,7 @@ def PTO_TPreluOp: PTO_TOp<"tprelu", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4404,7 +4389,7 @@ def PTO_TRemOp: PTO_TOp<"trem", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4427,7 +4412,7 @@ def PTO_TRemSOp: PTO_TOp<"trems", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `,` $scalar `)`
+    `ins` `(` $src `,` $scalar `:` qualified(type($src)) `,` type($scalar) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4676,7 +4661,7 @@ def PTO_TSelOp: PTO_TOp<"tsel", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $mask `:` qualified(type($mask) ) `,` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $mask `,` $src0 `,` $src1 `:` qualified(type($mask)) `,` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4700,7 +4685,7 @@ def PTO_TSelsOp: PTO_TOp<"tsels", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `,` $selectMode `:` type($selectMode) `)`
+    `ins` `(` $src0 `,` $src1 `,` $selectMode `:` qualified(type($src0)) `,` qualified(type($src1)) `,` type($selectMode) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4723,7 +4708,7 @@ def PTO_TShlOp: PTO_TOp<"tshl", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4746,7 +4731,7 @@ def PTO_TShrOp: PTO_TOp<"tshr", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src0 `:` qualified(type($src0)) `,` $src1 `:` qualified(type($src1)) `)`
+    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];

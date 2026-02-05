@@ -67,6 +67,14 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOPadValueAttrGet(MlirContext ctx, int32_t
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTORoundModeAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsARoundModeAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTORoundModeAttrGetValue(MlirAttribute attr);
+// ---- SyncOpType attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOSyncOpTypeAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsASyncOpTypeAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOSyncOpTypeAttrGetValue(MlirAttribute attr);
+// ---- Event attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAEventAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOEventAttrGetValue(MlirAttribute attr);
 
 // ---- CmpMode (compare mode for cmp/cvt) ----
 typedef enum MlirPTOCmpMode {

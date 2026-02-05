@@ -15,18 +15,21 @@ def build_pingpong():
             # 1. 极简类型定义 (隐藏了所有复杂性)
             # ======================================================
             
-            # 自动创建带 stride<[?,1]> 和 <gm> 的复杂 MemRef
-            # 就像 pto.TensorViewType.get(...) 一样简单
-            gm_type = pto.get_gm_type([32, 32], f32, ctx)
+            # 使用指针 + make_tensor_view 包装 GM 数据
+            ptr_f32 = pto.PtrType.get(f32, ctx)
             
-            # 自动应用 <ub> 空间和连续 Layout
-            # 写法回归到最原始的简单形式
-            ws_type = pto.TileBufType.get([32, 64], f32, context=ctx)
+            # 显式指定 UB 空间、valid shape、config（新版接口不再有简化重载）
+            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
+            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+            pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 32], cfg, ctx)
 
             # ======================================================
             # 2. 逻辑主体
             # ======================================================
-            fn_ty = func.FunctionType.get([gm_type, gm_type, ws_type], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ws_type], [])
             
             with InsertionPoint(m.body):
                 fn = func.FuncOp("test_double_buffer_step", fn_ty)
@@ -35,17 +38,29 @@ def build_pingpong():
             with InsertionPoint(entry):
                 gm_src, gm_dst, workspace = entry.arguments
                 c0 = arith.ConstantOp(idx, 0).result
+                c1 = arith.ConstantOp(idx, 1).result
                 c32 = arith.ConstantOp(idx, 32).result
+
+                # Wrap GM memrefs as tensor_view and create full partitions
+                tv_src = pto.MakeTensorViewOp(pto.TensorViewType.get(2, f32, ctx),
+                                             gm_src, [c32, c32], [c32, c1]).result
+                tv_dst = pto.MakeTensorViewOp(pto.TensorViewType.get(2, f32, ctx),
+                                             gm_dst, [c32, c32], [c32, c1]).result
+                sv_src = pto.PartitionViewOp(pto.PartitionTensorViewType.get([32,32], f32, ctx),
+                                             tv_src, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv_dst = pto.PartitionViewOp(pto.PartitionTensorViewType.get([32,32], f32, ctx),
+                                             tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
                 
                 # Subset: Ping [0,0], Pong [0,32]
                 # 这里不需要指定 Result 类型，C++ 会自动推导
-                ping = pto.SubsetOp(workspace, [c0, c0], sizes=[c32, c32]).result
-                pong = pto.SubsetOp(workspace, [c0, c32], sizes=[c32, c32]).result
-                
+                # Subset sizes must be static (I64ArrayAttr); offsets must be SSA.
+                ping = pto.SubsetOp(workspace, [c0, c0], sizes=[32, 32]).result
+                pong = pto.SubsetOp(workspace, [c0, c32], sizes=[32, 32]).result
+
                 # DPS: Compute, Prefetch, WriteBack
                 pto.TAddOp(ping, ping, ping)
-                pto.TLoadOp(None, gm_src, pong, [])
-                pto.TStoreOp(None, ping, gm_dst, [])
+                pto.TLoadOp(None, sv_src, pong)
+                pto.TStoreOp(None, ping, sv_dst)
                 
                 func.ReturnOp([])
             

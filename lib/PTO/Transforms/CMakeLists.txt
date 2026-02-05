@@ -11,6 +11,7 @@ add_mlir_dialect_library(PTOTransforms
   InferPTOMemScope.cpp
   PTOPlanMemory.cpp
   PTORemoveRedundantBarrier.cpp
+  InferPTOLayout.cpp
   BufferizableOpInterfaceImpl.cpp
   ConvertToPTOOp.cpp
   PTOHighDimLowering.cpp
@@ -23,6 +24,7 @@ add_mlir_dialect_library(PTOTransforms
   RemoveRedundantSync.cpp
   SyncEventIdAllocation.cpp
   SyncCodegen.cpp
+  LoweringSyncToPipe.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO

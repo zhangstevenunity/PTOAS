@@ -51,7 +51,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)  # result=None
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
-                pto.TRecipOp(tb0, tb1)
+                pto.TRemOp(tb0, tb1, tb2)
 
                 # Replaced immediate numbers with constants c0 and c32
                 sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
