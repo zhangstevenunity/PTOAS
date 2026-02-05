@@ -90,6 +90,11 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+static llvm::cl::opt<bool> disableInferLayout(
+    "disable-infer-layout",
+    llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
+    llvm::cl::init(true)); // 默认关闭，需显式开启
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -153,10 +158,13 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertCVMovPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   
   pm.addPass(pto::createPTOViewToMemrefPass());
+  if (!disableInferLayout)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   // bufferizationPipeline(pm);
-  pm.addPass(createInferPTOMemScopePass());
+  //pm.addPass(createInferPTOMemScopePass());
   
   PlanMemoryOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;

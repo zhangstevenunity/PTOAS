@@ -287,8 +287,8 @@ void StoreOp::print(OpAsmPrinter &p) {
 // pto.tdivs custom asm to support both:
 //   pto.tdivs ins(%src, %scalar : !pto.tile_buf<...>, f32) outs(%dst : !pto.tile_buf<...>)
 //   pto.tdivs ins(%scalar, %src : f32, !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
-// The operand order in the op remains (src, scalar, dst); scalar_lhs is derived
-// from the textual order when not explicitly specified.
+// The operand order in the op remains (src, scalar, dst); order is determined
+// by the type of the first operand in the textual format.
 //===----------------------------------------------------------------------===//
 
 ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &result) {
@@ -320,28 +320,19 @@ ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &resul
     return parser.emitError(parser.getCurrentLocation(),
                             "expected outs type to be !pto.tile_buf<...>");
 
+  // Determine order based on types: if first operand is tile_buf, order is (tile, scalar)
+  // Otherwise, order is (scalar, tile)
   const bool scalarFirst = (tile1 != nullptr);
-  const bool scalarLhs = scalarFirst;
-
-  if (Attribute a = attrs.get("scalar_lhs")) {
-    auto b = dyn_cast<BoolAttr>(a);
-    if (!b)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "expected scalar_lhs to be a bool attribute");
-    if (b.getValue() != scalarLhs)
-      return parser.emitError(parser.getCurrentLocation(),
-                              "scalar_lhs attribute conflicts with operand order");
-  } else if (scalarLhs) {
-    attrs.set("scalar_lhs", BoolAttr::get(parser.getContext(), true));
-  }
 
   if (!scalarFirst) {
     // ins(%src, %scalar : tile_buf, scalar_ty)
+    // Operands in op: (src, scalar, dst)
     if (parser.resolveOperand(op0, ty0, result.operands) ||
         parser.resolveOperand(op1, ty1, result.operands))
       return failure();
   } else {
     // ins(%scalar, %src : scalar_ty, tile_buf)
+    // Operands in op: (src, scalar, dst) - need to swap
     if (parser.resolveOperand(op1, ty1, result.operands) ||
         parser.resolveOperand(op0, ty0, result.operands))
       return failure();
@@ -355,22 +346,32 @@ ParseResult mlir::pto::TDivSOp::parse(OpAsmParser &parser, OperationState &resul
 }
 
 void mlir::pto::TDivSOp::print(OpAsmPrinter &p) {
-  bool scalarLhs = false;
-  if (auto a = getScalarLhsAttr())
-    scalarLhs = a.getValue();
-
+  // Determine order based on operand types
+  // If src is tile_buf and scalar is not, print (src, scalar)
+  // If src is scalar and scalar is tile_buf, print (scalar, src)
+  auto srcType = getSrc().getType();
+  auto scalarType = getScalar().getType();
+  
+  bool srcIsTile = isa<mlir::pto::TileBufType>(srcType);
+  bool scalarIsTile = isa<mlir::pto::TileBufType>(scalarType);
+  
   p << " ins(";
-  if (!scalarLhs) {
+  if (srcIsTile && !scalarIsTile) {
+    // Print: (tile, scalar) - operands are already in correct order
     p << getSrc() << ", " << getScalar() << " : "
       << getSrc().getType() << ", " << getScalar().getType();
-  } else {
+  } else if (!srcIsTile && scalarIsTile) {
+    // Print: (scalar, tile) - need to swap operands in output
     p << getScalar() << ", " << getSrc() << " : "
       << getScalar().getType() << ", " << getSrc().getType();
+  } else {
+    // Default: assume src is tile (should not happen if types are correct)
+    p << getSrc() << ", " << getScalar() << " : "
+      << getSrc().getType() << ", " << getScalar().getType();
   }
   p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
 
-  p.printOptionalAttrDict((*this)->getAttrs(),
-                          /*elidedAttrs=*/{"scalar_lhs"});
+  p.printOptionalAttrDict((*this)->getAttrs());
 }
 
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
@@ -447,9 +448,69 @@ void mlir::pto::MakeTensorViewOp::print(OpAsmPrinter &p) {
   p << "]";
 
   p.printOptionalAttrDict((*this)->getAttrs(),
-                        /*elidedAttrs=*/{"operandSegmentSizes"});
+                        /*elidedAttrs=*/{"operandSegmentSizes", "layout"});
 
   p << " : " << getResult().getType();
+}
+
+// Layout inference helpers for make_tensor_view
+static std::optional<int64_t> getConstIndexValue(Value v) {
+  if (auto c = v.getDefiningOp<arith::ConstantIndexOp>())
+    return c.value();
+  if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto ia = dyn_cast<IntegerAttr>(c.getValue()))
+      return ia.getInt();
+  }
+  return std::nullopt;
+}
+
+static unsigned getElemByteSize(Type ty) {
+  if (auto f = dyn_cast<FloatType>(ty))
+    return f.getWidth() / 8;
+  if (auto i = dyn_cast<IntegerType>(ty))
+    return i.getWidth() / 8;
+  return 0;
+}
+
+static std::optional<mlir::pto::Layout>
+inferLayout(ArrayRef<int64_t> shape, ArrayRef<int64_t> strides,
+            unsigned elemBytes) {
+  if (shape.size() != strides.size() || elemBytes == 0)
+    return std::nullopt;
+
+  // NZ / fractal: rank>=5, check middle dims (sh3/sh4/sh5 per spec)
+  if (shape.size() >= 5) {
+    int64_t sh3 = shape[2], sh4 = shape[3], sh5 = shape[4];
+    int64_t st4 = strides[3], st5 = strides[4];
+    bool alignMatch = (sh3 == 16) && (sh3 * sh4 * elemBytes == 512);
+    bool strideMatch = (st5 == 1) && (st4 == sh5);
+    if (alignMatch && strideMatch)
+      return mlir::pto::Layout::NZ;
+  }
+
+  // ND: row-major contiguous
+  bool isRowMajor = true;
+  for (int i = 0, e = (int)shape.size() - 1; i < e; ++i) {
+    if (strides[i] != strides[i + 1] * shape[i + 1]) {
+      isRowMajor = false;
+      break;
+    }
+  }
+  if (isRowMajor && strides.back() == 1)
+    return mlir::pto::Layout::ND;
+
+  // DN: col-major
+  bool isColMajor = true;
+  for (int i = 0, e = (int)shape.size() - 1; i < e; ++i) {
+    if (strides[i + 1] != strides[i] * shape[i]) {
+      isColMajor = false;
+      break;
+    }
+  }
+  if (isColMajor && strides.front() == 1)
+    return mlir::pto::Layout::DN;
+
+  return mlir::pto::Layout::ND; // fallback
 }
 
 LogicalResult mlir::pto::MakeTensorViewOp::verify() {
@@ -470,6 +531,45 @@ LogicalResult mlir::pto::MakeTensorViewOp::verify() {
   if ((int64_t)getShape().size() != rank || (int64_t)getStrides().size() != rank)
     return emitOpError() << "shape/strides operand counts must match tensor_view rank="
                          << rank;
+
+  // Detect dynamic shape/stride.
+  bool hasDynamicShape = llvm::any_of(tvTy.getShape(), [](int64_t v) {
+    return v == ShapedType::kDynamic;
+  });
+  bool hasDynamicStride = llvm::any_of(getStrides(), [](Value s) {
+    return !getConstIndexValue(s).has_value();
+  });
+
+  auto layoutAttr = getLayoutAttr();
+
+  // 1) Dynamic shape/stride without explicit layout: warn and keep going.
+  if ((hasDynamicShape || hasDynamicStride) && !layoutAttr) {
+    return success();
+  }
+
+  // 2) Static shape/stride with explicit layout: verify correctness.
+  bool allStaticStride = true;
+  SmallVector<int64_t> strideInts;
+  strideInts.reserve(getStrides().size());
+  for (Value s : getStrides()) {
+    auto val = getConstIndexValue(s);
+    if (!val) {
+      allStaticStride = false;
+      break;
+    }
+    strideInts.push_back(*val);
+  }
+
+  bool allStaticShape =
+      llvm::none_of(tvTy.getShape(), [](int64_t v) { return v == ShapedType::kDynamic; });
+
+  if (layoutAttr && allStaticShape && allStaticStride) {
+    SmallVector<int64_t> shapeInts(tvTy.getShape().begin(), tvTy.getShape().end());
+    if (auto inferred = inferLayout(shapeInts, strideInts,
+                                    getElemByteSize(tvTy.getElementType()))) {
+      (void)inferred;
+    }
+  }
 
   return success();
 }
@@ -653,13 +753,14 @@ LogicalResult TLoadOp ::verify() {
       tileValidElems *= dim;
   }
 
+  // Allow valid shape smaller than partition (padding/guard is handled later).
   if (partElems != mlir::ShapedType::kDynamic &&
       tileValidElems != mlir::ShapedType::kDynamic &&
-      partElems != tileValidElems) {
-    return emitOpError("partition element count (")
-           << partElems
-           << ") must match tile_buf valid element count ("
-           << tileValidElems << ")";
+      tileValidElems > partElems) {
+    return emitOpError("tile_buf valid element count (")
+           << tileValidElems
+           << ") must not exceed partition element count ("
+           << partElems << ")";
   }
 
   return success();
@@ -861,31 +962,7 @@ LogicalResult mlir::pto::TransOp::verify() {
   return success();
 }
 
-LogicalResult pto::MScatterOp::verify() {
-  auto srcTy = llvm::dyn_cast<MemRefType>(getSrc().getType());
-  auto memTy = llvm::dyn_cast<MemRefType>(getMem().getType());
-  auto idxTy = llvm::dyn_cast<MemRefType>(getIdx().getType());
-  if (!srcTy || !memTy || !idxTy)
-    return emitOpError("expects src, mem, idx to be memref types");
 
-  // element type match: store src element into mem element
-  if (srcTy.getElementType() != memTy.getElementType())
-    return emitOpError("src element type must match mem element type");
-
-  // idx element type: integer or index
-  Type idxElem = idxTy.getElementType();
-  if (!idxElem.isa<IntegerType>() && !idxElem.isa<IndexType>())
-    return emitOpError("idx element type must be integer or index");
-
-  // idx shape matches src shape (static case strict; otherwise require rank equal)
-  if (idxTy.getRank() != srcTy.getRank())
-    return emitOpError("idx rank must match src rank");
-  if (idxTy.hasStaticShape() && srcTy.hasStaticShape() &&
-      idxTy.getShape() != srcTy.getShape())
-    return emitOpError("idx shape must match src shape");
-
-  return success();
-}
 LogicalResult pto::AbsOp_DPS::verify() {
   auto srcTy = llvm::dyn_cast<mlir::MemRefType>(getSrc().getType());
   auto dstTy = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());

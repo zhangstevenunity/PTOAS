@@ -254,6 +254,36 @@ int32_t mlirPTORoundModeAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getValue());
 }
 
+MlirAttribute mlirPTOSyncOpTypeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto mode = static_cast<mlir::pto::SyncOpType>(value);
+  return wrap(mlir::pto::SyncOpTypeAttr::get(c, mode));
+}
+
+bool mlirPTOAttrIsASyncOpTypeAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::SyncOpTypeAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOSyncOpTypeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::SyncOpTypeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getOpType());
+}
+
+MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::EVENT>(value);
+  return wrap(mlir::pto::EventAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsAEventAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::EventAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOEventAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::EventAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getEvent());
+}
+
 bool mlirAttributeIsAPTOCmpModeAttr(MlirAttribute attr) {
   return mlir::isa<mlir::pto::CmpModeAttr>(unwrap(attr));
 }

@@ -1,0 +1,64 @@
+#include "pto/pto-inst.hpp"
+using namespace pto;
+__global__ AICORE void vec_add_kernel_2d(__gm__ float* v1, __gm__ float* v2, __gm__ float* v3) {
+  unsigned v4 = 1;
+  unsigned v5 = 0;
+  int32_t v6 = 32;
+  int32_t v7 = 1;
+  int64_t v8 = 0;
+  int64_t v9 = 4096;
+  int64_t v10 = 8192;
+  using T = float;
+  unsigned v11 = (unsigned) v6;
+  unsigned v12 = v5 * v11;
+  unsigned v13 = v5 + v12;
+  unsigned v14 = (unsigned) v7;
+  unsigned v15 = v5 * v14;
+  unsigned v16 = v13 + v15;
+  __gm__ float* v17 = v1 + v16;
+  using GTShape_94603868260048 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_94603868260048 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_94603868260048 v18 = GTShape_94603868260048();
+  GTStride_94603868260048 v19 = GTStride_94603868260048();
+  using GT_94603868260048 = GlobalTensor<float, GTShape_94603868260048, GTStride_94603868260048>;
+  GT_94603868260048 v20 = GT_94603868260048(v17, v18, v19);
+  unsigned v21 = (unsigned) v6;
+  unsigned v22 = v5 * v21;
+  unsigned v23 = v5 + v22;
+  unsigned v24 = (unsigned) v7;
+  unsigned v25 = v5 * v24;
+  unsigned v26 = v23 + v25;
+  __gm__ float* v27 = v2 + v26;
+  using GTShape_94603868260224 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_94603868260224 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_94603868260224 v28 = GTShape_94603868260224();
+  GTStride_94603868260224 v29 = GTStride_94603868260224();
+  using GT_94603868260224 = GlobalTensor<float, GTShape_94603868260224, GTStride_94603868260224>;
+  GT_94603868260224 v30 = GT_94603868260224(v27, v28, v29);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> v31;
+  TASSIGN(v31, v8);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> v32;
+  TASSIGN(v32, v9);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> v33;
+  TASSIGN(v33, v10);
+  TLOAD(v31, v20);
+  TLOAD(v32, v30);
+  TADD(v33, v31, v32);
+  unsigned v34 = (unsigned) v6;
+  unsigned v35 = v5 * v34;
+  unsigned v36 = v5 + v35;
+  unsigned v37 = (unsigned) v7;
+  unsigned v38 = v5 * v37;
+  unsigned v39 = v36 + v38;
+  __gm__ float* v40 = v3 + v39;
+  using GTShape_94603868260400 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_94603868260400 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  GTShape_94603868260400 v41 = GTShape_94603868260400();
+  GTStride_94603868260400 v42 = GTStride_94603868260400();
+  using GT_94603868260400 = GlobalTensor<float, GTShape_94603868260400, GTStride_94603868260400>;
+  GT_94603868260400 v43 = GT_94603868260400(v40, v41, v42);
+  TSTORE(v43, v33);
+  return;
+}
+
+

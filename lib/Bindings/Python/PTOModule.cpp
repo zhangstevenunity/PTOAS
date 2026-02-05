@@ -100,6 +100,31 @@ PYBIND11_MODULE(_pto, m) {
       .value("GE", MlirPTOCmpMode_GE)
       .export_values();
 
+    py::enum_<mlir::pto::SyncOpType>(m, "SyncOpType")
+      .value("TLOAD", mlir::pto::SyncOpType::TLOAD)
+      .value("TSTORE_ACC", mlir::pto::SyncOpType::TSTORE_ACC)
+      .value("TSTORE_VEC", mlir::pto::SyncOpType::TSTORE_VEC)
+      .value("TMOV_M2L", mlir::pto::SyncOpType::TMOV_M2L)
+      .value("TMOV_M2S", mlir::pto::SyncOpType::TMOV_M2S)
+      .value("TMOV_M2B", mlir::pto::SyncOpType::TMOV_M2B)
+      .value("TMOV_M2V", mlir::pto::SyncOpType::TMOV_M2V)
+      .value("TMOV_V2M", mlir::pto::SyncOpType::TMOV_V2M)
+      .value("TMATMUL", mlir::pto::SyncOpType::TMATMUL)
+      .value("TVEC", mlir::pto::SyncOpType::TVEC)
+      .value("TVECWAIT_EVENT", mlir::pto::SyncOpType::TVECWAIT_EVENT)
+      .export_values();
+
+    py::enum_<mlir::pto::EVENT>(m, "EVENT")
+      .value("EVENT_ID0", mlir::pto::EVENT::EVENT_ID0)
+      .value("EVENT_ID1", mlir::pto::EVENT::EVENT_ID1)
+      .value("EVENT_ID2", mlir::pto::EVENT::EVENT_ID2)
+      .value("EVENT_ID3", mlir::pto::EVENT::EVENT_ID3)
+      .value("EVENT_ID4", mlir::pto::EVENT::EVENT_ID4)
+      .value("EVENT_ID5", mlir::pto::EVENT::EVENT_ID5)
+      .value("EVENT_ID6", mlir::pto::EVENT::EVENT_ID6)
+      .value("EVENT_ID7", mlir::pto::EVENT::EVENT_ID7)
+      .export_values();
+
     mlir_attribute_subclass(m, "BLayoutAttr",
                         [](MlirAttribute a) -> bool {
                           // 我们这里用“i32 integer attr”表示 enum，所以只要是 i32 IntegerAttr 就 accept
@@ -206,6 +231,56 @@ PYBIND11_MODULE(_pto, m) {
           "value",
           [](MlirAttribute self) {
             return mlirPTOCmpModeAttrGetValue(self);
+          });
+
+    mlir_attribute_subclass(
+        m, "SyncOpTypeAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsASyncOpTypeAttr(a); })
+      .def_classmethod(
+          "get",
+          [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = py::cast<int32_t>(value);
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error("SyncOpTypeAttr.get expects int or SyncOpType enum");
+            }
+            MlirAttribute a = mlirPTOSyncOpTypeAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOSyncOpTypeAttrGetValue(self);
+          });
+
+    mlir_attribute_subclass(
+        m, "EventAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsAEventAttr(a); })
+      .def_classmethod(
+          "get",
+          [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = py::cast<int32_t>(value);
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error("EventAttr.get expects int or EVENT enum");
+            }
+            MlirAttribute a = mlirPTOEventAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOEventAttrGetValue(self);
           });
 
     // [保留 Feature]: GM Type Factory

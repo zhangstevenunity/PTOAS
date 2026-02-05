@@ -129,12 +129,9 @@ struct TAddToAddDPSPattern : public OpRewritePattern<pto::TAddOp> {
     Value b   = op.getSrc1();
     Value out = op.getDst();
 
-    mlir::BoolAttr init = op.getInitOutBufferAttr(); 
-
     rewriter.replaceOpWithNewOp<pto::AddOp_DPS>(
         op,
-        a, b, out,
-        init 
+        a, b, out
     );
     return success();
   }

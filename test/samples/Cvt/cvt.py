@@ -20,7 +20,7 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            rmode_attr = pto.RoundModeAttr.get(pto.RoundMode.CAST_RINT, ctx)
+            rmode_attr = pto.RoundModeAttr.get(pto.RoundMode.ROUND, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)

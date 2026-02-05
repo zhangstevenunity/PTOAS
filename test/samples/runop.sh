@@ -114,6 +114,8 @@ process_one_dir() {
   local files=()
   if [[ "$A" == "Partition5D" ]]; then
     files=("partition5d.py" "partition5d_dynamic.py")
+  elif [[ "$A" == "LayoutInference" ]]; then
+    files=("layout_inference.py")
   else
     files=("$(lcfirst "$A").py")
   fi
