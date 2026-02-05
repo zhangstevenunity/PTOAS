@@ -753,13 +753,14 @@ LogicalResult TLoadOp ::verify() {
       tileValidElems *= dim;
   }
 
+  // Allow valid shape smaller than partition (padding/guard is handled later).
   if (partElems != mlir::ShapedType::kDynamic &&
       tileValidElems != mlir::ShapedType::kDynamic &&
-      partElems != tileValidElems) {
-    return emitOpError("partition element count (")
-           << partElems
-           << ") must match tile_buf valid element count ("
-           << tileValidElems << ")";
+      tileValidElems > partElems) {
+    return emitOpError("tile_buf valid element count (")
+           << tileValidElems
+           << ") must not exceed partition element count ("
+           << partElems << ")";
   }
 
   return success();
