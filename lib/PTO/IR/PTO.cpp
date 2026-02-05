@@ -4115,6 +4115,10 @@ LogicalResult SetValDpsOp::verify() {
 LogicalResult MatmulBiasDpsOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
 }
+
+LogicalResult GemvBiasDpsOp::verify() {
+  return success();
+}
 LogicalResult MatmulMxDpsOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
 }
@@ -5543,6 +5547,10 @@ LogicalResult mlir::pto::MatmulOp::verify() {
 LogicalResult mlir::pto::MatmulDpsOp::verify() {
   return success();
 //  Type dstTy = getDst().getType();
+}
+
+LogicalResult mlir::pto::GemvDpsOp::verify() {
+  return success();
 
 //  // 1. 如果是 TileBufType，直接通过验证 (或者做简单的类型检查)
 //  // TileBuf 是我们新引入的类型，不属于 ShapedType (Tensor/MemRef)
@@ -5609,6 +5617,10 @@ LogicalResult mlir::pto::MatmulAccOp::verify() {
 LogicalResult mlir::pto::MatmulAccDpsOp::verify() {
   return success();
 //  bool hasResult = (getOperation()->getNumResults() == 1);
+}
+
+LogicalResult mlir::pto::GemvAccDpsOp::verify() {
+  return success();
 
 //  auto dstShaped = dyn_cast<ShapedType>(getDst().getType());
 //  if (!dstShaped || !dstShaped.hasRank())
@@ -5753,6 +5765,25 @@ LogicalResult mlir::pto::MatmulDpsOp::inferReturnTypes(
   return success();
 }
 
+LogicalResult mlir::pto::GemvDpsOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ValueRange operands, DictionaryAttr attributes,
+    OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  (void)context;
+  (void)location;
+  (void)attributes;
+  (void)properties;
+  (void)regions;
+
+  if (operands.size() < 3)
+    return failure();
+  Type dstTy = operands[2].getType();
+  if (auto rt = dyn_cast<RankedTensorType>(dstTy))
+    inferredReturnTypes.push_back(rt);
+  return success();
+}
+
 static RankedTensorType inferAccReturnFromAccIn(ValueRange operands) {
   if (operands.empty())
     return RankedTensorType();
@@ -5780,6 +5811,25 @@ LogicalResult mlir::pto::MatmulAccOp::inferReturnTypes(
 }
 
 LogicalResult mlir::pto::MatmulAccDpsOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ValueRange operands, DictionaryAttr attributes,
+    OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  (void)context;
+  (void)location;
+  (void)attributes;
+  (void)properties;
+  (void)regions;
+
+  if (operands.size() < 4)
+    return failure();
+  Type dstTy = operands[3].getType();
+  if (auto rt = dyn_cast<RankedTensorType>(dstTy))
+    inferredReturnTypes.push_back(rt);
+  return success();
+}
+
+LogicalResult mlir::pto::GemvAccDpsOp::inferReturnTypes(
     MLIRContext *context, std::optional<Location> location,
     ValueRange operands, DictionaryAttr attributes,
     OpaqueProperties properties, RegionRange regions,
@@ -6240,6 +6290,13 @@ void MatmulDpsOp::getEffects(
   
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
+
+void GemvDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
  
 // 5. AddFDpsOp: Read(lhs, rhs) -> Write(dst)
 void AddFDpsOp::getEffects(
@@ -6335,6 +6392,32 @@ void TMatmulBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Memor
   addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
   // 这里的 bias 是必选的 AnyType:$bias，所以是 Singleton
+  addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvOp ===
+// Read: lhs, rhs, Write: dst
+void TGemvOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvAccOp ===
+// Read: acc_in, lhs, rhs, Write: dst
+void TGemvAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAccInMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvBiasOp ===
+// Read: a, b, bias, Write: dst
+void TGemvBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }

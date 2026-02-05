@@ -787,6 +787,44 @@ struct PTOViewToMemrefPass
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
       }
 
+      // --- TGemvOp [Lhs, Rhs, Dst] ---
+      SmallVector<mlir::pto::TGemvOp , 8> gemvs;
+      func.walk([&](mlir::pto::TGemvOp  op) { gemvs.push_back(op); });
+      for (auto op : gemvs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        
+        Value lhs = op->getOperand(0);
+        Value rhs = op->getOperand(1);
+        Value dst = op->getOperand(2);
+
+        auto config = lookupConfig(lhs);
+
+        rewriter.replaceOpWithNewOp<pto::GemvDpsOp>(
+          op, TypeRange{}, lhs, rhs, dst);
+      }
+
+      // --- TGemvAccOp [Acc, Lhs, Rhs, Dst] ---
+      SmallVector<mlir::pto::TGemvAccOp , 8> gemvAccs;
+      func.walk([&](mlir::pto::TGemvAccOp  op) { gemvAccs.push_back(op); });
+      for (auto op : gemvAccs) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::GemvAccDpsOp>(
+          op, TypeRange{}, 
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
+      }
+
+      // --- TGemvBiasOp [Acc, Lhs, Rhs, Bias, Dst] ---
+      SmallVector<mlir::pto::TGemvBiasOp , 8> gemvBiass;
+      func.walk([&](mlir::pto::TGemvBiasOp  op) { gemvBiass.push_back(op); });
+      for (auto op : gemvBiass) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        rewriter.replaceOpWithNewOp<pto::GemvBiasDpsOp>(
+          op, TypeRange{}, 
+          op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
+      }
 
       // --- TMovOp [Src, Dst] ---
       SmallVector<mlir::pto::TMovOp , 8> movs;
