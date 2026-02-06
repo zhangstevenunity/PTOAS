@@ -861,7 +861,7 @@ struct PTOViewToMemrefPass
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         rewriter.replaceOpWithNewOp<pto::RowMaxOp_DPS>(
-            op, op->getOperand(0), op->getOperand(1));
+            op, TypeRange{}, op.getSrc(), op.getTmp(), op.getDst());
       }
 
       SmallVector<mlir::pto::TRowSumOp, 8> rowsum;
@@ -870,7 +870,7 @@ struct PTOViewToMemrefPass
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
         rewriter.replaceOpWithNewOp<pto::RowSumOp_DPS>(
-            op, op->getOperand(0), op->getOperand(1));
+            op, TypeRange{}, op.getSrc(), op.getTmp(), op.getDst());
       }
 
       SmallVector<mlir::pto::TAbsOp, 8> abseops;

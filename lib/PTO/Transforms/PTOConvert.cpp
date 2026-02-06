@@ -3570,9 +3570,10 @@ struct PTORowMaxToEmitC : public OpConversionPattern<pto::RowMaxOp_DPS> {
     auto loc = op.getLoc();
 
     Value src = peelUnrealized(adaptor.getSrc());
+    Value tmp = peelUnrealized(adaptor.getTmp());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 3> operands{dst, src};
+    SmallVector<Value, 3> operands{dst, src, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TROWMAX",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -3620,9 +3621,10 @@ struct PTORowSumToEmitC : public OpConversionPattern<pto::RowSumOp_DPS> {
     auto loc = op.getLoc();
 
     Value src = peelUnrealized(adaptor.getSrc());
+    Value tmp = peelUnrealized(adaptor.getTmp());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 3> operands{dst, src};
+    SmallVector<Value, 3> operands{dst, src, tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TROWSUM",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

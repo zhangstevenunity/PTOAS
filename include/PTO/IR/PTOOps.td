@@ -2427,7 +2427,7 @@ def PTO_ExtractOp_DPS : PTO_DpsOp<"extract_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `[` $indexRow `,` $indexCol `]` `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` type($indexRow) `,` type($indexCol) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3150,6 +3150,7 @@ def PTO_RowMaxOp_DPS : PTO_DpsOp<"rowmax_dps", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -3158,7 +3159,7 @@ def PTO_RowMaxOp_DPS : PTO_DpsOp<"rowmax_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3195,6 +3196,7 @@ def PTO_RowSumOp_DPS : PTO_DpsOp<"rowsum_dps", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -3203,7 +3205,7 @@ def PTO_RowSumOp_DPS : PTO_DpsOp<"rowsum_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3843,9 +3845,10 @@ def PTO_TCIOp : PTO_TOp<"tci", []> {
   let results = (outs);
 
   let assemblyFormat = [{
-    `ins` `(` $S `:` type($S) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    `ins` `(` $S 
     attr-dict
+    `:` type($S) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
   }];
 
   let hasVerifier = 1;
@@ -4095,7 +4098,7 @@ def PTO_TExtractOp : PTO_TOp<"textract", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src`[` $indexRow `,` $indexCol`]` `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` type($indexRow) `,` type($indexCol) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4755,6 +4758,7 @@ def PTO_TRowMaxOp: PTO_TOp<"trowmax", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -4763,7 +4767,7 @@ def PTO_TRowMaxOp: PTO_TOp<"trowmax", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4800,6 +4804,7 @@ def PTO_TRowSumOp: PTO_TOp<"trowsum", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -4808,7 +4813,7 @@ def PTO_TRowSumOp: PTO_TOp<"trowsum", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];

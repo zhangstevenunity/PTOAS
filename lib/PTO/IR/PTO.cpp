@@ -2682,15 +2682,16 @@ mlir::LogicalResult mlir::pto::RowExpandSubOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowMaxOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -2727,15 +2728,16 @@ mlir::LogicalResult mlir::pto::RowMinOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowSumOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -4903,15 +4905,16 @@ mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -4948,15 +4951,16 @@ mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowSumOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())

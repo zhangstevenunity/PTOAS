@@ -45,12 +45,14 @@ def build():
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_32).result
+                tb_tmp = pto.AllocTileOp(tile_buf_32).result
                 tb1 = pto.AllocTileOp(tile_buf_32).result
 
                 # pto.load_dps_tb ins(%sv) outs(%tb)
                 pto.TLoadOp(None, sv0, tb0)
 
-                pto.TRowMaxOp(tb0, tb1)
+                # pto.trowmax ins(%src, %tmp) outs(%dst)
+                pto.TRowMaxOp(tb0, tb_tmp, tb1)
 
                 # %8 = subview on output tensor_view
                 sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
