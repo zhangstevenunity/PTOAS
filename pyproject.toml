@@ -1,0 +1,23 @@
+# pyproject.toml - Project metadata
+#
+# NOTE: This project has a complex build process that requires LLVM/MLIR to be
+# built first. The wheel is created from MLIR's python packages directory, not
+# from this repo root. See .github/workflows/build_wheel.yml for the full build
+# process.
+
+[project]
+name = "ptoas"
+version = "0.1.0"
+description = "PTO Assembler & Optimizer"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]

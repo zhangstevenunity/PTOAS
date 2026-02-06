@@ -1,0 +1,211 @@
+name: Build Wheel
+
+on:
+  push:
+    tags-ignore:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  LLVM_TAG: llvmorg-19.1.7
+
+jobs:
+  build_wheel:
+    name: Build wheel (Python ${{ matrix.python }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+        arch: ["x86_64", "aarch64"]
+
+    container:
+      image: quay.io/pypa/manylinux_2_34_${{ matrix.arch }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set Python version
+        run: |
+          case "${{ matrix.python }}" in
+            "3.9")  PY_VER="cp39-cp39" ;;
+            "3.10") PY_VER="cp310-cp310" ;;
+            "3.11") PY_VER="cp311-cp311" ;;
+            "3.12") PY_VER="cp312-cp312" ;;
+            *)      PY_VER="cp311-cp311" ;;
+          esac
+          echo "PY_VER=$PY_VER" >> $GITHUB_ENV
+          echo "PY_PATH=/opt/python/$PY_VER" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          dnf install -y ninja-build cmake git ccache gcc-c++ lld zip
+          dnf clean all
+
+      - name: Install Python dependencies
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          pip install --no-cache-dir numpy pybind11 nanobind setuptools wheel auditwheel
+
+      - name: Set build directories
+        run: |
+          echo "WORKSPACE_DIR=/llvm-workspace" >> $GITHUB_ENV
+          echo "LLVM_SOURCE_DIR=/llvm-workspace/llvm-project" >> $GITHUB_ENV
+          echo "LLVM_BUILD_DIR=/llvm-workspace/llvm-project/build-shared" >> $GITHUB_ENV
+          echo "PTO_SOURCE_DIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "PTO_INSTALL_DIR=$GITHUB_WORKSPACE/install" >> $GITHUB_ENV
+
+      - name: Cache LLVM build
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: /llvm-workspace/llvm-project/build-shared
+          key: llvm-${{ env.LLVM_TAG }}-manylinux_2_34-${{ matrix.arch }}-${{ matrix.python }}-v1
+
+      - name: Prepare LLVM source
+        run: |
+          mkdir -p $LLVM_SOURCE_DIR
+          cd $LLVM_SOURCE_DIR
+          if [ ! -d .git ]; then
+            git init
+            git remote add origin https://github.com/llvm/llvm-project.git
+          fi
+          git fetch --depth 1 origin tag ${{ env.LLVM_TAG }}
+          git checkout ${{ env.LLVM_TAG }}
+
+      - name: Build LLVM/MLIR
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          cd $LLVM_SOURCE_DIR
+          cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
+            -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+            -DPython3_EXECUTABLE=${PY_PATH}/bin/python \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TARGETS_TO_BUILD="host"
+          ninja -C $LLVM_BUILD_DIR
+
+      # Upload cache immediately after the build step , to avoid `build-shared` directory get polluted by later steps.
+      - name: Save LLVM cache
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /llvm-workspace/llvm-project/build-shared
+          key: llvm-${{ env.LLVM_TAG }}-manylinux_2_34-${{ matrix.arch }}-${{ matrix.python }}-v1
+
+      - name: Build PTOAS
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          cd $PTO_SOURCE_DIR
+          cmake -G Ninja \
+            -S . \
+            -B build \
+            -DLLVM_DIR=$LLVM_BUILD_DIR/lib/cmake/llvm \
+            -DMLIR_DIR=$LLVM_BUILD_DIR/lib/cmake/mlir \
+            -DPython3_ROOT_DIR=${PY_PATH} \
+            -DPython3_EXECUTABLE=${PY_PATH}/bin/python \
+            -DPython3_FIND_STRATEGY=LOCATION \
+            -Dpybind11_DIR=$(${PY_PATH}/bin/python -m pybind11 --cmakedir) \
+            -DMLIR_PYTHON_PACKAGE_DIR=${LLVM_BUILD_DIR}/tools/mlir/python_packages/mlir_core \
+            -DCMAKE_INSTALL_PREFIX=${PTO_INSTALL_DIR}
+          ninja -C build
+          ninja -C build install
+
+      - name: Create Python wheel
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          bash $PTO_SOURCE_DIR/docker/create_wheel.sh
+
+      - name: Repair wheel with auditwheel
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          export LD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:$LD_LIBRARY_PATH
+          cd $PY_PACKAGE_DIR
+          auditwheel repair --plat manylinux_2_34_${{ matrix.arch }} dist/ptoas*.whl -w wheelhouse
+
+      - name: Test wheel installation
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          pip install $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl
+          bash $PTO_SOURCE_DIR/docker/test_wheel_imports.sh
+
+      - name: Test ptoas CLI
+        run: |
+          export PATH="${PY_PATH}/bin:$PATH"
+          bash $PTO_SOURCE_DIR/docker/test_ptoas_cli.sh
+
+      - name: Copy wheel to workspace
+        run: |
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          mkdir -p $GITHUB_WORKSPACE/wheelhouse
+          cp $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl $GITHUB_WORKSPACE/wheelhouse/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptoas-wheel-py${{ matrix.python }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+
+      - name: Collect ptoas binary and dependencies
+        if: matrix.python == '3.11'
+        run: |
+          bash $PTO_SOURCE_DIR/docker/collect_ptoas_dist.sh $GITHUB_WORKSPACE/ptoas-dist
+
+      - name: Upload ptoas binary artifact
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptoas-bin-${{ matrix.arch }}
+          path: ptoas-dist/
+
+  upload_release_assets:
+    name: Upload release assets
+    if: github.event_name == 'release'
+    needs: build_wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ptoas-wheel-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download x86_64 binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ptoas-bin-x86_64
+          path: release-artifacts/ptoas-bin-x86_64
+
+      - name: Download aarch64 binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ptoas-bin-aarch64
+          path: release-artifacts/ptoas-bin-aarch64
+
+      - name: Package ptoas binaries
+        run: |
+          set -euo pipefail
+          tar -czf "release-artifacts/ptoas-bin-x86_64.tar.gz" \
+            -C "release-artifacts/ptoas-bin-x86_64" .
+          tar -czf "release-artifacts/ptoas-bin-aarch64.tar.gz" \
+            -C "release-artifacts/ptoas-bin-aarch64" .
+
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/*.whl
+            release-artifacts/*.tar.gz

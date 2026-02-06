@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name="ptoas",
-    version="0.1.0",
+    version="0.1.1",
     description="PTO Assembler & Optimizer",
     # NOTE: find_namespace_packages detects folders even without __init__.py
     packages=find_namespace_packages(),
