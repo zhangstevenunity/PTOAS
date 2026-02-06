@@ -1,0 +1,28 @@
+module {
+  func.func @relu_kernel_blocked(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = pto.get_block_idx
+    %1 = pto.get_subblock_idx
+    %2 = pto.get_subblock_num
+    %3 = arith.muli %0, %2 : i64
+    %4 = arith.addi %3, %1 : i64
+    %5 = arith.index_cast %4 : i64 to index
+    %6 = arith.muli %5, %c128 : index
+    %7 = pto.make_tensor_view %arg0, shape = [%c32, %c1024] strides = [%c1024, %c1] : !pto.tensor_view<?x?xf32>
+    %8 = pto.make_tensor_view %arg1, shape = [%c32, %c1024] strides = [%c1024, %c1] : !pto.tensor_view<?x?xf32>
+    %9 = pto.partition_view %7, offsets = [%c0, %6], sizes = [%c32, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x128xf32>
+    %10 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %11 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%9 : !pto.partition_tensor_view<32x128xf32>) outs(%10 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tlrelu ins(%10 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, %cst) outs(%11 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %12 = pto.partition_view %8, offsets = [%c0, %6], sizes = [%c32, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x128xf32>
+    pto.tstore ins(%11 : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=128, v_row=32, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%12 : !pto.partition_tensor_view<32x128xf32>)
+    return
+  }
+}
+
