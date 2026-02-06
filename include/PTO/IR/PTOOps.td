@@ -1242,6 +1242,27 @@ def PTO_BarrierSyncOp : PTO_Op<"barrier_sync"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Section Ops (Macros Containers)
+//===----------------------------------------------------------------------===//
+
+class PTO_SectionOp<string mnemonic>
+    : PTO_Op<mnemonic, [SingleBlock, NoTerminator]> {
+  let summary = "Container for core-specific code guarded by macros";
+  let description = [{
+    During conversion to EmitC, this op is lowered to:
+    emitc.verbatim("#if defined(MACRO)")
+    ... inlined body ...
+    emitc.verbatim("#endif")
+  }];
+
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$body attr-dict";
+}
+
+def SectionCubeOp : PTO_SectionOp<"section.cube">;
+def SectionVectorOp : PTO_SectionOp<"section.vector">;
+
+//===----------------------------------------------------------------------===//
 // Synchronization Ops
 //===----------------------------------------------------------------------===//
 

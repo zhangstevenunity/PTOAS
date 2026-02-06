@@ -48,3 +48,17 @@ add_mlir_dialect_library(PTOTransforms
   MLIRTensorDialect
   MLIRSCFToEmitC
 )
+
+install(TARGETS PTOTransforms
+  EXPORT PTOASTargets      # 将此 Target 加入导出集
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+
+# 设置头文件包含路径，确保自动获得头文件路径
+target_include_directories(PTOTransforms INTERFACE
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)

@@ -4007,6 +4007,43 @@ public:
   }
 };
 
+//===----------------------------------------------------------------------===//
+// Section Op Lowering
+//===----------------------------------------------------------------------===//
+template <typename SectionOpTy>
+struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
+  using OpConversionPattern<SectionOpTy>::OpConversionPattern;
+
+  std::string getMacroName() const {
+    if (std::is_same<SectionOpTy, pto::SectionCubeOp>::value)
+      return "__DAV_CUBE__";
+    if (std::is_same<SectionOpTy, pto::SectionVectorOp>::value)
+      return "__DAV_VEC__";
+    return "UNKNOWN_MACRO";
+  }
+
+  LogicalResult
+  matchAndRewrite(SectionOpTy op, typename SectionOpTy::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    std::string startMacro = "\n#if defined(" + getMacroName() + ")";
+    rewriter.create<emitc::VerbatimOp>(loc, startMacro);
+
+    Block &innerBlock = op.getBody().front();
+    if (!innerBlock.empty()) {
+      rewriter.inlineBlockBefore(&innerBlock, op.getOperation(), ValueRange{});
+    }
+
+    std::string endMacro = "#endif // " + getMacroName() + "\n";
+    rewriter.create<emitc::VerbatimOp>(loc, endMacro);
+
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
 static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
                                        TypeConverter &typeConverter,
                                        MLIRContext *ctx,
@@ -4108,6 +4145,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ArithCastOPToEmitC>(typeConverter, ctx);
   patterns.add<PTOSyncSetToEmitC>(typeConverter, ctx);
   patterns.add<PTOSyncWaitToEmitC>(typeConverter, ctx);
+  patterns.add<SectionToEmitC<pto::SectionCubeOp>>(typeConverter, ctx);
+  patterns.add<SectionToEmitC<pto::SectionVectorOp>>(typeConverter, ctx);
   patterns.add<PTOGetBlockIdxToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetBlockNumToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetSubBlockIdxToEmitC>(typeConverter, ctx);
