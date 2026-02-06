@@ -31,44 +31,48 @@ def build():
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
+                vec_section = pto.SectionVectorOp()
+                vec_block = vec_section.body.blocks.append()
+                
+                with InsertionPoint(vec_block):
                 # constants
-                c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
-                c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
-                c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-                c128 = arith.ConstantOp(IndexType.get(ctx), 128).result
-                c1024 = arith.ConstantOp(IndexType.get(ctx), 1024).result
+                    c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
+                    c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
+                    c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
+                    c128 = arith.ConstantOp(IndexType.get(ctx), 128).result
+                    c1024 = arith.ConstantOp(IndexType.get(ctx), 1024).result
 
-                scale = arith.ConstantOp(f32, 0.0).result  # relu threshold
+                    scale = arith.ConstantOp(f32, 0.0).result  # relu threshold
 
-                arg0, arg1 = entry.arguments
+                    arg0, arg1 = entry.arguments
 
-                cid = pto.GetBlockIdxOp().result
-                sub_bid = pto.GetSubBlockIdxOp().result
-                sub_bnum = pto.GetSubBlockNumOp().result
+                    cid = pto.GetBlockIdxOp().result
+                    sub_bid = pto.GetSubBlockIdxOp().result
+                    sub_bnum = pto.GetSubBlockNumOp().result
 
-                cidmul = arith.MulIOp(cid, sub_bnum).result
-                vid = arith.AddIOp(cidmul, sub_bid).result
+                    cidmul = arith.MulIOp(cid, sub_bnum).result
+                    vid = arith.AddIOp(cidmul, sub_bid).result
 
-                # offset in N dimension: vid * 128
-                offset_n = arith.MulIOp( arith.IndexCastOp(IndexType.get(), vid).result, c128).result
+                    # offset in N dimension: vid * 128
+                    offset_n = arith.MulIOp( arith.IndexCastOp(IndexType.get(), vid).result, c128).result
 
-                # tensor views for full matrix 32 x 1024
-                tv0 = pto.MakeTensorViewOp( tv2_f32, arg0, [c32, c1024], [c1024, c1]).result
-                tv1 = pto.MakeTensorViewOp( tv2_f32, arg1, [c32, c1024], [c1024, c1]).result
+                    # tensor views for full matrix 32 x 1024
+                    tv0 = pto.MakeTensorViewOp( tv2_f32, arg0, [c32, c1024], [c1024, c1]).result
+                    tv1 = pto.MakeTensorViewOp( tv2_f32, arg1, [c32, c1024], [c1024, c1]).result
 
-                # subview: tile = [32,128], offset = [0, offset_n]
-                sv0 = pto.PartitionViewOp( tile_view, tv0, offsets=[c0, offset_n], sizes=[c32, c128]).result
+                    # subview: tile = [32,128], offset = [0, offset_n]
+                    sv0 = pto.PartitionViewOp( tile_view, tv0, offsets=[c0, offset_n], sizes=[c32, c128]).result
 
-                tb0 = pto.AllocTileOp(tile_buf).result
-                tb1 = pto.AllocTileOp(tile_buf).result
+                    tb0 = pto.AllocTileOp(tile_buf).result
+                    tb1 = pto.AllocTileOp(tile_buf).result
 
-                pto.TLoadOp(None, sv0, tb0)  # result=None
+                    pto.TLoadOp(None, sv0, tb0)  # result=None
 
-                pto.TLReluOp(tb0, scale, tb1)
+                    pto.TLReluOp(tb0, scale, tb1)
 
-                sv1 = pto.PartitionViewOp( tile_view, tv1, offsets=[c0, offset_n], sizes=[c32, c128]).result
+                    sv1 = pto.PartitionViewOp( tile_view, tv1, offsets=[c0, offset_n], sizes=[c32, c128]).result
 
-                pto.TStoreOp(None, tb1, sv1)
+                    pto.TStoreOp(None, tb1, sv1)
 
                 func.ReturnOp([])
 
