@@ -21,6 +21,7 @@ from mlir.ir import (
     IndexType,
 )
 from mlir.dialects import func, arith, pto
+from typing import Optional
 import sys
 
 
@@ -34,7 +35,7 @@ def build_case(
     name: str,
     shape,
     strides,
-    expect_layout: str | None,
+    expect_layout: Optional[str],
     elem_ty,
 ):
     """Insert one func with make_tensor_view and assert inferred layout."""

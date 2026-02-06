@@ -1185,6 +1185,68 @@ struct PTOMatmulDpsToTMATMUL : public OpConversionPattern<pto::MatmulDpsOp> {
 };
 
 //===----------------------------------------------------------------------===//
+// pto.gemv_dps lowering
+//===----------------------------------------------------------------------===//
+struct PTOGemvDpsToTGEMV : public OpConversionPattern<pto::GemvDpsOp> {
+  using OpConversionPattern<pto::GemvDpsOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::GemvDpsOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    // 1. 获取操作数 (剥离 Cast)
+    Value lhs = peelUnrealized(adaptor.getLhs()); // A (Matrix)
+    Value rhs = peelUnrealized(adaptor.getRhs()); // B (Vector)
+    Value dst = peelUnrealized(adaptor.getDst()); // C (Result)
+
+    // 2. 直接生成函数调用 TGEMV(dst, lhs, rhs)
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "TGEMV",
+        ArrayAttr{}, ArrayAttr{},
+        ValueRange{dst, lhs, rhs});
+
+    // 3. 处理 Op 替换/删除
+    if (op->getNumResults() == 1) {
+      rewriter.replaceOp(op, dst);
+    } else {
+      rewriter.eraseOp(op);
+    }
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// pto.gemv_acc_dps lowering
+//===----------------------------------------------------------------------===//
+struct PTOGemvAccDpsToTGEMVACC : public OpConversionPattern<pto::GemvAccDpsOp> {
+  using OpConversionPattern<pto::GemvAccDpsOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::GemvAccDpsOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (!op.getDst())
+      return rewriter.notifyMatchFailure(op, "expected outs(dst) for pto.gemv_acc_dps");
+
+    // 1. 获取操作数
+    Value accIn = peelUnrealized(adaptor.getAccIn()); // AccOld
+    Value lhs   = peelUnrealized(adaptor.getLhs());   // A (Matrix)
+    Value rhs   = peelUnrealized(adaptor.getRhs());   // B (Vector)
+    Value dst   = peelUnrealized(adaptor.getDst());   // AccNew
+
+    // 2. 直接生成函数调用 TGEMV_ACC(dst, accIn, lhs, rhs)
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "TGEMV_ACC",
+        ArrayAttr{}, ArrayAttr{},
+        ValueRange{dst, accIn, lhs, rhs});
+
+    // 3. 处理 Op 替换/删除
+    if (op->getNumResults() == 1) {
+      rewriter.replaceOp(op, dst);
+    } else {
+      rewriter.eraseOp(op);
+    }
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // pto.matmul_acc_dps lowering (Simplified: No internal copy/sync)
 //===----------------------------------------------------------------------===//
 struct PTOMatmulAccDpsToTMATMULACC : public OpConversionPattern<pto::MatmulAccDpsOp> {
@@ -2225,45 +2287,42 @@ struct PTODivSToEmitC : public OpConversionPattern<pto::DivSOp_DPS> {
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
+    // Check types BEFORE conversion (using original op types, not adaptor types)
+    // The adaptor types may already be converted to emitc.opaque
+    Value origSrc = op.getSrc();
+    Value origScalar = op.getScalar();
+    
+    // Determine order based on original operand types
+    // Check if src is memref/tensor/partition_tensor_view/tile (not scalar)
+    bool srcIsMemref = (isa<MemRefType>(origSrc.getType()) || 
+                        isa<RankedTensorType>(origSrc.getType()) ||
+                        isa<mlir::pto::PartitionTensorViewType>(origSrc.getType()) ||
+                        isa<mlir::pto::TileBufType>(origSrc.getType()));
+    // Check if scalar is memref/tensor/partition_tensor_view/tile (not scalar)
+    bool scalarIsMemref = (isa<MemRefType>(origScalar.getType()) || 
+                           isa<RankedTensorType>(origScalar.getType()) ||
+                           isa<mlir::pto::PartitionTensorViewType>(origScalar.getType()) ||
+                           isa<mlir::pto::TileBufType>(origScalar.getType()));
+
     Value src    = peelUnrealized(adaptor.getSrc());
     Value scalar = peelUnrealized(adaptor.getScalar());
     Value dst    = peelUnrealized(adaptor.getDst());
 
-    // Determine order based on operand types
-    bool srcIsTile = isa<mlir::pto::TileBufType>(src.getType());
-    bool scalarIsTile = isa<mlir::pto::TileBufType>(scalar.getType());
-
-    if (srcIsTile && !scalarIsTile) {
-      // tile/scalar: TDIVS(dst, src, scalar)
+    if (srcIsMemref && !scalarIsMemref) {
+      // memref/scalar: TDIVS(dst, src, scalar) - normal order
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TDIVS",
           ArrayAttr{}, ArrayAttr{},
           ValueRange{dst, src, scalar});
-    } else if (!srcIsTile && scalarIsTile) {
-      // scalar/tile: TDIVS(dst, scalar, src)
+    } else if (!srcIsMemref && scalarIsMemref) {
+          // scalar/memref: TDIVS(dst, scalar, src) - swapped order
       rewriter.create<emitc::CallOpaqueOp>(
           loc, TypeRange{}, "TDIVS",
           ArrayAttr{}, ArrayAttr{},
           ValueRange{dst, scalar, src});
     } else {
-      // Fallback: use scalar_lhs attribute if types are ambiguous
-      bool scalarLhs = false;
-      if (auto a = op.getScalarLhsAttr())
-        scalarLhs = a.getValue();
-
-      if (!scalarLhs) {
-        // tile/scalar: TDIVS(dst, src, scalar)
-        rewriter.create<emitc::CallOpaqueOp>(
-            loc, TypeRange{}, "TDIVS",
-            ArrayAttr{}, ArrayAttr{},
-            ValueRange{dst, src, scalar});
-      } else {
-        // scalar/tile: TDIVS(dst, scalar, src)
-        rewriter.create<emitc::CallOpaqueOp>(
-            loc, TypeRange{}, "TDIVS",
-            ArrayAttr{}, ArrayAttr{},
-            ValueRange{dst, scalar, src});
-      }
+      // This should not happen if verifier is correct, but provide a fallback
+      return op.emitError("DivSOp_DPS: expected exactly one memref/tensor operand and one scalar operand");
     }
 
     rewriter.eraseOp(op);
@@ -3246,7 +3305,42 @@ struct PTOMatmulMxBiasDpsToTMATMUL_MX_BIAS
   }
 };
 
+// ---------- Gemv DPS Ops ----------
+struct PTOGemvBiasDpsToTGEMV_BIAS
+    : public OpConversionPattern<pto::GemvBiasDpsOp> {
+  using OpConversionPattern<pto::GemvBiasDpsOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::GemvBiasDpsOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value a    = peelUnrealized(adaptor.getA());
+    Value b    = peelUnrealized(adaptor.getB());
+    Value bias = peelUnrealized(adaptor.getBias());
+    Value dst  = peelUnrealized(adaptor.getDst());
+
+    replaceOrEraseWithOpaqueCall(op.getOperation(), "TGEMV_BIAS",
+                                {dst, a, b, bias}, rewriter);
+    return success();
+  }
+};
+
 // ---------- TOp ----------
+struct PTOTGemvBiasToTGEMV_BIAS
+    : public OpConversionPattern<pto::TGemvBiasOp> {
+  using OpConversionPattern<pto::TGemvBiasOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TGemvBiasOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value a    = peelUnrealized(adaptor.getA());
+    Value b    = peelUnrealized(adaptor.getB());
+    Value bias = peelUnrealized(adaptor.getBias());
+    Value dst  = peelUnrealized(adaptor.getDst());
+
+    replaceOrEraseWithOpaqueCall(op.getOperation(), "TGEMV_BIAS",
+                                {dst, a, b, bias}, rewriter);
+    return success();
+  }
+};
+
 struct PTOTMatmulBiasToTMATMUL_BIAS
     : public OpConversionPattern<pto::TMatmulBiasOp> {
   using OpConversionPattern<pto::TMatmulBiasOp>::OpConversionPattern;
@@ -3620,6 +3714,47 @@ struct PTOShrSToEmitC : public OpConversionPattern<pto::ShrOp_DPS> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// PTOConvert.cpp  (add lowering for TSHLS/TSHRS DPS: shift by scalar)
+//===----------------------------------------------------------------------===//
+
+struct PTOShlSConstToEmitC : public OpConversionPattern<pto::ShlSOp_DPS> {
+  using OpConversionPattern<pto::ShlSOp_DPS>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::ShlSOp_DPS op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value dst    = peelUnrealized(adaptor.getDst());
+    Value src    = peelUnrealized(adaptor.getSrc());
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    SmallVector<Value, 3> operands{dst, src, scalar};
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TSHLS",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct PTOShrSConstToEmitC : public OpConversionPattern<pto::ShrSOp_DPS> {
+  using OpConversionPattern<pto::ShrSOp_DPS>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::ShrSOp_DPS op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    Value dst    = peelUnrealized(adaptor.getDst());
+    Value src    = peelUnrealized(adaptor.getSrc());
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    SmallVector<Value, 3> operands{dst, src, scalar};
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TSHRS",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TSORT32 DPS/memref op)
@@ -4071,6 +4206,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTORowExpandSubToEmitC>(typeConverter, ctx);
   patterns.add<PTOShrSToEmitC>(typeConverter, ctx);
   patterns.add<PTOShlSToEmitC>(typeConverter, ctx);
+  patterns.add<PTOShlSConstToEmitC>(typeConverter, ctx);
+  patterns.add<PTOShrSConstToEmitC>(typeConverter, ctx);
   patterns.add<PTOSORT32SToEmitC>(typeConverter, ctx);
   patterns.add<PTOSelToEmitC>(typeConverter, ctx);
   patterns.add<PTORowExpandToEmitC>(typeConverter, ctx);
@@ -4138,6 +4275,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMGatherToMGATHER>(typeConverter, ctx);
   patterns.add<PTOMatmulDpsToTMATMUL>(typeConverter, ctx);
   patterns.add<PTOMatmulAccDpsToTMATMULACC>(typeConverter, ctx);
+  patterns.add<PTOGemvDpsToTGEMV>(typeConverter, ctx);
+  patterns.add<PTOGemvAccDpsToTGEMVACC>(typeConverter, ctx);
   patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
   patterns.add<PTOAbsToTABS>(typeConverter, ctx);
   patterns.add<PTOAddToTADD>(typeConverter, ctx);
@@ -4161,6 +4300,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
     PTOTMatmulMxToTMATMUL_MX,
     PTOTMatmulMxAccToTMATMUL_MX_ACC,
     PTOTMatmulMxBiasToTMATMUL_MX_BIAS,
+    PTOGemvBiasDpsToTGEMV_BIAS,
+    PTOTGemvBiasToTGEMV_BIAS,
     PTOBarrierToEmitC
   >(typeConverter, ctx);
 

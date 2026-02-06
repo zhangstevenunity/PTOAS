@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F32Type, IndexType, BoolAttr
+from mlir.ir import F32Type, IndexType
 
 
 def build():
@@ -25,41 +25,46 @@ def build():
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("vec_divs2_kernel_2d", fn_ty)
+                fn = func.FuncOp("rowexpand_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
+                # constants
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-                scale = arith.ConstantOp(f32, 3.14).result
 
                 arg0, arg1 = entry.arguments
 
+                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
                 tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
 
+                # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[32,32]
                 sv0 = pto.PartitionViewOp(tile_view_32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
-                sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
+                # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_32).result
                 tb1 = pto.AllocTileOp(tile_buf_32).result
-                tb_out = pto.AllocTileOp(tile_buf_32).result
 
+                # pto.load_dps_tb ins(%sv) outs(%tb)
                 pto.TLoadOp(None, sv0, tb0)
-                pto.TLoadOp(None, sv1, tb1)
 
-                op = pto.TDivSOp(scale, tb0, tb_out)
+                # TROWEXPAND: broadcast src(i,0) across each dst row
+                pto.TRowExpandOp(tb0, tb1)
 
-                sv2 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
-                pto.TStoreOp(None, tb_out, sv2)
+                # %8 = subview on output tensor_view
+                sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
+
+                # pto.store_dps_tb ins(%tb1) outs(%sv1)
+                pto.TStoreOp(None, tb1, sv1)
 
                 func.ReturnOp([])
 
             m.operation.verify()
+
             return m
 
 
 if __name__ == "__main__":
     print(build())
-

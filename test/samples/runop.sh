@@ -12,8 +12,8 @@ PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 usage() {
   cat <<EOF
 Usage:
-  $0 -t <name>   # e.g. -t a  -> uses folder A, script a.py
-  $0 all         # traverse every subfolder under ${BASE_DIR}
+  $0 -t <name>   # e.g. -t Shls  -> run all .py in folder Shls
+  $0 all         # traverse every subfolder, run all .py under each
 
 Env:
   PTOAS_BIN   # path to ptoas executable (optional)
@@ -72,20 +72,6 @@ resolve_python_bin() {
   return 1
 }
 
-has_exact_file() {
-  local dir="$1"
-  local want="$2"
-  local f base
-  for f in "$dir"/*.py; do
-    [[ -e "$f" ]] || continue
-    base="$(basename "$f")"
-    if [[ "$base" == "$want" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 process_one_dir() {
   local A="$1" # folder name (e.g. Abs)
   local out_dir="$2"
@@ -110,40 +96,28 @@ process_one_dir() {
     return 0
   fi
 
-  # Some folders host multiple scripts; enumerate explicitly.
-  local files=()
-  if [[ "$A" == "Partition5D" ]]; then
-    files=("partition5d.py" "partition5d_dynamic.py")
-  elif [[ "$A" == "LayoutInference" ]]; then
-    files=("layout_inference.py")
-  else
-    files=("$(lcfirst "$A").py")
-  fi
-
+  # Run every .py file in this directory (no requirement that name matches folder).
   local f mlir cpp base overall=0
-  for f in "${files[@]}"; do
-    if ! has_exact_file "$dir" "$f"; then
-      echo -e "${A}(${f})\tSKIP\tMissing python: ${f}"
-      continue
-    fi
-    base="${f%.py}"
+  for f in "$dir"/*.py; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f" .py)"
     mlir="${out_subdir}/${base}-pto-ir.pto"
     cpp="${out_subdir}/${base}-pto.cpp"
 
-    if ! "$python" "${dir}/${f}" > "$mlir"; then
-      echo -e "${A}(${f})\tFAIL\tpython failed: ${f}"
+    if ! "$python" "$f" > "$mlir"; then
+      echo -e "${A}(${base}.py)\tFAIL\tpython failed: ${base}.py"
       overall=1
       continue
     fi
 
     # Write output via -o to avoid mixing debug prints with generated C++.
     if ! "$ptoas" "$mlir" -o "$cpp" >/dev/null 2>&1; then
-      echo -e "${A}(${f})\tFAIL\tptoas failed: $(basename "$mlir")"
+      echo -e "${A}(${base}.py)\tFAIL\tptoas failed: $(basename "$mlir")"
       overall=1
       continue
     fi
 
-    echo -e "${A}(${f})\tOK\tgenerated: $(basename "$cpp")"
+    echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 
   return $overall
