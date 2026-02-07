@@ -18,7 +18,7 @@ def build():
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
-            pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            pd = pto.PadValueAttr.get(pto.PadValue.Zero, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)

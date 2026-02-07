@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F32Type, IndexType
+from mlir.ir import F16Type, F32Type, IndexType
 
 
 def build():
@@ -10,86 +10,133 @@ def build():
         with Location.unknown(ctx):
             m = Module.create()
 
+            f16 = F16Type.get(ctx)
             f32 = F32Type.get(ctx)
+            ptr_f16 = pto.PtrType.get(f16, ctx)
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
-            # GEMV_BIAS: matrix-vector multiplication with bias
-            # Matrix: M x K, Vector: K x 1, Bias: M x 1, Result: M x 1
-            M = 32
+            # TGEMV_BIAS: A(1xK) * B(KxN) + Bias(1xN) -> C(1xN)
+            M = 1
+            M_ALIGN = 16
             K = 256
-            N = 1  # Vector dimension
+            N = 32
 
+            tv2_f16 = pto.TensorViewType.get(2, f16, ctx)
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
-            tile_view_MxK = pto.PartitionTensorViewType.get([M, K], f32, ctx)
-            tile_view_Kx1 = pto.PartitionTensorViewType.get([K, N], f32, ctx)
-            tile_view_Mx1 = pto.PartitionTensorViewType.get([M, N], f32, ctx)
+            tile_view_a = pto.PartitionTensorViewType.get([M, K], f16, ctx)
+            tile_view_b = pto.PartitionTensorViewType.get([K, N], f16, ctx)
+            tile_view_bias = pto.PartitionTensorViewType.get([M, N], f32, ctx)
+            tile_view_c = pto.PartitionTensorViewType.get([M, N], f32, ctx)
 
-            vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
-            left = pto.AddressSpaceAttr.get(pto.AddressSpace.LEFT)
-            right = pto.AddressSpaceAttr.get(pto.AddressSpace.RIGHT)
-            acc = pto.AddressSpaceAttr.get(pto.AddressSpace.ACC)
-            bias_space = pto.AddressSpaceAttr.get(pto.AddressSpace.BIAS)
+            mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+            left = pto.AddressSpaceAttr.get(pto.AddressSpace.LEFT, ctx)
+            right = pto.AddressSpaceAttr.get(pto.AddressSpace.RIGHT, ctx)
+            acc = pto.AddressSpaceAttr.get(pto.AddressSpace.ACC, ctx)
+            bias_space = pto.AddressSpaceAttr.get(pto.AddressSpace.BIAS, ctx)
 
-            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
-            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
-            tile_buf_MxK = pto.TileBufType.get([M, K], f32, left, [M, K], cfg, ctx)
-            tile_buf_Kx1 = pto.TileBufType.get([K, N], f32, right, [K, N], cfg, ctx)
-            tile_buf_Mx1 = pto.TileBufType.get([M, N], f32, acc, [M, N], cfg, ctx)
-            tile_buf_bias = pto.TileBufType.get([M, N], f32, bias_space, [M, N], cfg, ctx)
+            cfg_a_mat = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx),
+                512,
+                pd,
+                ctx,
+            )
+            cfg_b_mat = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
+                512,
+                pd,
+                ctx,
+            )
+            cfg_left = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
+                512,
+                pd,
+                ctx,
+            )
+            cfg_right = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.ColMajor, ctx),
+                512,
+                pd,
+                ctx,
+            )
+            cfg_acc = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
+                1024,
+                pd,
+                ctx,
+            )
+            cfg_bias = pto.TileBufConfigAttr.get(
+                pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
+                pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx),
+                512,
+                pd,
+                ctx,
+            )
 
-            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_f32, ptr_f32], [])
+            tile_buf_a_mat = pto.TileBufType.get([M, K], f16, mat, [M, K], cfg_a_mat, ctx)
+            tile_buf_b_mat = pto.TileBufType.get([K, N], f16, mat, [K, N], cfg_b_mat, ctx)
+            tile_buf_bias_mat = pto.TileBufType.get([M, N], f32, mat, [M, N], cfg_bias, ctx)
+
+            tile_buf_a = pto.TileBufType.get([M, K], f16, left, [M, K], cfg_left, ctx)
+            tile_buf_b = pto.TileBufType.get([K, N], f16, right, [K, N], cfg_right, ctx)
+            tile_buf_bias = pto.TileBufType.get([M, N], f32, bias_space, [M, N], cfg_bias, ctx)
+            # TGEMV_* expects the ACC tile rows to be aligned to 16 on some SoCs.
+            tile_buf_c = pto.TileBufType.get([M_ALIGN, N], f32, acc, [M, N], cfg_acc, ctx)
+
+            fn_ty = func.FunctionType.get([ptr_f16, ptr_f16, ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("gemvbias_kernel", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
-                # constants
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 cM = arith.ConstantOp(IndexType.get(ctx), M).result
                 cK = arith.ConstantOp(IndexType.get(ctx), K).result
                 cN = arith.ConstantOp(IndexType.get(ctx), N).result
 
-                arg0, arg1, arg2, arg3 = entry.arguments  # matrix, vector, bias, result
+                arg_a, arg_b, arg_bias, arg_out = entry.arguments
 
-                # Create tensor views
-                tv_matrix = pto.MakeTensorViewOp(tv2_f32, arg0, [cM, cK], [cK, c1]).result
-                # Vector as 2D: K x 1
-                tv_vector = pto.MakeTensorViewOp(tv2_f32, arg1, [cK, cN], [cN, c1]).result
-                # Bias and result as 2D: M x 1
-                tv_bias = pto.MakeTensorViewOp(tv2_f32, arg2, [cM, cN], [cN, c1]).result
-                tv_result = pto.MakeTensorViewOp(tv2_f32, arg3, [cM, cN], [cN, c1]).result
+                tv_a = pto.MakeTensorViewOp(tv2_f16, arg_a, [cM, cK], [cK, c1]).result
+                tv_b = pto.MakeTensorViewOp(tv2_f16, arg_b, [cK, cN], [cN, c1]).result
+                tv_bias = pto.MakeTensorViewOp(tv2_f32, arg_bias, [cM, cN], [cN, c1]).result
+                tv_out = pto.MakeTensorViewOp(tv2_f32, arg_out, [cM, cN], [cN, c1]).result
 
-                # Create partition views
-                sv_matrix = pto.PartitionViewOp(tile_view_MxK, tv_matrix, offsets=[c0, c0], sizes=[cM, cK]).result
-                sv_vector = pto.PartitionViewOp(tile_view_Kx1, tv_vector, offsets=[c0, c0], sizes=[cK, cN]).result
-                sv_bias = pto.PartitionViewOp(tile_view_Mx1, tv_bias, offsets=[c0, c0], sizes=[cM, cN]).result
+                sv_a = pto.PartitionViewOp(tile_view_a, tv_a, offsets=[c0, c0], sizes=[cM, cK]).result
+                sv_b = pto.PartitionViewOp(tile_view_b, tv_b, offsets=[c0, c0], sizes=[cK, cN]).result
+                sv_bias = pto.PartitionViewOp(tile_view_bias, tv_bias, offsets=[c0, c0], sizes=[cM, cN]).result
 
-                # Allocate tiles
-                tb_matrix = pto.AllocTileOp(tile_buf_MxK).result
-                tb_vector = pto.AllocTileOp(tile_buf_Kx1).result
-                tb_bias = pto.AllocTileOp(tile_buf_bias).result
-                tb_result = pto.AllocTileOp(tile_buf_Mx1).result
+                a_mat = pto.AllocTileOp(tile_buf_a_mat).result
+                b_mat = pto.AllocTileOp(tile_buf_b_mat).result
+                bias_mat = pto.AllocTileOp(tile_buf_bias_mat).result
+                a_tile = pto.AllocTileOp(tile_buf_a).result
+                b_tile = pto.AllocTileOp(tile_buf_b).result
+                bias_tile = pto.AllocTileOp(tile_buf_bias).result
+                c_tile = pto.AllocTileOp(tile_buf_c).result
 
-                # Load data
-                pto.TLoadOp(None, sv_matrix, tb_matrix)
-                pto.TLoadOp(None, sv_vector, tb_vector)
-                pto.TLoadOp(None, sv_bias, tb_bias)
+                pto.TLoadOp(None, sv_a, a_mat)
+                pto.TLoadOp(None, sv_b, b_mat)
+                pto.TLoadOp(None, sv_bias, bias_mat)
 
-                # GEMV_BIAS: matrix-vector multiplication with bias
-                pto.TGemvBiasOp(None, tb_matrix, tb_vector, tb_bias, tb_result)
+                # A: TEXTRACT (Mat -> Left), B/Bias: TMOV
+                pto.TExtractOp(a_mat, c0, c0, a_tile)
+                pto.TMovOp(None, b_mat, b_tile)
+                pto.TMovOp(None, bias_mat, bias_tile)
 
-                # Store result
-                sv_result = pto.PartitionViewOp(tile_view_Mx1, tv_result, offsets=[c0, c0], sizes=[cM, cN]).result
-                pto.TStoreOp(None, tb_result, sv_result)
+                pto.TGemvBiasOp(None, a_tile, b_tile, bias_tile, c_tile)
+
+                sv_out = pto.PartitionViewOp(tile_view_c, tv_out, offsets=[c0, c0], sizes=[cM, cN]).result
+                pto.TStoreOp(None, c_tile, sv_out)
 
                 func.ReturnOp([])
 
             m.operation.verify()
-
             return m
 
 

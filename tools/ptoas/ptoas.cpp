@@ -105,6 +105,7 @@ static llvm::cl::opt<bool> disableInferLayout(
 // first-class op for member-function invocation. After translation, we rewrite:
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
+//   PTOAS__TILE_DATA(obj)                  -> obj.data()
 // --------------------------------------------------------------------------
 static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
@@ -173,7 +174,9 @@ static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
     replacement.push_back('.');
     replacement.append(memberName.str());
     replacement.push_back('(');
-    if (expectedNumArgs == 2) {
+    if (expectedNumArgs == 1) {
+      // no args
+    } else if (expectedNumArgs == 2) {
       replacement.append(args[1].str());
     } else if (expectedNumArgs == 3) {
       replacement.append(args[1].str());
@@ -198,6 +201,8 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_SET_VALUE", "SetValue", /*expectedNumArgs=*/3);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_GET_VALUE", "GetValue", /*expectedNumArgs=*/2);
+    changed |= rewriteMarkerCallToMember(
+        cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
   }
 }
 

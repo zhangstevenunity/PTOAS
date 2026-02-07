@@ -29,17 +29,18 @@ def build_pingpong():
             # ======================================================
             # 2. 逻辑主体
             # ======================================================
-            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ws_type], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             
             with InsertionPoint(m.body):
                 fn = func.FuncOp("test_double_buffer_step", fn_ty)
                 entry = fn.add_entry_block()
                 
             with InsertionPoint(entry):
-                gm_src, gm_dst, workspace = entry.arguments
+                gm_src, gm_dst = entry.arguments
                 c0 = arith.ConstantOp(idx, 0).result
                 c1 = arith.ConstantOp(idx, 1).result
                 c32 = arith.ConstantOp(idx, 32).result
+                workspace = pto.AllocTileOp(ws_type).result
 
                 # Wrap GM memrefs as tensor_view and create full partitions
                 tv_src = pto.MakeTensorViewOp(pto.TensorViewType.get(2, f32, ctx),

@@ -269,10 +269,33 @@ struct PTOViewToMemrefPass
         // 这样就不会报 "symbol operand count" 错误了
         Value alloc = rewriter.create<memref::AllocOp>(loc, allocType);
 
-        // 6. [Design 2 关键修正] 独立透传 valid_row 和 valid_col
-        // 不要检查 "if (row && col)"，而是分别获取。
-        Value vRow = op.getValidRow(); // 如果 AllocTile 有 row，则是动态值；否则为 null
-        Value vCol = op.getValidCol(); // 如果 AllocTile 有 col，则是动态值；否则为 null
+        // 6. Preserve tile valid dims (v_row / v_col).
+        //
+        // `pto.alloc_tile` encodes the valid shape in the result TileBufType
+        // (e.g. acc tile may be rows=16 but v_row=1). The alloc op itself does
+        // not necessarily carry explicit operands for static valid dims, so we
+        // must materialize them from the type to keep them through
+        // tile_buf -> memref lowering.
+        //
+        // For dynamically valid tiles (validShape == [-1, -1]), preserve the
+        // runtime operands if present.
+        Value vRow = op.getValidRow();
+        Value vCol = op.getValidCol();
+        ArrayRef<int64_t> validShape = tbTy.getValidShape();
+        if (!tbTy.hasDynamicValid()) {
+          if (validShape.size() >= 1 && validShape[0] != ShapedType::kDynamic) {
+            vRow = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[0]))
+                       .getResult();
+          }
+          if (validShape.size() >= 2 && validShape[1] != ShapedType::kDynamic) {
+            vCol = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[1]))
+                       .getResult();
+          }
+        }
 
         // 7. 获取 Config (保持不变)
         auto configAttr = tbTy.getConfigAttr();
@@ -1177,7 +1200,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColExpandOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::ColMaxOp_DPS>(
             op,
             TypeRange{},
             src,
@@ -1202,7 +1225,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColExpandOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::ColMinOp_DPS>(
             op,
             TypeRange{},
             src,
@@ -1843,10 +1866,17 @@ struct PTOViewToMemrefPass
             signalPassFailure();
             return;
           }
+          if (op.getDsts().size() != 2u) {
+            op.emitError("format2 expects outs(dst, tmp) tile buffers");
+            signalPassFailure();
+            return;
+          }
+
           Value dst = op.getDst();
+          Value tmp = op.getTmp();
           Value excuted = op.getExcuted();
-          if (!dyn_cast<MemRefType>(dst.getType())) {
-            op.emitError("format2 outs(dst) must be memref");
+          if (!dyn_cast<MemRefType>(dst.getType()) || !dyn_cast<MemRefType>(tmp.getType())) {
+            op.emitError("format2 outs(dst/tmp) must be memref");
             signalPassFailure();
             return;
           }
@@ -1861,7 +1891,7 @@ struct PTOViewToMemrefPass
               TypeRange{},
               op.getSrcs(),
               Value() /*blockLen*/,
-              ValueRange{dst},
+              ValueRange{dst, tmp},
               excuted,
               op.getExhaustedAttr());
         } else {
@@ -2686,8 +2716,8 @@ struct PTOViewToMemrefPass
         rewriter.replaceOpWithNewOp<pto::MGatherDpsOp>(
             op,
             TypeRange{},
-            idx,
             mem,
+            idx,
             dst);
       }
 

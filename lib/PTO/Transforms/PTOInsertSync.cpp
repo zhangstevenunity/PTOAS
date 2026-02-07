@@ -80,6 +80,25 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
   void runOnOperation() override {
     llvm::errs() << "\n// === [PTOInsertSync] Start === //\n";
     func::FuncOp func = getOperation();
+
+    // If the function already contains explicit synchronization ops (either
+    // low-level pipe flags or the higher-level record/wait events), do not run
+    // the automatic insertion pass again. Re-inserting on top of manual sync
+    // can introduce duplicated/mismatched event dependencies that may lead to
+    // runtime failures on NPU.
+    //
+    bool hasExplicitSync = false;
+    func.walk([&](Operation *op) {
+      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
+              pto::WaitEventOp>(op)) {
+        hasExplicitSync = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (hasExplicitSync) {
+      return;
+    }
     
     // 0. 数据结构准备
     MemoryDependentAnalyzer memAnalyzer;

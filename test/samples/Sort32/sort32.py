@@ -14,12 +14,12 @@ def build():
             ptr_f32 = pto.PtrType.get(f32, ctx)
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
 
-            i32 = IntegerType.get_signless(32, ctx)
-            ptr_i32 = pto.PtrType.get(i32, ctx)
-            tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
+            u32 = IntegerType.get_unsigned(32, ctx)
+            ptr_u32 = pto.PtrType.get(u32, ctx)
+            tv2_u32 = pto.TensorViewType.get(2, u32, ctx)
 
             tile_view_f32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            tile_view_i32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
+            tile_view_u32 = pto.PartitionTensorViewType.get([32, 32], u32, ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
@@ -28,9 +28,9 @@ def build():
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             tile_buf_f32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
-            tile_buf_i32 = pto.TileBufType.get([32, 32], i32, vec, [32, 32], cfg, ctx)
+            tile_buf_u32 = pto.TileBufType.get([32, 32], u32, vec, [32, 32], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_i32], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_u32], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("sort32_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
@@ -47,17 +47,17 @@ def build():
                 # 这里用原生 builder：通常签名会是 (result_type, ptr, shape, strides)
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
                 tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
-                tv2 = pto.MakeTensorViewOp(tv2_i32, arg2, [c32, c32], [c32, c1]).result
+                tv2 = pto.MakeTensorViewOp(tv2_u32, arg2, [c32, c32], [c32, c1]).result
 
                 # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
                 sv0 = pto.PartitionViewOp(tile_view_f32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
                 sv1 = pto.PartitionViewOp(tile_view_f32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
-                sv2 = pto.PartitionViewOp(tile_view_i32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv2 = pto.PartitionViewOp(tile_view_u32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_f32).result
                 tb1 = pto.AllocTileOp(tile_buf_f32).result
-                tb2 = pto.AllocTileOp(tile_buf_i32).result
+                tb2 = pto.AllocTileOp(tile_buf_u32).result
 
                 # pto.load_dps_tb ins(%sv) outs(%tb)
                 # 原生 builder 一般会把 optional operands/attrs 做成可选参数

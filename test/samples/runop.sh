@@ -8,6 +8,7 @@ BASE_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 PTOAS_BIN="${PTOAS_BIN:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
+PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
 PTO_PTO_DIRS="${PTO_PTO_DIRS:-InjectSync}"
 
@@ -22,6 +23,7 @@ Env:
   PYTHON_BIN  # python executable to run samples (optional)
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
+  PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
   PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: InjectSync)
 EOF
   exit 1
@@ -90,6 +92,18 @@ process_one_dir() {
   if [[ -n "${PTOAS_FLAGS:-}" ]]; then
     # shellcheck disable=SC2206
     ptoas_flags=(${PTOAS_FLAGS})
+  fi
+  if [[ "${PTOAS_ENABLE_INSERT_SYNC}" == "1" ]]; then
+    local has_insync=0
+    if ((${#ptoas_flags[@]})); then
+      for f in "${ptoas_flags[@]}"; do
+        if [[ "$f" == "--enable-insert-sync" ]]; then
+          has_insync=1
+          break
+        fi
+      done
+    fi
+    [[ $has_insync -eq 1 ]] || ptoas_flags+=(--enable-insert-sync)
   fi
 
   if [[ -z "$ptoas" || ! -x "$ptoas" ]]; then

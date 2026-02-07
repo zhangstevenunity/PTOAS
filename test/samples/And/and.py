@@ -10,20 +10,20 @@ def build():
         with Location.unknown(ctx):
             m = Module.create()
 
-            i32 = IntegerType.get_signless(32, ctx)
-            ptr_i32 = pto.PtrType.get(i32, ctx)
+            i16 = IntegerType.get_signless(16, ctx)
+            ptr_i16 = pto.PtrType.get(i16, ctx)
 
-            tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
+            tv2_i16 = pto.TensorViewType.get(2, i16, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], i16, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
-            tile_buf_32 = pto.TileBufType.get([32, 32], i32, vec, [32, 32], cfg, ctx)
+            tile_buf_32 = pto.TileBufType.get([32, 32], i16, vec, [32, 32], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([ptr_i32, ptr_i32], [])
+            fn_ty = func.FunctionType.get([ptr_i16, ptr_i16], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("vec_add_scalar_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
@@ -37,9 +37,9 @@ def build():
                 arg0, arg1 = entry.arguments
 
                 # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
-                tv_src0 = pto.MakeTensorViewOp(tv2_i32, arg0, [c32, c32], [c32, c1]).result
-                tv_src1 = pto.MakeTensorViewOp(tv2_i32, arg0, [c32, c32], [c32, c1]).result
-                tv_dst = pto.MakeTensorViewOp(tv2_i32, arg1, [c32, c32], [c32, c1]).result
+                tv_src0 = pto.MakeTensorViewOp(tv2_i16, arg0, [c32, c32], [c32, c1]).result
+                tv_src1 = pto.MakeTensorViewOp(tv2_i16, arg0, [c32, c32], [c32, c1]).result
+                tv_dst = pto.MakeTensorViewOp(tv2_i16, arg1, [c32, c32], [c32, c1]).result
 
                 # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
                 sv_src0 = pto.PartitionViewOp(tile_view_32, tv_src0, offsets=[c0, c0], sizes=[c32, c32]).result

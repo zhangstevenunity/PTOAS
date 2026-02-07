@@ -1,0 +1,67 @@
+#include "pto/pto-inst.hpp"
+using namespace pto;
+__global__ AICORE void mrgsort_format2_kernel(__gm__ float* v1, __gm__ float* v2, pto::MrgSortExecutedNumList v3) {
+  unsigned v4 = 1;
+  unsigned v5 = 0;
+  int32_t v6 = 256;
+  int32_t v7 = 32;
+  int32_t v8 = 1;
+  int32_t v9 = 1024;
+  int64_t v10 = 0;
+  int64_t v11 = 16384;
+  int64_t v12 = 12288;
+  int64_t v13 = 8192;
+  int64_t v14 = 4096;
+  using T = float;
+  unsigned v15 = (unsigned) v6;
+  unsigned v16 = v5 * v15;
+  unsigned v17 = v5 + v16;
+  unsigned v18 = (unsigned) v8;
+  unsigned v19 = v5 * v18;
+  unsigned v20 = v17 + v19;
+  __gm__ float* v21 = v1 + v20;
+  using GTShape_5325055072 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_5325055072 = pto::Stride<8192, 8192, 8192, 256, 1>;
+  constexpr pto::Layout GT_5325055072_layout = pto::Layout::ND;
+  GTShape_5325055072 v22 = GTShape_5325055072();
+  GTStride_5325055072 v23 = GTStride_5325055072();
+  using GT_5325055072 = GlobalTensor<float, GTShape_5325055072, GTStride_5325055072, GT_5325055072_layout>;
+  GT_5325055072 v24 = GT_5325055072(v21, v22, v23);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v25;
+  TASSIGN(v25, v10);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v26;
+  TASSIGN(v26, v11);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v27;
+  TASSIGN(v27, v12);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v28;
+  TASSIGN(v28, v13);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v29;
+  TASSIGN(v29, v14);
+  Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null> v30;
+  TASSIGN(v30, v13);
+  TLOAD(v25, v24);
+  set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+  wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+  TMRGSORT<Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, Tile<TileType::Vec, float, 1, 1024, BLayout::RowMajor, 1, 1024, SLayout::NoneBox, 512, PadValue::Null>, false>(v29, v3, v30, v25, v26, v27, v28);
+  set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  unsigned v31 = (unsigned) v6;
+  unsigned v32 = v5 * v31;
+  unsigned v33 = v5 + v32;
+  unsigned v34 = (unsigned) v8;
+  unsigned v35 = v5 * v34;
+  unsigned v36 = v33 + v35;
+  __gm__ float* v37 = v2 + v36;
+  using GTShape_5325055728 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_5325055728 = pto::Stride<8192, 8192, 8192, 256, 1>;
+  constexpr pto::Layout GT_5325055728_layout = pto::Layout::ND;
+  GTShape_5325055728 v38 = GTShape_5325055728();
+  GTStride_5325055728 v39 = GTStride_5325055728();
+  using GT_5325055728 = GlobalTensor<float, GTShape_5325055728, GTStride_5325055728, GT_5325055728_layout>;
+  GT_5325055728 v40 = GT_5325055728(v37, v38, v39);
+  wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  TSTORE(v40, v29);
+  pipe_barrier(PIPE_ALL);
+  return;
+}
+
+

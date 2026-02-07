@@ -40,7 +40,6 @@ def build():
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-
                 arg0, arg1, arg2 = entry.arguments
 
                 # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
@@ -71,7 +70,10 @@ def build():
                 #
                 # 这里串起来，确保两种形式都会在最终生成的 C++ 里出现。
                 pto.TGatherOp(tb0, tb2, indices=tb1)
-                mp = Attribute.parse("#pto.mask_pattern<P0101>", ctx)
+                # Use a full mask (P1111) so mask-gather overwrites every lane.
+                # This avoids any dependence on previous dst contents and keeps
+                # the output deterministic for the CI "run twice on NPU" check.
+                mp = Attribute.parse("#pto.mask_pattern<P1111>", ctx)
                 pto.TGatherOp(tb2, tb3, maskPattern=mp)
 
                 # %8 = subview on output tensor_view

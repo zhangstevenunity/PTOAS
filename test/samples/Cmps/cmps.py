@@ -24,14 +24,14 @@ def build():
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             tile_buf_f32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
-            i32 = IntegerType.get_signless(32, ctx)
-            ptr_i32 = pto.PtrType.get(i32, ctx)
+            u8 = IntegerType.get_unsigned(8, ctx)
+            ptr_u8 = pto.PtrType.get(u8, ctx)
 
-            tv2_i32 = pto.TensorViewType.get(2, i32, ctx)
-            tile_view_i32 = pto.PartitionTensorViewType.get([32, 32], i32, ctx)
-            tile_buf_i32 = pto.TileBufType.get([32, 32], i32, vec, [32, 32], cfg, ctx)
+            tv2_u8 = pto.TensorViewType.get(2, u8, ctx)
+            tile_view_u8 = pto.PartitionTensorViewType.get([32, 32], u8, ctx)
+            tile_buf_u8 = pto.TileBufType.get([32, 32], u8, vec, [32, 32], cfg, ctx)
 
-            fn_ty = func.FunctionType.get([ptr_f32, ptr_i32], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_u8], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("vec_cmps_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
@@ -52,20 +52,20 @@ def build():
                 arg0, arg1 = entry.arguments
 
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
-                tv2 = pto.MakeTensorViewOp(tv2_i32, arg1, [c32, c32], [c32, c1]).result
+                tv2 = pto.MakeTensorViewOp(tv2_u8, arg1, [c32, c32], [c32, c1]).result
 
                 # Use constants for subview offsets and sizes
                 sv0 = pto.PartitionViewOp(tile_view_f32, tv0, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
 
                 tb0 = pto.AllocTileOp(tile_buf_f32).result
-                tb2 = pto.AllocTileOp(tile_buf_i32).result
+                tb2 = pto.AllocTileOp(tile_buf_u8).result
 
                 pto.TLoadOp(None, sv0, tb0)  # result=None
 
                 # TCmpSOp: compare scalar value against tile
                 pto.TCmpSOp(tb0, scalar_val, tb2, cmpMode=cmp)
 
-                sv2 = pto.PartitionViewOp(tile_view_i32, tv2, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
+                sv2 = pto.PartitionViewOp(tile_view_u8, tv2, offsets=[subview_offset, subview_offset], sizes=[subview_size, subview_size]).result
 
                 pto.TStoreOp(None, tb2, sv2)
 

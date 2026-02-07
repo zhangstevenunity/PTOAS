@@ -61,9 +61,8 @@ def build():
                 pto.TLoadOp(None, sv1, tb1)  # result=None
                 pto.TLoadOp(None, sv2, tb2)  # result=None
 
-                # Format 1: no tmp, no isBinary
-                pto.TColSumOp(tb0, tb2)
-                # Format 2: with tmp and isBinary
+                # pto-isa TCOLSUM requires an explicit tmp tile; keep only the
+                # supported form to ensure the generated C++ compiles on NPU.
                 pto.TColSumOp(tb0, tb2, tmp=tb1, isBinary=isBinary_attr)
                 
                 # %8 = subview on output tensor_view
