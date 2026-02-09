@@ -279,10 +279,12 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
                                                 Operation *op,
                                                 SyncOperation *sync,
                                                 bool beforeInsert) {
-  // 注意：GetBufferSelected 可能需要在插入 Set/Wait 之前调用，以确保 SSA 顺序
-  // 但这里只是获取 Value，不影响 InsertionPoint 的设定
-  Value bufferSelected = GetBufferSelected(rewriter, op, sync);
-  (void)bufferSelected; 
+  // 获取多缓冲选择条件
+  Value cond = GetBufferSelectCond(rewriter, op, sync);
+  if (!cond || sync->eventIds.size() < 2) {
+    CreateSetWaitOpForSingleBuffer(rewriter, op, sync, beforeInsert);
+    return;
+  }
   
   // [Fix] Terminator 强制前置插入
   if (beforeInsert || op->hasTrait<OpTrait::IsTerminator>()) {
@@ -293,26 +295,32 @@ void SyncCodegen::CreateSetWaitOpForMultiBuffer(IRRewriter &rewriter,
  
   auto srcPipe = getPipeAttr(rewriter, sync->GetActualSrcPipe());
   auto dstPipe = getPipeAttr(rewriter, sync->GetActualDstPipe());
-  auto eventId = getEventAttr(rewriter, sync->eventIds[0]); // 注意：MultiBuffer可能需要特殊处理Attr
- 
-  // 这里假设 SetFlagOp/WaitFlagOp 支持动态 Value 作为 EventID，或者您有特殊的 Op
-  // 如果 PTO 定义只支持 Attribute，那么上面的 GetBufferSelected 逻辑需要配合修改 Op 定义
-  // 假设目前的 Op 定义如下：
-  if (sync->isSyncWaitType()) {
-    // 假设 WaitFlagOp 有支持 Value eventId 的重载或变体
-    // 如果没有，这行代码可能需要调整。但在您之前的 Double Buffer 测试中，看起来它是工作的？
-    // 或者您是否使用了 UpdateFlagOp (带 Value)?
-    // 这里保持原样，只修改 InsertionPoint
-    rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
-  } else {
-    rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId);
+  auto eventId0 = getEventAttr(rewriter, sync->eventIds[0]);
+  auto eventId1 = getEventAttr(rewriter, sync->eventIds[1]);
+
+  auto ifOp = rewriter.create<scf::IfOp>(op->getLoc(), cond, /*withElse=*/true);
+  {
+    rewriter.setInsertionPointToStart(ifOp.thenBlock());
+    if (sync->isSyncWaitType()) {
+      rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId0);
+    } else {
+      rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId0);
+    }
+  }
+  {
+    rewriter.setInsertionPointToStart(ifOp.elseBlock());
+    if (sync->isSyncWaitType()) {
+      rewriter.create<pto::WaitFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId1);
+    } else {
+      rewriter.create<pto::SetFlagOp>(op->getLoc(), srcPipe, dstPipe, eventId1);
+    }
   }
 }
  
-Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
-                                     SyncOperation *sync) {
-  if (SyncIndex2SelectBuffer.count(sync->GetSyncIndex())) {
-    return SyncIndex2SelectBuffer[sync->GetSyncIndex()];
+Value SyncCodegen::GetBufferSelectCond(IRRewriter &rewriter, Operation *op,
+                                       SyncOperation *sync) {
+  if (SyncIndex2SelectCond.count(sync->GetSyncIndex())) {
+    return SyncIndex2SelectCond[sync->GetSyncIndex()];
   }
  
   auto parentLoop = op->getParentOfType<scf::ForOp>();
@@ -330,14 +338,10 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
   }
  
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
-  Value id0 = rewriter.create<arith::ConstantIndexOp>(op->getLoc(), sync->eventIds[0]);
-  Value id1 = rewriter.create<arith::ConstantIndexOp>(op->getLoc(), sync->eventIds[1]);
-  
-  Value isZero = rewriter.create<arith::CmpIOp>(op->getLoc(), arith::CmpIPredicate::eq, counter, 
+  Value isZero = rewriter.create<arith::CmpIOp>(
+      op->getLoc(), arith::CmpIPredicate::eq, counter,
       rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0));
   
-  Value selected = rewriter.create<arith::SelectOp>(op->getLoc(), isZero, id0, id1);
-  
-  SyncIndex2SelectBuffer[sync->GetSyncIndex()] = selected;
-  return selected;
+  SyncIndex2SelectCond[sync->GetSyncIndex()] = isZero;
+  return isZero;
 }

@@ -270,10 +270,10 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
-  if (enableMarkMultiBuffer)
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkMultiBufferPass());
   
   pm.addPass(pto::createPTOViewToMemrefPass());
+  if (enableMarkMultiBuffer)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkMultiBufferPass());
   if (!disableInferLayout)
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   // bufferizationPipeline(pm);

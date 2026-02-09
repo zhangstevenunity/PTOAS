@@ -76,7 +76,7 @@ def PTOMarkMultiBuffer : Pass<"pto-mark-multibuffer", "func::FuncOp"> {
     traces the tile buffer roots, and inserts pto.mark_multibuffer markers.
   }];
   let constructor = "mlir::pto::createPTOMarkMultiBufferPass()";
-  let dependentDialects = ["pto::PTODialect", "scf::SCFDialect"];
+  let dependentDialects = ["pto::PTODialect", "scf::SCFDialect", "memref::MemRefDialect"];
 }
 
 
