@@ -269,9 +269,9 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
   SmallVector<uint64_t> baseAddrs;
   baseAddrs.reserve(op.getAddrs().size());
   for (Value addr : op.getAddrs()) {
-    int64_t val = 0;
+    llvm::APInt val;
     if (matchPattern(addr, m_ConstantInt(&val))) {
-      baseAddrs.push_back(static_cast<uint64_t>(val));
+      baseAddrs.push_back(val.getZExtValue());
     }
   }
   if (baseAddrs.empty()) {

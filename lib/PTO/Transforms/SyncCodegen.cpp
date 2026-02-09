@@ -332,15 +332,18 @@ Value SyncCodegen::GetBufferSelectCond(IRRewriter &rewriter, Operation *op,
   } else {
     rewriter.setInsertionPointToStart(parentLoop.getBody());
     Value iv = parentLoop.getInductionVar();
-    Value c2 = rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 2);
-    counter = rewriter.create<arith::RemUIOp>(op->getLoc(), iv, c2);
+    auto loc = op->getLoc();
+    auto i64Ty = rewriter.getI64Type();
+    Value ivI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, iv);
+    Value c2 = rewriter.create<arith::ConstantIntOp>(loc, 2, 64);
+    counter = rewriter.create<arith::RemSIOp>(loc, ivI64, c2);
     loop2BufferCounter[parentLoop] = counter;
   }
  
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
   Value isZero = rewriter.create<arith::CmpIOp>(
       op->getLoc(), arith::CmpIPredicate::eq, counter,
-      rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 0));
+      rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 64));
   
   SyncIndex2SelectCond[sync->GetSyncIndex()] = isZero;
   return isZero;

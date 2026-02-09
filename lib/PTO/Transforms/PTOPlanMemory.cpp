@@ -1976,6 +1976,14 @@ void PlanMemoryPass::runOnOperation() {
     if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
       return signalPassFailure();
     }
+
+    // MarkMultiBuffer is metadata-only; remove it after plan memory consumes it.
+    SmallVector<pto::MarkMultiBufferOp> marks;
+    funcOp.walk([&](pto::MarkMultiBufferOp op) { marks.push_back(op); });
+    for (auto op : marks) {
+      op.replaceAllUsesWith(op.getSource());
+      op.erase();
+    }
   }
   llvm::errs() << "end PTO plan Mem!\n";
   auto op = getOperation();
