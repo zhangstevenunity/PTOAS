@@ -93,6 +93,11 @@ static llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+static llvm::cl::opt<bool> enableMarkMultiBuffer(
+    "enable-mark-multibuffer",
+    llvm::cl::desc("Enable auto insertion of pto.mark_multibuffer"),
+    llvm::cl::init(false));
+
 static llvm::cl::opt<bool> disableInferLayout(
     "disable-infer-layout",
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
@@ -265,6 +270,8 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
+  if (enableMarkMultiBuffer)
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkMultiBufferPass());
   
   pm.addPass(pto::createPTOViewToMemrefPass());
   if (!disableInferLayout)

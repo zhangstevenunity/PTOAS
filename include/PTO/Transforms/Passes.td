@@ -69,6 +69,16 @@ def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
   let dependentDialects = ["pto::PTODialect", "arith::ArithDialect"];
 }
 
+def PTOMarkMultiBuffer : Pass<"pto-mark-multibuffer", "func::FuncOp"> {
+  let summary = "Mark tile buffers for multi-buffering.";
+  let description = [{
+    Finds eligible copy-like operations (e.g., tload/tstore in loops),
+    traces the tile buffer roots, and inserts pto.mark_multibuffer markers.
+  }];
+  let constructor = "mlir::pto::createPTOMarkMultiBufferPass()";
+  let dependentDialects = ["pto::PTODialect", "scf::SCFDialect"];
+}
+
 
 def InferPTOMemScope : Pass<"pto-infer-mem-scope"> {
   let summary = "Infer memory scope for PTO Ops";
