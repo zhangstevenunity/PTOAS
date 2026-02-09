@@ -101,6 +101,7 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
                 cTile = pto.AllocTileOp(acc_tile).result
                 # allocate UB
                 ubTile = pto.AllocTileOp(ub_tile).result
+                ubTmpTile = pto.AllocTileOp(ub_tile).result
                 ubReduceTile = pto.AllocTileOp(ub_reduce_tile)
 
                 # load from gm to cbuf
@@ -121,7 +122,8 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
 
                 pto.SyncWaitOp(PIPE_V, 0)
 
-                pto.TRowMaxOp(ubTile, ubReduceTile)
+                # pto.trowmax ins(%src, %tmp) outs(%dst)
+                pto.TRowMaxOp(ubTile, ubTmpTile, ubReduceTile)
 
                 func.ReturnOp([])
 

@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F32Type, IndexType, BoolAttr
+from mlir.ir import F32Type, IndexType
 
 
 def build():
@@ -15,19 +15,20 @@ def build():
 
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
             tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
-            tile_view_1_32 = pto.PartitionTensorViewType.get([1, 32], f32, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
+            scaling = pto.AddressSpaceAttr.get(pto.AddressSpace.SCALING, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
-            tile_buf_1_32 = pto.TileBufType.get([1, 32], f32, vec, [1, 32], cfg, ctx)
+            tile_buf_fp_32 = pto.TileBufType.get([32, 32], f32, scaling, [32, 32], cfg, ctx)
 
+            # Function takes 3 arguments: src_ptr, fp_ptr, dst_ptr
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
-                fn = func.FuncOp("vec_colsum_kernel_2d", fn_ty)
+                fn = func.FuncOp("vec_movfp_kernel_2d", fn_ty)
                 entry = fn.add_entry_block()
 
             with InsertionPoint(entry):
@@ -37,42 +38,35 @@ def build():
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
 
                 arg0, arg1, arg2 = entry.arguments
-                isBinary_attr = BoolAttr.get(True)
 
                 # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
-                # 这里用原生 builder：通常签名会是 (result_type, ptr, shape, strides)
                 tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c32, c1]).result
                 tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c32, c1]).result
-                tv2 = pto.MakeTensorViewOp(tv2_f32, arg2, [c1, c32], [c32, c1]).result
+                tv2 = pto.MakeTensorViewOp(tv2_f32, arg2, [c32, c32], [c32, c1]).result
 
-                # %3/%4/%8 = pto.subview %tv, offsets=[%c0,%c0], sizes=[32,32]
+                # %3/%4/%5 = pto.subview %tv, offsets=[%c0,%c0], sizes=[32,32]
                 sv0 = pto.PartitionViewOp(tile_view_32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
                 sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
-                sv2 = pto.PartitionViewOp(tile_view_1_32, tv2, offsets=[c0, c0], sizes=[c1, c32]).result
+                sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
 
-                # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
-                tb0 = pto.AllocTileOp(tile_buf_32).result
-                tb1 = pto.AllocTileOp(tile_buf_32).result
-                tb2 = pto.AllocTileOp(tile_buf_1_32).result
+                # %6/%7/%8 = pto.alloc_tile : <32x32xf32>
+                tb_src = pto.AllocTileOp(tile_buf_32).result
+                tb_fp = pto.AllocTileOp(tile_buf_fp_32).result  # fp must use SCALING address space
+                tb_dst = pto.AllocTileOp(tile_buf_32).result
 
                 # pto.load_dps_tb ins(%sv) outs(%tb)
-                # 原生 builder 一般会把 optional operands/attrs 做成可选参数
-                pto.TLoadOp(None, sv0, tb0)  # result=None
-                pto.TLoadOp(None, sv1, tb1)  # result=None
-                pto.TLoadOp(None, sv2, tb2)  # result=None
+                pto.TLoadOp(None, sv0, tb_src)  # Load src data
+                pto.TLoadOp(None, sv1, tb_fp)   # Load fp (scaling) data
 
-                # Format 1: no tmp, no isBinary
-                pto.TColSumOp(tb0, tb2)
-                # Format 2: with tmp and isBinary
-                pto.TColSumOp(tb0, tb2, tmp=tb1, isBinary=isBinary_attr)
-                
-                # %8 = subview on output tensor_view
-                sv2 = pto.PartitionViewOp(tile_view_1_32, tv2, offsets=[c0, c0], sizes=[c1, c32]).result
+                # pto.tmov.fp ins(%src, %fp) outs(%dst)
+                # TMOV_FP: move/convert using fp (scaling) tile
+                pto.TMovFPOp(tb_src, tb_fp, tb_dst)
 
-                # pto.store_dps_tb ins(%tb2) outs(%sv2)
-                pto.TStoreOp(None, tb2, sv2)
+                # pto.store_dps_tb ins(%tb_dst) outs(%sv2)
+                pto.TStoreOp(None, tb_dst, sv2)
 
                 func.ReturnOp([])
+
             m.operation.verify()
             return m
 

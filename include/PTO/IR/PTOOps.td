@@ -2099,26 +2099,7 @@ def PTO_AndSOp_DPS : PTO_DpsOp<"ands_dps", []> {
   let hasVerifier = 1;
 }
 
-def PTO_AssignOp_DPS : PTO_DpsOp<"assign_dps", []> {
-  let summary = "Bind a tile/global object to an address (manual placement).";
 
-  let arguments = (ins PTODpsType:$dst, Index:$addr);
-  let results = (outs);
-
-  let extraClassDeclaration = [{
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-    ::mlir::Value getObj() { return getDst(); }
-    ::mlir::MutableOperandRange getObjMutable() { return getDstMutable(); }
-  }];
-
-  let assemblyFormat = [{
-    `ins` `(` $addr `:` type($addr) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let hasVerifier = 1;
-}
 
 def PTO_CIOp_DPS : PTO_DpsOp<"ci_dps", []> {
   let summary = "Generate contiguous integer sequence into dst tile.";
@@ -2268,21 +2249,17 @@ def PTO_ColSumOp_DPS : PTO_DpsOp<"colsum_dps", []> {
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$tmp,
+    Optional<PTODpsType>:$tmp,
     PTODpsType:$dst,
-    DefaultValuedAttr<BoolAttr, "false">:$isBinary
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$isBinary
   );
+
 
   let results = (outs);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`isBinary` `=` $isBinary^)? 
-    attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 //===----------------------------------------------------------------------===//
 // TCVT (tilebuf, DPS)
@@ -2427,7 +2404,7 @@ def PTO_ExtractOp_DPS : PTO_DpsOp<"extract_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `[` $indexRow `,` $indexCol `]` `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` type($indexRow) `,` type($indexCol) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -2659,7 +2636,7 @@ def PTO_MinsOp_DPS : PTO_DpsOp<"mins_dps", []> {
 // PTOOps.td  (add TMOV_FP DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
 
-def PTO_MovFPOp_DPS : PTO_DpsOp<"mov_fp_dps", []> {
+def PTO_MovFPOp_DPS : PTO_DpsOp<"mov.fp_dps", []> {
   let summary = "TMOV_FP: move/convert using fp (scaling) tile (tilebuf, DPS)";
 
   let arguments = (ins
@@ -2679,27 +2656,32 @@ def PTO_MovFPOp_DPS : PTO_DpsOp<"mov_fp_dps", []> {
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TMRGSORT DPS/tilebuf op - single-list variant)
+// PTOOps.td  (add TMRGSORT DPS/tilebuf op - two formats: 1 tile+blockLen+dst or 4 tiles)
 //===----------------------------------------------------------------------===//
 
-def PTO_MrgSortOp_DPS : PTO_DpsOp<"mrgsort_dps", []> {
-  let summary = "TMRGSORT: merge sort (single-list variant) (tilebuf, DPS)";
+def PTO_MrgSortOp_DPS : PTO_DpsOp<"mrgsort_dps", [AttrSizedOperandSegments]> {
+  let summary = "TMRGSORT: merge sort (format1: ins(src,blockLen) out(dst); format2: ins(src0..src3) outs(dst,executed))";
 
   let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst,
-    I32Attr:$blockLen
+    Variadic<PTODpsType>:$srcs,
+    Optional<AnyInteger>:$blockLen,
+    Variadic<PTODpsType>:$dsts,
+    Optional<AnyType>:$excuted,
+    DefaultValuedAttr<BoolAttr, "false">:$exhausted
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    `blockLen` `=` $blockLen
-    attr-dict
+  let extraClassDeclaration = [{
+    bool isFormat1() { return getSrcs().size() == 1u && getBlockLen() && getDsts().size() == 1u; }
+    bool isFormat2() { return getSrcs().size() == 4u && getDsts().size() == 1u && getExcuted(); }
+    Value getSrc() { return getSrcs().front(); }
+    Value getDst() { return getDsts().front(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstsMutable(); }
+    void print(::mlir::OpAsmPrinter &p);
+    static ::mlir::ParseResult parse(::mlir::OpAsmParser &parser, ::mlir::OperationState &result);
   }];
 }
 //===----------------------------------------------------------------------===//
@@ -3150,6 +3132,7 @@ def PTO_RowMaxOp_DPS : PTO_DpsOp<"rowmax_dps", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -3158,7 +3141,7 @@ def PTO_RowMaxOp_DPS : PTO_DpsOp<"rowmax_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3195,6 +3178,7 @@ def PTO_RowSumOp_DPS : PTO_DpsOp<"rowsum_dps", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -3203,7 +3187,7 @@ def PTO_RowSumOp_DPS : PTO_DpsOp<"rowsum_dps", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -3811,26 +3795,6 @@ def PTO_TAndSOp : PTO_TOp<"tands", []> {
   let hasVerifier = 1;
 }
 
-def PTO_TAssignOp : PTO_TOp<"tassign", []> {
-  let summary = "Bind a tile/global object to an address (manual placement).";
-
-  let arguments = (ins PTODpsType:$dst, Index:$addr);
-  let results = (outs);
-
-  let extraClassDeclaration = [{
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-    ::mlir::Value getObj() { return getDst(); }
-    ::mlir::MutableOperandRange getObjMutable() { return getDstMutable(); }
-  }];
-
-  let assemblyFormat = [{
-    `ins` `(` $addr `:` type($addr) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let hasVerifier = 1;
-}
 
 def PTO_TCIOp : PTO_TOp<"tci", []> {
   let summary = "Generate contiguous integer sequence into dst tile.";
@@ -3843,9 +3807,10 @@ def PTO_TCIOp : PTO_TOp<"tci", []> {
   let results = (outs);
 
   let assemblyFormat = [{
-    `ins` `(` $S `:` type($S) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    `ins` `(` $S 
     attr-dict
+    `:` type($S) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
   }];
 
   let hasVerifier = 1;
@@ -3961,21 +3926,16 @@ def PTO_TColSumOp : PTO_TOp<"tcolsum", []> {
 
   let arguments = (ins
     PTODpsType:$src,
-    PTODpsType:$tmp,
+    Optional<PTODpsType>:$tmp,
     PTODpsType:$dst,
-    DefaultValuedAttr<BoolAttr, "false">:$isBinary
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$isBinary
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    (`isBinary` `=` $isBinary^)? 
-    attr-dict
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_TCvtOp : PTO_TOp<"tcvt", []> {
@@ -4095,7 +4055,7 @@ def PTO_TExtractOp : PTO_TOp<"textract", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src`[` $indexRow `,` $indexCol`]` `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` type($indexRow) `,` type($indexCol) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4277,7 +4237,7 @@ def PTO_TMinsOp : PTO_TOp<"tmins", []> {
   }];
 }
 
-def PTO_TMovFPOp : PTO_TOp<"tmov_fp", []> {
+def PTO_TMovFPOp : PTO_TOp<"tmov.fp", []> {
   let summary = "TMOV_FP: move/convert using fp (scaling) tile (tilebuf, DPS)";
 
   let arguments = (ins
@@ -4297,24 +4257,29 @@ def PTO_TMovFPOp : PTO_TOp<"tmov_fp", []> {
   }];
 }
 
-def PTO_TMrgSortOp: PTO_TOp<"tmrgsort", []> {
-  let summary = "TMRGSORT: Merge sort for multiple sorted lists.";
+def PTO_TMrgSortOp: PTO_TOp<"tmrgsort", [AttrSizedOperandSegments]> {
+  let summary = "TMRGSORT: Merge sort (format1: ins(src,blockLen) out(dst); format2: ins(src0..src3) outs(dst,executed)).";
 
   let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst,
-    I32Attr:$blockLen
+    Variadic<PTODpsType>:$srcs,
+    Optional<AnyInteger>:$blockLen,
+    Variadic<PTODpsType>:$dsts,
+    Optional<AnyType>:$excuted,
+    DefaultValuedAttr<BoolAttr, "false">:$exhausted
   );
 
   let results = (outs);
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    `blockLen` `=` $blockLen
-    attr-dict
+  let extraClassDeclaration = [{
+    bool isFormat1() { return getSrcs().size() == 1u && getBlockLen() && getDsts().size() == 1u; }
+    bool isFormat2() { return getSrcs().size() == 4u && getDsts().size() == 1u && getExcuted(); }
+    Value getSrc() { return getSrcs().front(); }
+    Value getDst() { return getDsts().front(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstsMutable(); }
+    void print(::mlir::OpAsmPrinter &p);
+    static ::mlir::ParseResult parse(::mlir::OpAsmParser &parser, ::mlir::OperationState &result);
   }];
 }
 
@@ -4755,6 +4720,7 @@ def PTO_TRowMaxOp: PTO_TOp<"trowmax", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -4763,7 +4729,7 @@ def PTO_TRowMaxOp: PTO_TOp<"trowmax", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];
@@ -4800,6 +4766,7 @@ def PTO_TRowSumOp: PTO_TOp<"trowsum", []> {
 
   let arguments = (ins
     PTODpsType:$src,
+    PTODpsType:$tmp,
     PTODpsType:$dst
   );
 
@@ -4808,7 +4775,7 @@ def PTO_TRowSumOp: PTO_TOp<"trowsum", []> {
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
+    `ins` `(` $src `,` $tmp `:` qualified(type($src)) `,` qualified(type($tmp)) `)`
     `outs` `(` $dst `:` qualified(type($dst) ) `)`
     attr-dict
   }];

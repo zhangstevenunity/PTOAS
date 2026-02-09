@@ -29,6 +29,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 
 #include <numeric>
 #include <optional>
@@ -1372,17 +1373,7 @@ LogicalResult pto::AndSOp_DPS::verify() {
 
   return success();
 }
-LogicalResult pto::AssignOp_DPS::verify() {
-  auto m = dyn_cast<mlir::pto::TileType>(getObj().getType());
-  if (!m)
-    return emitOpError("expects obj to be a memref");
 
-  Type addrTy = getAddr().getType();
-  if (!addrTy.isa<IndexType>() && !addrTy.isa<IntegerType>())
-    return emitOpError("expects addr to be index or integer type");
-
-  return success();
-}
 
 LogicalResult pto::CIOp_DPS::verify() {
   auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
@@ -1489,19 +1480,138 @@ LogicalResult pto::ColMinOp_DPS::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// ColSumOp_DPS custom assembly format
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::ColSumOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand tmp;
+  OpAsmParser::UnresolvedOperand dst;
+  Type srcTy, tmpTy, dstTy;
+  bool hasTmp = false;
+
+  // Parse: ins(%src : type) or ins(%src, %tmp {isBinary = ...}: type, type)
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+
+  // Check for optional tmp operand (format 2)
+  if (succeeded(parser.parseOptionalComma())) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type)
+    if (parser.parseOperand(tmp))
+      return failure();
+    hasTmp = true;
+
+    // Parse attributes (isBinary)
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+
+    // Parse types: : type, type
+    if (parser.parseColonType(srcTy) || parser.parseComma() || parser.parseType(tmpTy))
+      return failure();
+  } else {
+    // Format 1: ins(%src : type)
+    if (parser.parseColonType(srcTy))
+      return failure();
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  // Parse: outs(%dst : type)
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+
+  // Parse any remaining attributes (for format 1)
+  if (!hasTmp) {
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+  }
+
+  // Resolve operands
+  if (parser.resolveOperand(src, srcTy, result.operands))
+    return failure();
+
+  int32_t tmpSize = hasTmp ? 1 : 0;
+
+  if (hasTmp) {
+    if (parser.resolveOperand(tmp, tmpTy, result.operands))
+      return failure();
+  }
+
+  if (parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::ColSumOp_DPS::print(OpAsmPrinter &p) {
+  if (getTmp()) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
+    p << " ins(" << getSrc() << ", " << getTmp();
+    // Print isBinary attribute if present
+    SmallVector<StringRef, 1> elidedAttrs;
+    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
+      elidedAttrs.push_back("isBinary");
+    }
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+    p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
+  } else {
+    // Format 1: ins(%src : type) outs(%dst : type)
+    p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
+  }
+
+  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  // Print remaining attributes for format 1 (excluding isBinary)
+  if (!getTmp()) {
+    SmallVector<StringRef, 1> elidedAttrs = {"isBinary"};
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  }
+}
+
 LogicalResult pto::ColSumOp_DPS::verify() {
   auto srcTy = dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+  if (!srcTy)
+    return emitOpError("expects src to be memref");
+
   auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !tmpTy || !dstTy)
-    return emitOpError("expects src/tmp/dst to be memref");
+  if (!dstTy)
+    return emitOpError("expects dst to be memref");
 
-  if (srcTy.getElementType() != dstTy.getElementType() ||
-      srcTy.getElementType() != tmpTy.getElementType())
-    return emitOpError("expects src/tmp/dst element types to match");
+  // Verify tmp and isBinary consistency: they must appear together or not at all
+  bool hasTmp = (bool)getTmp();
+  bool hasIsBinary = (bool)getIsBinaryAttr();
+  
+  if (hasTmp != hasIsBinary) {
+    if (hasTmp)
+      return emitOpError("tmp operand requires isBinary attribute");
+    else
+      return emitOpError("isBinary attribute requires tmp operand");
+  }
 
-  if (srcTy.getRank() != tmpTy.getRank())
-    return emitOpError("expects src/tmp to have same rank");
+  // If tmp is present, verify its type
+  if (getTmp()) {
+    auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+    if (!tmpTy)
+      return emitOpError("expects tmp to be memref");
+
+    // Verify type relationships
+    if (srcTy.getElementType() != dstTy.getElementType() ||
+        srcTy.getElementType() != tmpTy.getElementType())
+      return emitOpError("expects src/tmp/dst element types to match");
+
+    if (srcTy.getRank() != tmpTy.getRank())
+      return emitOpError("expects src/tmp to have same rank");
+  }
+
+  // Verify src/dst relationships
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError("expects src/dst element types to match");
+
   if (srcTy.getRank() != dstTy.getRank())
     return emitOpError("expects dst to have same rank as src");
 
@@ -1511,9 +1621,12 @@ LogicalResult pto::ColSumOp_DPS::verify() {
     if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
       return emitOpError("expects src/dst to have same number of columns (dim1)");
 
-    int64_t tmpC = tmpTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
-      return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    if (getTmp()) {
+      auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+      int64_t tmpC = tmpTy.getShape()[1];
+      if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
+        return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    }
   }
 
   if (dstTy.getRank() >= 1) {
@@ -2092,6 +2205,11 @@ mlir::LogicalResult mlir::pto::MovFPOp_DPS::verify() {
   if (!srcTy || !fpTy || !dstTy)
     return emitOpError() << "expects memref types for src/fp/dst";
 
+  // fp must have SCALING address space
+  auto fpAddrSpaceAttr = mlir::dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(fpTy.getMemorySpace());
+  if (!fpAddrSpaceAttr || fpAddrSpaceAttr.getAddressSpace() != mlir::pto::AddressSpace::SCALING)
+    return emitOpError() << "expects fp to have SCALING address space";
+
   // fp is a scaling tile; keep checks minimal but sanity-check it's 64-bit integer when statically known.
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(fpTy.getElementType())) {
     if (it.getWidth() != 64)
@@ -2117,47 +2235,147 @@ mlir::LogicalResult mlir::pto::MovFPOp_DPS::verify() {
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TMRGSORT DPS/memref op)
+// PTO.cpp  (custom parse/print/verify for TMRGSORT DPS and TMrgSort op)
 //===----------------------------------------------------------------------===//
 
+// Format1: ins(%src, %blockLen : !pto.tile_buf<…>, type) outs(%dst : !pto.tile_buf<…>); blockLen only here
+// Format2: ins(%src0..%src3 {exhausted = false} : ...) outs(%dst, %executed : !pto.tile_buf<...>, vector<4xi16>); exhausted/executed only here
+
+void mlir::pto::MrgSortOp_DPS::print(OpAsmPrinter &p) {
+  if (isFormat1()) {
+    p << " ins(" << getSrc() << ", " << getBlockLen() << " : " << getSrc().getType()
+      << ", " << getBlockLen().getType() << ") outs(" << getDst() << " : "
+      << getDst().getType() << ")";
+  } else {
+    assert(isFormat2());
+    p << " ins(" << getSrcs()[0] << ", " << getSrcs()[1] << ", " << getSrcs()[2]
+      << ", " << getSrcs()[3] << " {exhausted = " << (getExhausted() ? "true" : "false")
+      << "} : " << getSrcs()[0].getType() << ", " << getSrcs()[1].getType() << ", "
+      << getSrcs()[2].getType() << ", " << getSrcs()[3].getType() << ") outs("
+      << getDst() << ", " << getExcuted() << " : " << getDst().getType() << ", "
+      << getExcuted().getType() << ")";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes", "exhausted"});
+}
+
+ParseResult mlir::pto::MrgSortOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
+  if (parser.parseKeyword("ins") || parser.parseLParen())
+    return failure();
+  OpAsmParser::UnresolvedOperand first, second;
+  if (parser.parseOperand(first) || parser.parseComma() || parser.parseOperand(second))
+    return failure();
+
+  // Format1: ins(%src, %blockLen : type, type) outs(%dst : type)
+  // Format2: ins(%s0..%s3 {exhausted = false} : ...) outs(%dst, %executed : ...)
+  if (parser.parseOptionalColon().succeeded()) {
+    Type srcTy, blockLenTy, dstTy;
+    if (parser.parseType(srcTy) || parser.parseComma() || parser.parseType(blockLenTy) ||
+        parser.parseRParen() || parser.parseKeyword("outs") || parser.parseLParen())
+      return failure();
+    OpAsmParser::UnresolvedOperand dstOp;
+    if (parser.parseOperand(dstOp) || parser.parseColon() || parser.parseType(dstTy) ||
+        parser.parseRParen())
+      return failure();
+    result.addAttribute("operandSegmentSizes",
+                        parser.getBuilder().getDenseI32ArrayAttr({1, 1, 1, 0}));
+    if (parser.resolveOperand(first, srcTy, result.operands) ||
+        parser.resolveOperand(second, blockLenTy, result.operands) ||
+        parser.resolveOperand(dstOp, dstTy, result.operands))
+      return failure();
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+    if (!result.attributes.get("exhausted"))
+      result.addAttribute("exhausted", parser.getBuilder().getBoolAttr(false));
+    return success();
+  }
+
+  // Format2: comma then two more operands, optional {exhausted = bool}, : 4 types ) outs( dst, excuted : types )
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> srcs = {first, second};
+  OpAsmParser::UnresolvedOperand third, fourth;
+  if (parser.parseComma() || parser.parseOperand(third) || parser.parseComma() ||
+      parser.parseOperand(fourth))
+    return failure();
+  srcs.push_back(third);
+  srcs.push_back(fourth);
+  bool exhaustedVal = false;
+  if (parser.parseOptionalLBrace().succeeded()) {
+    if (parser.parseKeyword("exhausted") || parser.parseEqual())
+      return failure();
+    StringRef kw;
+    if (parser.parseKeyword(&kw) || parser.parseRBrace())
+      return failure();
+    exhaustedVal = (kw == "true");
+  }
+  SmallVector<Type, 4> srcTypes(4);
+  if (parser.parseColon() || parser.parseType(srcTypes[0]) || parser.parseComma() ||
+      parser.parseType(srcTypes[1]) || parser.parseComma() || parser.parseType(srcTypes[2]) ||
+      parser.parseComma() || parser.parseType(srcTypes[3]) || parser.parseRParen() ||
+      parser.parseKeyword("outs") || parser.parseLParen())
+    return failure();
+  OpAsmParser::UnresolvedOperand dstOp, excutedOp;
+  Type dstTy, excutedTy;
+  if (parser.parseOperand(dstOp) || parser.parseComma() || parser.parseOperand(excutedOp) ||
+      parser.parseColon() || parser.parseType(dstTy) || parser.parseComma() ||
+      parser.parseType(excutedTy) || parser.parseRParen())
+    return failure();
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr({4, 0, 1, 1}));
+  if (parser.resolveOperands(srcs, srcTypes, parser.getCurrentLocation(), result.operands) ||
+      parser.resolveOperand(dstOp, dstTy, result.operands) ||
+      parser.resolveOperand(excutedOp, excutedTy, result.operands))
+    return failure();
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  if (!result.attributes.get("exhausted"))
+    result.addAttribute("exhausted", parser.getBuilder().getBoolAttr(exhaustedVal));
+  return success();
+}
+
 mlir::LogicalResult mlir::pto::MrgSortOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects memref types for src/dst";
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src/dst to have the same element type";
-
-  // Element type: half/float per ISA (keep strict when statically known).
-  if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
-    return emitOpError() << "expects element type to be f16 or f32";
-
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
-    return emitOpError() << "expects src/dst to be rank-2 memrefs";
-
-  // Rows == 1 (list stored in a single row).
-  auto ss = srcTy.getShape();
-  auto ds = dstTy.getShape();
-  if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
-    return emitOpError() << "expects src rows == 1";
-  if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
-    return emitOpError() << "expects dst rows == 1";
-
-  // Cols must match when statically known.
-  if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
-    return emitOpError() << "expects src/dst cols to match";
-
-  // blockLen must be multiple of 64 (single-list variant constraint).
-  int64_t bl = 0;
-  if (auto a = getBlockLenAttr())
-    bl = a.getInt();
-  if (bl <= 0)
-    return emitOpError() << "expects blockLen > 0";
-  if ((bl % 64) != 0)
-    return emitOpError() << "expects blockLen to be a multiple of 64";
-
-  return mlir::success();
+  if (isFormat1()) {
+    auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+    auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+    if (!srcTy || !dstTy)
+      return emitOpError() << "format1 expects memref types for src/dst";
+    if (srcTy.getElementType() != dstTy.getElementType())
+      return emitOpError() << "expects src/dst to have the same element type";
+    if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
+      return emitOpError() << "expects element type to be f16 or f32";
+    if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+      return emitOpError() << "expects src/dst to be rank-2 memrefs";
+    auto ss = srcTy.getShape(), ds = dstTy.getShape();
+    if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
+      return emitOpError() << "expects src rows == 1";
+    if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
+      return emitOpError() << "expects dst rows == 1";
+    if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
+      return emitOpError() << "expects src/dst cols to match";
+    if (getBlockLen()) {
+      if (auto cstOp = getBlockLen().getDefiningOp<arith::ConstantOp>()) {
+        if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(cstOp.getValue())) {
+          int64_t v = intAttr.getValue().getSExtValue();
+          if (v <= 0 || (v % 64) != 0)
+            return emitOpError() << "expects blockLen > 0 and multiple of 64";
+        }
+      }
+    }
+    return mlir::success();
+  }
+  if (isFormat2()) {
+    for (Value v : getSrcs())
+      if (!mlir::dyn_cast<mlir::MemRefType>(v.getType()))
+        return emitOpError() << "format2 expects memref for each of 4 srcs";
+    if (getDsts().size() != 1u || !getExcuted())
+      return emitOpError() << "format2 expects outs(dst) and excuted=vector";
+    if (!mlir::dyn_cast<mlir::MemRefType>(getDst().getType()))
+      return emitOpError() << "format2 outs must be memref (dst)";
+    auto excutedTy = mlir::dyn_cast<mlir::VectorType>(getExcuted().getType());
+    if (!excutedTy || excutedTy.getRank() != 1 || excutedTy.getNumElements() != 4 ||
+        !excutedTy.getElementType().isInteger(16))
+      return emitOpError() << "format2 excuted must be vector<4xi16>";
+    return mlir::success();
+  }
+  return emitOpError() << "mrgsort_dps expects format1 (1 src + blockLen + 1 dst) or format2 (4 srcs, outs dst, excuted)";
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TMUL DPS/memref op)
@@ -2682,15 +2900,16 @@ mlir::LogicalResult mlir::pto::RowExpandSubOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowMaxOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -2727,15 +2946,16 @@ mlir::LogicalResult mlir::pto::RowMinOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowSumOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -3439,17 +3659,7 @@ LogicalResult pto::TAndSOp::verify() {
 
   return success();
 }
-LogicalResult pto::TAssignOp::verify() {
-  auto m = dyn_cast<mlir::pto::TileBufType>(getObj().getType());
-  if (!m)
-    return emitOpError("expects obj to be a tilebuf");
 
-  Type addrTy = getAddr().getType();
-  if (!addrTy.isa<IndexType>() && !addrTy.isa<IntegerType>())
-    return emitOpError("expects addr to be index or integer type");
-
-  return success();
-}
 LogicalResult pto::TCIOp::verify() {
   auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
   if (!dstTy)
@@ -3554,19 +3764,138 @@ LogicalResult pto::TColMinOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// TColSumOp custom assembly format
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::TColSumOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand tmp;
+  OpAsmParser::UnresolvedOperand dst;
+  Type srcTy, tmpTy, dstTy;
+  bool hasTmp = false;
+
+  // Parse: ins(%src : type) or ins(%src, %tmp {isBinary = ...}: type, type)
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+
+  // Check for optional tmp operand (format 2)
+  if (succeeded(parser.parseOptionalComma())) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type)
+    if (parser.parseOperand(tmp))
+      return failure();
+    hasTmp = true;
+
+    // Parse attributes (isBinary)
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+
+    // Parse types: : type, type
+    if (parser.parseColonType(srcTy) || parser.parseComma() || parser.parseType(tmpTy))
+      return failure();
+  } else {
+    // Format 1: ins(%src : type)
+    if (parser.parseColonType(srcTy))
+      return failure();
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  // Parse: outs(%dst : type)
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+
+  // Parse any remaining attributes (for format 1)
+  if (!hasTmp) {
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+  }
+
+  // Resolve operands
+  if (parser.resolveOperand(src, srcTy, result.operands))
+    return failure();
+
+  int32_t tmpSize = hasTmp ? 1 : 0;
+
+  if (hasTmp) {
+    if (parser.resolveOperand(tmp, tmpTy, result.operands))
+      return failure();
+  }
+
+  if (parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
+  if (getTmp()) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
+    p << " ins(" << getSrc() << ", " << getTmp();
+    // Print isBinary attribute if present
+    SmallVector<StringRef, 1> elidedAttrs;
+    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
+      elidedAttrs.push_back("isBinary");
+    }
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+    p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
+  } else {
+    // Format 1: ins(%src : type) outs(%dst : type)
+    p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
+  }
+
+  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  // Print remaining attributes for format 1 (excluding isBinary)
+  if (!getTmp()) {
+    SmallVector<StringRef, 1> elidedAttrs = {"isBinary"};
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  }
+}
+
 LogicalResult pto::TColSumOp::verify() {
   auto srcTy = dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+  if (!srcTy)
+    return emitOpError("expects src to be tilebuf");
+
   auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !tmpTy || !dstTy)
-    return emitOpError("expects src/tmp/dst to be tilebuf");
+  if (!dstTy)
+    return emitOpError("expects dst to be tilebuf");
 
-  if (srcTy.getElementType() != dstTy.getElementType() ||
-      srcTy.getElementType() != tmpTy.getElementType())
-    return emitOpError("expects src/tmp/dst element types to match");
+  // Verify tmp and isBinary consistency: they must appear together or not at all
+  bool hasTmp = (bool)getTmp();
+  bool hasIsBinary = (bool)getIsBinaryAttr();
+  
+  if (hasTmp != hasIsBinary) {
+    if (hasTmp)
+      return emitOpError("tmp operand requires isBinary attribute");
+    else
+      return emitOpError("isBinary attribute requires tmp operand");
+  }
 
-  if (srcTy.getRank() != tmpTy.getRank())
-    return emitOpError("expects src/tmp to have same rank");
+  // If tmp is present, verify its type
+  if (getTmp()) {
+    auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+    if (!tmpTy)
+      return emitOpError("expects tmp to be tilebuf");
+
+    // Verify type relationships
+    if (srcTy.getElementType() != dstTy.getElementType() ||
+        srcTy.getElementType() != tmpTy.getElementType())
+      return emitOpError("expects src/tmp/dst element types to match");
+
+    if (srcTy.getRank() != tmpTy.getRank())
+      return emitOpError("expects src/tmp to have same rank");
+  }
+
+  // Verify src/dst relationships
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError("expects src/dst element types to match");
+
   if (srcTy.getRank() != dstTy.getRank())
     return emitOpError("expects dst to have same rank as src");
 
@@ -3576,9 +3905,12 @@ LogicalResult pto::TColSumOp::verify() {
     if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
       return emitOpError("expects src/dst to have same number of columns (dim1)");
 
-    int64_t tmpC = tmpTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
-      return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    if (getTmp()) {
+      auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+      int64_t tmpC = tmpTy.getShape()[1];
+      if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
+        return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    }
   }
 
   if (dstTy.getRank() >= 1) {
@@ -4112,6 +4444,11 @@ mlir::LogicalResult mlir::pto::TMovFPOp::verify() {
   if (!srcTy || !fpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/fp/dst";
 
+  // fp must have SCALING address space
+  auto fpAddrSpaceAttr = mlir::dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(fpTy.getMemorySpace());
+  if (!fpAddrSpaceAttr || fpAddrSpaceAttr.getAddressSpace() != mlir::pto::AddressSpace::SCALING)
+    return emitOpError() << "expects fp to have SCALING address space";
+
   // fp is a scaling tile; keep checks minimal but sanity-check it's 64-bit integer when statically known.
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(fpTy.getElementType())) {
     if (it.getWidth() != 64)
@@ -4292,46 +4629,75 @@ LogicalResult TMGatherOp::verify() {
   return success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TMRGSORT DPS/tilebuf op)
+// PTO.cpp  (custom parse/print/verify for TMrgSort op - same syntax as mrgsort_dps)
 //===----------------------------------------------------------------------===//
+
+void mlir::pto::TMrgSortOp::print(OpAsmPrinter &p) {
+  if (isFormat1()) {
+    p << " ins(" << getSrc() << ", " << getBlockLen() << " : " << getSrc().getType()
+      << ", " << getBlockLen().getType() << ") outs(" << getDst() << " : "
+      << getDst().getType() << ")";
+  } else {
+    assert(isFormat2());
+    p << " ins(" << getSrcs()[0] << ", " << getSrcs()[1] << ", " << getSrcs()[2]
+      << ", " << getSrcs()[3] << " {exhausted = " << (getExhausted() ? "true" : "false")
+      << "} : " << getSrcs()[0].getType() << ", " << getSrcs()[1].getType() << ", "
+      << getSrcs()[2].getType() << ", " << getSrcs()[3].getType() << ") outs("
+      << getDst() << ", " << getExcuted() << " : " << getDst().getType() << ", "
+      << getExcuted().getType() << ")";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes", "exhausted"});
+}
+
+ParseResult mlir::pto::TMrgSortOp::parse(OpAsmParser &parser, OperationState &result) {
+  return MrgSortOp_DPS::parse(parser, result);
+}
+
 mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects tilebuf types for src/dst";
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src/dst to have the same element type";
-
-  // Element type: half/float per ISA (keep strict when statically known).
-  if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
-    return emitOpError() << "expects element type to be f16 or f32";
-
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
-    return emitOpError() << "expects src/dst to be rank-2 tilebufs";
-
-  // Rows == 1 (list stored in a single row).
-  auto ss = srcTy.getShape();
-  auto ds = dstTy.getShape();
-  if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
-    return emitOpError() << "expects src rows == 1";
-  if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
-    return emitOpError() << "expects dst rows == 1";
-
-  // Cols must match when statically known.
-  if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
-    return emitOpError() << "expects src/dst cols to match";
-
-  // blockLen must be multiple of 64 (single-list variant constraint).
-  int64_t bl = 0;
-  if (auto a = getBlockLenAttr())
-    bl = a.getInt();
-  if (bl <= 0)
-    return emitOpError() << "expects blockLen > 0";
-  if ((bl % 64) != 0)
-    return emitOpError() << "expects blockLen to be a multiple of 64";
-
-  return mlir::success();
+  if (isFormat1()) {
+    auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+    auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+    if (!srcTy || !dstTy)
+      return emitOpError() << "format1 expects tilebuf types for src/dst";
+    if (srcTy.getElementType() != dstTy.getElementType())
+      return emitOpError() << "expects src/dst to have the same element type";
+    if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
+      return emitOpError() << "expects element type to be f16 or f32";
+    if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+      return emitOpError() << "expects src/dst to be rank-2 tilebufs";
+    auto ss = srcTy.getShape(), ds = dstTy.getShape();
+    if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
+      return emitOpError() << "expects src rows == 1";
+    if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
+      return emitOpError() << "expects dst rows == 1";
+    if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
+      return emitOpError() << "expects src/dst cols to match";
+    if (getBlockLen()) {
+      if (auto cstOp = getBlockLen().getDefiningOp<arith::ConstantOp>()) {
+        if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(cstOp.getValue())) {
+          int64_t v = intAttr.getValue().getSExtValue();
+          if (v <= 0 || (v % 64) != 0)
+            return emitOpError() << "expects blockLen > 0 and multiple of 64";
+        }
+      }
+    }
+    return mlir::success();
+  }
+  if (isFormat2()) {
+    for (Value v : getSrcs())
+      if (!mlir::dyn_cast<mlir::pto::TileBufType>(v.getType()))
+        return emitOpError() << "format2 expects tilebuf for each of 4 srcs";
+    if (getDsts().size() != 1u || !getExcuted())
+      return emitOpError() << "format2 expects outs(dst) and excuted=vector";
+    if (!mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType()))
+      return emitOpError() << "format2 outs must be tile_buf (dst)";
+    auto excutedTy = mlir::dyn_cast<mlir::VectorType>(getExcuted().getType());
+    if (!excutedTy || excutedTy.getRank() != 1 || excutedTy.getNumElements() != 4 ||
+        !excutedTy.getElementType().isInteger(16))
+      return emitOpError() << "format2 excuted must be vector<4xi16>";
+    return mlir::success();
+  }
+  return emitOpError() << "tmrgsort expects format1 (1 src + blockLen + 1 dst) or format2 (4 srcs, outs dst, excuted)";
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TMUL DPS/tilebuf op)
@@ -4903,15 +5269,16 @@ mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -4948,15 +5315,16 @@ mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowSumOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())

@@ -1223,6 +1223,8 @@ MemPlan::GetBufferSpaceInfo(pto::AddressSpace &space) const {
     return std::make_pair(l0bAlignSize, l0bSpaceSize);
   case pto::AddressSpace::BIAS:
     return std::make_pair(biasAlignSize, biasSpaceSize);
+  case pto::AddressSpace::SCALING:
+    return std::make_pair(scalingAlignSize, scalingSpaceSize);
   }
   
   llvm_unreachable("Temporarily unsupported memory buffer space !");
@@ -1760,6 +1762,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   l0bAlignSize = 4096;
   biasAlignSize = 256;
   biasSpaceSize = 524288;
+  scalingAlignSize = 256;
+  scalingSpaceSize = 1572864;
 
   auto moduleOp = getTopLevelModuleOp(funcOp);
   StringAttr strAttr = moduleOp->getAttrOfType<StringAttr>("pto.device-spec");
@@ -1796,6 +1800,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
     l0bAlignSize = 4096;
     biasAlignSize = 256;
     biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2097152;
     return success();
   }
 
@@ -1821,6 +1827,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
     l0bAlignSize = 4096;
     biasAlignSize = 256;
     biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2031616;
     return success();
   }
   

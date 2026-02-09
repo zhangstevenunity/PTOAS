@@ -65,6 +65,7 @@ PYBIND11_MODULE(_pto, m) {
     .value("ACC",  mlir::pto::AddressSpace::ACC)
     .value("VEC",   mlir::pto::AddressSpace::VEC)
     .value("BIAS",   mlir::pto::AddressSpace::BIAS)
+    .value("SCALING", mlir::pto::AddressSpace::SCALING)
     .export_values();
     py::enum_<BLayout>(m, "BLayout")
     .value("RowMajor", BLayout::RowMajor)
