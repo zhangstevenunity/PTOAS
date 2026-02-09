@@ -131,18 +131,18 @@ def MarkMultiBufferOp : PTO_Op<"mark_multibuffer", [
     Pure,
     SameOperandsAndResultType
   ]> {
-  let summary = "Mark a tile buffer for multi-buffering.";
+  let summary = "Mark a buffer for multi-buffering.";
   let description = [{
-    Attaches multi-buffer metadata to a tile buffer instance.
+    Attaches multi-buffer metadata to a buffer instance.
     This is a metadata-only marker and does not change data semantics.
   }];
 
   let arguments = (ins
-    TileBufType:$source,
+    AnyMemRef:$source,
     DefaultValuedAttr<I32Attr, "2">:$num
   );
 
-  let results = (outs TileBufType:$result);
+  let results = (outs AnyMemRef:$result);
 
   let assemblyFormat = [{
     $source attr-dict `:` qualified(type($source)) `->` qualified(type($result))

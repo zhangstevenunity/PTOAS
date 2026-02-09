@@ -266,11 +266,24 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
     }
   }
  
+  SmallVector<uint64_t> baseAddrs;
+  baseAddrs.reserve(op.getAddrs().size());
+  for (Value addr : op.getAddrs()) {
+    int64_t val = 0;
+    if (matchPattern(addr, m_ConstantInt(&val))) {
+      baseAddrs.push_back(static_cast<uint64_t>(val));
+    }
+  }
+  if (baseAddrs.empty()) {
+    baseAddrs.push_back(0);
+  }
+
+  Value rootBuffer = (space == pto::AddressSpace::GM) ? rootSrc : res;
   auto newMemInfo = std::make_unique<BaseMemInfo>(
-      res,          
-      rootSrc,      
+      res,
+      rootBuffer,
       space,
-      SmallVector<uint64_t>{0}, 
+      baseAddrs,
       sizeInBytes
   );
  

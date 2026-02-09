@@ -9,6 +9,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -23,24 +25,51 @@ using namespace mlir::pto;
 
 namespace {
 
-static Value traceTileRoot(Value v) {
-  while (auto mark = v.getDefiningOp<pto::MarkMultiBufferOp>()) {
-    v = mark.getSource();
-  }
-  while (auto subset = v.getDefiningOp<pto::SubsetOp>()) {
-    v = subset.getSource();
+static Value traceMemrefRoot(Value v) {
+  while (true) {
+    if (auto mark = v.getDefiningOp<pto::MarkMultiBufferOp>()) {
+      v = mark.getSource();
+      continue;
+    }
+    if (auto bind = v.getDefiningOp<pto::BindTileOp>()) {
+      v = bind.getSource();
+      continue;
+    }
+    if (auto sub = v.getDefiningOp<memref::SubViewOp>()) {
+      v = sub.getSource();
+      continue;
+    }
+    if (auto cast = v.getDefiningOp<memref::CastOp>()) {
+      v = cast.getSource();
+      continue;
+    }
+    if (auto rc = v.getDefiningOp<memref::ReinterpretCastOp>()) {
+      v = rc.getSource();
+      continue;
+    }
+    break;
   }
   return v;
 }
 
-static bool isLocalTileBuf(Value v) {
-  auto tbTy = dyn_cast<pto::TileBufType>(v.getType());
-  if (!tbTy)
+static bool isLocalMemRef(Value v) {
+  auto mrTy = dyn_cast<MemRefType>(v.getType());
+  if (!mrTy)
     return false;
-  auto addrAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(tbTy.getMemorySpace());
+  auto addrAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(mrTy.getMemorySpace());
   if (!addrAttr)
-    return true;
+    return false;
   return addrAttr.getAddressSpace() != pto::AddressSpace::GM;
+}
+
+static std::optional<pto::AddressSpace> getMemSpace(Value v) {
+  auto mrTy = dyn_cast<MemRefType>(v.getType());
+  if (!mrTy)
+    return std::nullopt;
+  auto addrAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(mrTy.getMemorySpace());
+  if (!addrAttr)
+    return std::nullopt;
+  return addrAttr.getAddressSpace();
 }
 
 static pto::MarkMultiBufferOp getExistingMark(Value v) {
@@ -61,11 +90,11 @@ struct PTOMarkMultiBufferPass
     IRRewriter rewriter(func.getContext());
 
     auto markIfNeeded = [&](Value v) {
-      v = traceTileRoot(v);
-      auto alloc = v.getDefiningOp<pto::AllocTileOp>();
+      v = traceMemrefRoot(v);
+      auto alloc = v.getDefiningOp<memref::AllocOp>();
       if (!alloc)
         return;
-      if (!isLocalTileBuf(alloc.getResult()))
+      if (!isLocalMemRef(alloc.getResult()))
         return;
       if (!alloc->getParentOfType<scf::ForOp>())
         return;
@@ -91,12 +120,34 @@ struct PTOMarkMultiBufferPass
       if (!op->getParentOfType<scf::ForOp>())
         return;
 
-      if (auto tload = dyn_cast<pto::TLoadOp>(op)) {
-        markIfNeeded(tload.getDst());
+      if (auto load = dyn_cast<pto::LoadDpsOp>(op)) {
+        markIfNeeded(load.getDst());
         return;
       }
-      if (auto tstore = dyn_cast<pto::TStoreOp>(op)) {
-        markIfNeeded(tstore.getSrc());
+      if (auto store = dyn_cast<pto::StoreDpsOp>(op)) {
+        markIfNeeded(store.getSrc());
+        return;
+      }
+      if (auto mov = dyn_cast<pto::MovDpsOp>(op)) {
+        auto srcSpace = getMemSpace(mov.getSrc());
+        auto dstSpace = getMemSpace(mov.getDst());
+        if (srcSpace && dstSpace) {
+          if (*srcSpace == pto::AddressSpace::GM && *dstSpace != pto::AddressSpace::GM)
+            markIfNeeded(mov.getDst());
+          else if (*dstSpace == pto::AddressSpace::GM && *srcSpace != pto::AddressSpace::GM)
+            markIfNeeded(mov.getSrc());
+        }
+        return;
+      }
+      if (auto movfp = dyn_cast<pto::MovFPOp_DPS>(op)) {
+        auto srcSpace = getMemSpace(movfp.getSrc());
+        auto dstSpace = getMemSpace(movfp.getDst());
+        if (srcSpace && dstSpace) {
+          if (*srcSpace == pto::AddressSpace::GM && *dstSpace != pto::AddressSpace::GM)
+            markIfNeeded(movfp.getDst());
+          else if (*dstSpace == pto::AddressSpace::GM && *srcSpace != pto::AddressSpace::GM)
+            markIfNeeded(movfp.getSrc());
+        }
         return;
       }
     });
@@ -108,4 +159,3 @@ struct PTOMarkMultiBufferPass
 std::unique_ptr<Pass> mlir::pto::createPTOMarkMultiBufferPass() {
   return std::make_unique<PTOMarkMultiBufferPass>();
 }
-
