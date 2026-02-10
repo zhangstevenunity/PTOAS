@@ -3,45 +3,44 @@
 using namespace pto;
 
 __global__ AICORE void sync_kernel_2d(__gm__ float* v1, __gm__ float* v2) {
-  // let's say the input is 128x128 with stride (128, 1) (Row-major)
-  // but we only load and work with 32x32 tiles in this func
-  // this kernel takes a row major tensor
-  // tiles it in row-major order
-  // the tiles are also row-major 
-
+  // let's say the input is Hx128 with stride (128, 1) (Row-major)
+  // but we only load and work with tile_hx128 tiles in this func
 
   #if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)
+  // this should be the same as num_blocks 
+  constexpr unsigned NUM_CORES = 20;
+  static_assert((20 % NUM_CORES) == 0, "block_num must divide number of input rows (128)");
+  constexpr int tile_w = 128;
+  // each core will work with a tile with this many rows
+  constexpr int tile_h = 20 / NUM_CORES;
 
-  using shape3232 = pto::Shape<1, 1, 1, 32, 32>;
-  // This is the stride used for the 32x32 tiles. Note that it's
-  // the same stride as the 128x128 input matrix.
-  using stride32_1 = pto::Stride<16384, 16384, 16384, 128, 1>;
+  // what are these? and do they relate to setting -1 in Tile?
+  //set_mask_norm();
+  //set_vector_mask(-1, -1);
 
-  shape3232 v16 = shape3232(); stride32_1 v17 = stride32_1();
-  shape3232 v26 = shape3232(); stride32_1 v27 = stride32_1();
+  // In this kernel since we only derive 1 tile for each Globaltensor
+  // the GlobalTensor just contains the memory region of 1 tile.
+  // Rather than having a big GlobalTensor that we then derive many
+  // tiles from using TASSIGN to offset inside the GM region.
+  using ShapeGlobal = pto::Shape<1, 1, 1, tile_h, tile_w>;
+  using StrideGlobal = pto::Stride<16384, 16384, 16384, 128, 1>;
+
+  ShapeGlobal v16 = ShapeGlobal(); StrideGlobal v17 = StrideGlobal();
+  ShapeGlobal v26 = ShapeGlobal(); StrideGlobal v27 = StrideGlobal();
   // for 1d tiling. contiguous chunks in 1d space:
-//  unsigned int gm_tile_offset = block_idx * 1024; // b_idx * 32 * 32 # of elements
-  // 2d tiling: we need to map the single block_idx to tile i,j
-  unsigned int num_tiles_h = 4; // big tensor is 128x128, each tile is 32x32, so 4 tiles per dim
-  unsigned int num_tiles_w = 4;
-
-  // This mapping here from block_index to which tile T_ij
-  // is also row major. So you could have swizzling here...
-  unsigned int tile_idx_i = block_idx / num_tiles_h; 
-  unsigned int tile_idx_j = block_idx % num_tiles_w; 
-  // Calculate the offset to T_ij. 32 * (i, j) * stride_inp_tensor
-  unsigned int gm_tile_offset = 32 * (tile_idx_i * 128 + tile_idx_j);
+  unsigned int gm_tile_offset = block_idx * tile_h * tile_w; // each tile has tile_h*tile_w contiguous elements
   __gm__ float* gm_tile_in = v1 + gm_tile_offset;
   __gm__ float* gm_tile_out = v2 + gm_tile_offset;
   // Now for every core, this will have loaded it's own tile from gmem.
-  GlobalTensor<float, shape3232, stride32_1> gten_in = GlobalTensor<float, shape3232, stride32_1>(gm_tile_in, v16, v17);
-  GlobalTensor<float, shape3232, stride32_1> gten_out = GlobalTensor<float, shape3232, stride32_1>(gm_tile_out, v26, v27);
+  GlobalTensor<float, ShapeGlobal, StrideGlobal> gten_in = GlobalTensor<float, ShapeGlobal, StrideGlobal>(gm_tile_in, v16, v17);
+  GlobalTensor<float, ShapeGlobal, StrideGlobal> gten_out = GlobalTensor<float, ShapeGlobal, StrideGlobal>(gm_tile_out, v26, v27);
+  Tile<TileType::Vec, float, tile_h, tile_w, BLayout::RowMajor, tile_h, tile_w> tile_in;
+  Tile<TileType::Vec, float, tile_h, tile_w, BLayout::RowMajor, tile_h, tile_w> tile_out;
 
-  // Why is fractal size specified here 512?
-  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> tile_in;
-  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> tile_out;
   int64_t v7 = 0;
-  int64_t v8 = 4096; // using tiles 32x32 and each element is 4 bytes so offset is 32*32*4=4096 bytes
+  // we just have to make sure that the second tile is somewhere in the 196 kb of UB?
+  // and it must not overlap with the first tile
+  int64_t v8 = tile_h * tile_w * 4 + 0x100; // using tiles and each element is 4 bytes so offset #elements * bytes/element
   TASSIGN(tile_in, v7);
   TASSIGN(tile_out, v8);
 
@@ -58,6 +57,6 @@ __global__ AICORE void sync_kernel_2d(__gm__ float* v1, __gm__ float* v2) {
   return;
 }
 
-extern "C" void call_kernel( uint32_t blockDim, void* stream, uint8_t* v1, uint8_t* v2) {
-    sync_kernel_2d<<<blockDim, nullptr, stream>>>((float *)v1, (float *)v2);
+extern "C" void call_kernel( uint32_t blockDim, void* stream, void* v1, void* v2) {
+    sync_kernel_2d<<<blockDim, nullptr, stream>>>(( __gm__ float *)v1, (__gm__ float *)v2);
 }
