@@ -59,6 +59,31 @@ class PTO_Op<string mnemonic, list<Trait> traits = []>
 // Pointer/View Ops (for your front-end IR)
 //===----------------------------------------------------------------------===//
 
+def AddPtrOp : PTO_Op<"addptr", [
+    Pure,
+    AllTypesMatch<["ptr", "result"]>,
+    DeclareOpInterfaceMethods<InferTypeOpInterface>
+  ]> {
+  let summary = "Add an element offset to a !pto.ptr";
+  let description = [{
+    Computes a new pointer by adding an element offset to the base pointer.
+    The offset is in elements (not bytes).
+  }];
+
+  let arguments = (ins
+    PtrType:$ptr,
+    Index:$offset
+  );
+
+  let results = (outs PtrType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $ptr `,` $offset attr-dict `:` type($ptr) `->` type($result)
+  }];
+}
+
 def MakeTensorViewOp : PTO_Op<"make_tensor_view", [AttrSizedOperandSegments]> {
   let summary = "Wrap a pointer as a tensor_view descriptor (no allocation, no copy).";
 

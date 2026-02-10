@@ -792,6 +792,21 @@ LogicalResult mlir::pto::MakeTensorViewOp::verify() {
   return success();
 }
 
+LogicalResult mlir::pto::AddPtrOp::verify() {
+  auto ptrTy = dyn_cast<mlir::pto::PtrType>(getPtr().getType());
+  if (!ptrTy)
+    return emitOpError("ptr operand must be !pto.ptr<...>");
+
+  auto resTy = dyn_cast<mlir::pto::PtrType>(getResult().getType());
+  if (!resTy)
+    return emitOpError("result must be !pto.ptr<...>");
+
+  if (ptrTy != resTy)
+    return emitOpError("result type must match ptr operand type");
+
+  return success();
+}
+
 
 //===----------------------------------------------------------------------===//
 // PTODialect

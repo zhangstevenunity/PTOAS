@@ -304,6 +304,26 @@ struct PTOViewToMemrefPass
         Location loc = op.getLoc();
 
         Value baseBuf = op.getOperand(0);
+        OpFoldResult off0 = rewriter.getIndexAttr(0);
+
+        // Fold pto.addptr chains into the view base to avoid nested reinterpret_cast.
+        {
+          Value cur = baseBuf;
+          Value totalOffset;
+          while (auto add = cur.getDefiningOp<mlir::pto::AddPtrOp>()) {
+            Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
+            if (totalOffset)
+              totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
+            else
+              totalOffset = off;
+            cur = add.getOperand(0);
+          }
+          if (cur != baseBuf) {
+            baseBuf = cur;
+            off0 = totalOffset ? OpFoldResult(totalOffset) : off0;
+          }
+        }
+
         auto baseMr = dyn_cast<BaseMemRefType>(baseBuf.getType());
         if (!baseMr) {
              op.emitError("make_tensor_view base must be memref"); signalPassFailure(); return;
@@ -325,8 +345,6 @@ struct PTOViewToMemrefPass
         SmallVector<int64_t> dynShape(rank, dyn);
         auto mrTy = MemRefType::get(dynShape, elemTy, layout, baseMr.getMemorySpace());
 
-        OpFoldResult off0 = rewriter.getIndexAttr(0);
-        
         SmallVector<OpFoldResult, 4> sizes;
         for (Value v : op.getShape()) sizes.push_back(ensureIndex(rewriter, loc, v, op));
 
@@ -337,6 +355,30 @@ struct PTOViewToMemrefPass
             loc, mrTy, baseBuf, off0, sizes, strides);
 
         rewriter.replaceOp(op, rc.getResult());
+      }
+
+      // Clean up: addptr should be folded into make_tensor_view.
+      SmallVector<Operation *, 8> addPtrs;
+      func.walk([&](mlir::pto::AddPtrOp op) { addPtrs.push_back(op.getOperation()); });
+      bool changed = true;
+      while (changed) {
+        changed = false;
+        for (auto &op : addPtrs) {
+          if (!op)
+            continue;
+          if (op->use_empty()) {
+            op->erase();
+            op = nullptr;
+            changed = true;
+          }
+        }
+      }
+      for (auto *op : addPtrs) {
+        if (!op)
+          continue;
+        op->emitError("addptr must feed make_tensor_view for lowering");
+        signalPassFailure();
+        return;
       }
 
       // ------------------------------------------------------------------
