@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include <cctype>
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -97,6 +98,11 @@ static llvm::cl::opt<bool> disableInferLayout(
     "disable-infer-layout",
     llvm::cl::desc("Disable PTO layout inference pass (static-only)"),
     llvm::cl::init(true)); // 默认关闭，需显式开启
+
+static llvm::cl::opt<bool> emitAddPtrTrace(
+    "emit-addptr-trace",
+    llvm::cl::desc("Emit addptr trace comments in generated C++ output"),
+    llvm::cl::init(false));
 
 // --------------------------------------------------------------------------
 // Post-process C++ output: rewrite marker calls into Tile member calls.
@@ -204,6 +210,91 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
   }
+}
+
+static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
+  size_t searchPos = 0;
+  bool changed = false;
+  while (true) {
+    size_t markerPos = cpp.find("PTOAS__ADDPTR_TRACE", searchPos);
+    if (markerPos == std::string::npos)
+      break;
+
+    size_t lparenPos = markerPos + (sizeof("PTOAS__ADDPTR_TRACE") - 1);
+    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
+      searchPos = markerPos + 1;
+      continue;
+    }
+
+    size_t argsBegin = lparenPos + 1;
+    int parenDepth = 0;
+    size_t rparenPos = std::string::npos;
+    for (size_t i = argsBegin; i < cpp.size(); ++i) {
+      char c = cpp[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth == 0) {
+          rparenPos = i;
+          break;
+        }
+        --parenDepth;
+      }
+    }
+    if (rparenPos == std::string::npos) {
+      break;
+    }
+
+    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
+    llvm::SmallVector<llvm::StringRef, 4> args;
+    size_t partBegin = 0;
+    parenDepth = 0;
+    for (size_t i = 0; i < argsRef.size(); ++i) {
+      char c = argsRef[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth > 0)
+          --parenDepth;
+      } else if (c == ',' && parenDepth == 0) {
+        args.push_back(argsRef.slice(partBegin, i).trim());
+        partBegin = i + 1;
+      }
+    }
+    if (partBegin <= argsRef.size())
+      args.push_back(argsRef.drop_front(partBegin).trim());
+
+    if (args.size() != 3) {
+      searchPos = rparenPos + 1;
+      continue;
+    }
+
+    std::string replacement;
+    if (showTrace) {
+      replacement.reserve(64 + argsRef.size());
+      replacement.append("/* ADDPTR_TRACE: ");
+      replacement.append(args[0].str());
+      replacement.append(" = ");
+      replacement.append(args[1].str());
+      replacement.append(" + ");
+      replacement.append(args[2].str());
+      replacement.append(" */");
+    }
+
+    size_t replaceEnd = rparenPos;
+    if (!showTrace) {
+      size_t i = rparenPos + 1;
+      while (i < cpp.size() && std::isspace(static_cast<unsigned char>(cpp[i])))
+        ++i;
+      if (i < cpp.size() && cpp[i] == ';')
+        replaceEnd = i;
+    }
+
+    cpp.replace(markerPos, (replaceEnd - markerPos) + 1, replacement);
+    changed = true;
+    searchPos = markerPos + replacement.size();
+  }
+  return changed;
 }
 
 int main(int argc, char **argv) {
@@ -315,6 +406,7 @@ int main(int argc, char **argv) {
   }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
+  rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
   outputFile.os() << cppOutput;
 
   outputFile.keep(); // Success, keep the file

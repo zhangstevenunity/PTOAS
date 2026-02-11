@@ -330,10 +330,12 @@ struct PTOViewToMemrefPass
         OpFoldResult off0 = rewriter.getIndexAttr(0);
 
         // Fold pto.addptr chains into the view base to avoid nested reinterpret_cast.
+        bool foldedAddPtr = false;
         {
           Value cur = baseBuf;
           Value totalOffset;
           while (auto add = cur.getDefiningOp<mlir::pto::AddPtrOp>()) {
+            foldedAddPtr = true;
             Value off = ensureIndex(rewriter, loc, add.getOperand(1), add);
             if (totalOffset)
               totalOffset = rewriter.create<arith::AddIOp>(loc, totalOffset, off);
@@ -376,6 +378,9 @@ struct PTOViewToMemrefPass
 
         auto rc = rewriter.create<memref::ReinterpretCastOp>(
             loc, mrTy, baseBuf, off0, sizes, strides);
+        if (foldedAddPtr) {
+          rc->setAttr("pto.addptr_trace", rewriter.getUnitAttr());
+        }
 
         rewriter.replaceOp(op, rc.getResult());
       }

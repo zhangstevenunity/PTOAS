@@ -3446,6 +3446,7 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(resMrTy.getMemorySpace());
     const bool isGm = (!asAttr || asAttr.getAddressSpace() == pto::AddressSpace::GM);
 
+    bool emitAddPtrTrace = op->hasAttr("pto.addptr_trace");
     Value source = adaptor.getSource();
     auto offsets = adaptor.getOffsets();
     Value offsetVal = offsets.empty() ? Value() : offsets[0];
@@ -3462,6 +3463,13 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
         return failure();
 
       auto addOp = rewriter.create<emitc::AddOp>(loc, resultType, source, offsetVal);
+      if (emitAddPtrTrace) {
+        rewriter.setInsertionPointAfter(addOp);
+        rewriter.create<emitc::CallOpaqueOp>(
+            loc, TypeRange{}, "PTOAS__ADDPTR_TRACE",
+            ArrayAttr{}, ArrayAttr{},
+            ValueRange{addOp.getResult(), source, offsetVal});
+      }
       rewriter.replaceOp(op, addOp.getResult());
       return success();
     }
