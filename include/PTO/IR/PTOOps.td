@@ -2081,43 +2081,6 @@ def TMScatterOp : PTO_TOp<"mscatter", [
 }
 
 //===----------------------------------------------------------------------===//
-// TADDC (sync, tilebuf-based tile ternary add)
-// dst = src0 + src1 + src2
-//===----------------------------------------------------------------------===//
-
-def PTO_AddCOp_DPS : PTO_DpsOp<"addc_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Elementwise ternary add of tiles ";
-  let description = [{
-    For each element (i, j): dst[i,j] = src0[i,j] + src1[i,j] + src2[i,j].
-  }];
-
-  let arguments = (ins
-    PTODpsType:$src0,
-    PTODpsType:$src1,
-    PTODpsType:$src2,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let assemblyFormat = [{
-    `ins` `(` $src0 `,` $src1 `,` $src2 `:`
-          qualified(type($src0)) `,` qualified(type($src1)) `,` qualified(type($src2)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let hasVerifier = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-//===----------------------------------------------------------------------===//
 // TADDS (sync, tilebuf-based tile + scalar)
 // dst = src + scalar
 //===----------------------------------------------------------------------===//
@@ -2186,28 +2149,6 @@ def PTO_AddSCOp_DPS : PTO_DpsOp<"addsc_dps", [
 }
 
 
-def PTO_AndOp_DPS : PTO_DpsOp<"and_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "TAND(dst, src0, src1) bitwise-and on tiles";
-  let arguments = (ins PTODpsType:$src0, PTODpsType:$src1, PTODpsType:$dst);
-  let results = (outs);
-
-  let assemblyFormat = [{
-    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let hasVerifier = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
 def PTO_AndSOp_DPS : PTO_DpsOp<"ands_dps", [
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
@@ -2229,36 +2170,6 @@ def PTO_AndSOp_DPS : PTO_DpsOp<"ands_dps", [
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }
-
-
-
-def PTO_CIOp_DPS : PTO_DpsOp<"ci_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Generate contiguous integer sequence into dst tile.";
-
-  let arguments = (ins
-    AnyInteger:$S,
-    PTODpsType:$dst,
-    DefaultValuedAttr<BoolAttr, "false">:$descending
-  );
-  let results = (outs);
-
-  let assemblyFormat = [{
-    `ins` `(` $S `:` type($S) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let hasVerifier = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
 def PTO_CmpOp_DPS : PTO_DpsOp<"cmp_dps", [
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

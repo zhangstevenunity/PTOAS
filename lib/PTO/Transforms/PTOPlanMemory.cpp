@@ -137,6 +137,18 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       // tabs is a read(src)+write(dst) local-buffer op.
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(tabsOp->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto taddcOp = dyn_cast<pto::TAddCOp>(op)) {
+      // taddc is a read(src0/src1/src2)+write(dst) local-buffer op.
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(taddcOp->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tandOp = dyn_cast<pto::TAndOp>(op)) {
+      // tand is a read(src0/src1)+write(dst) local-buffer op.
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(tandOp->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tciOp = dyn_cast<pto::TCIOp>(op)) {
+      // tci is a write(dst) op with scalar seed S.
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(tciOp->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
       UpdateStoreOpInfo(curOpInfo, storeOp.getMemRef(), live);
     } else if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(op)) {

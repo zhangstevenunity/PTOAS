@@ -1196,35 +1196,6 @@ LogicalResult mlir::pto::TransOp::verify() {
 }
 
 
-LogicalResult pto::AddCOp_DPS::verify() {
-  auto t0 = llvm::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto t1 = llvm::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto t2 = llvm::dyn_cast<mlir::MemRefType>(getSrc2().getType());
-  auto td = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!t0 || !t1 || !t2 || !td)
-    return emitOpError("expects src0/src1/src2/dst to be memref types");
-
-  if (t0.getRank() != t1.getRank() || t0.getRank() != t2.getRank() ||
-      t0.getRank() != td.getRank())
-    return emitOpError("src0/src1/src2/dst rank must match");
-
-  Type e0 = t0.getElementType();
-  if (e0 != t1.getElementType() || e0 != t2.getElementType() || e0 != td.getElementType())
-    return emitOpError("element types must match for src0/src1/src2/dst");
-
-  auto isOK = [&](Type t) -> bool {
-    if (auto it = t.dyn_cast<IntegerType>()) {
-      unsigned w = it.getWidth();
-      return (w == 32 || w == 16 || w == 8);
-    }
-    return t.isF32() || t.isF16() || t.isBF16();
-  };
-
-  if (!isOK(e0))
-    return emitOpError("element type must be one of: i32/u32, i16/u16, i8/u8, f16, bf16, f32");
-
-  return success();
-}
 LogicalResult pto::AddSOp_DPS::verify() {
   auto ts = llvm::dyn_cast<mlir::MemRefType>(getSrc().getType());
   auto td = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
@@ -1288,26 +1259,6 @@ LogicalResult pto::AddSCOp_DPS::verify() {
   return success();
 }
 
-LogicalResult pto::AndOp_DPS::verify() {
-  auto m0 = dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto m1 = dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto md = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!m0 || !m1 || !md)
-    return emitOpError("expects src0/src1/dst to be memref types");
-
-  Type e0 = m0.getElementType();
-  Type e1 = m1.getElementType();
-  Type ed = md.getElementType();
-
-  if (!e0.isIntOrIndex() || !e1.isIntOrIndex() || !ed.isIntOrIndex())
-    return emitOpError("expects integral element types (int/index) for TAND");
-
-  if (e0 != e1 || e0 != ed)
-    return emitOpError("src0/src1/dst element types must match");
-
-  return success();
-}
-
 LogicalResult pto::AndSOp_DPS::verify() {
   auto ms = dyn_cast<mlir::MemRefType>(getSrc().getType());
   auto md = dyn_cast<mlir::MemRefType>(getDst().getType());
@@ -1329,29 +1280,6 @@ LogicalResult pto::AndSOp_DPS::verify() {
   return success();
 }
 
-
-LogicalResult pto::CIOp_DPS::verify() {
-  auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!dstTy)
-    return emitOpError("expects dst to be a memref");
-
-  auto elemTy = dstTy.getElementType().dyn_cast<IntegerType>();
-  if (!elemTy)
-    return emitOpError("expects dst element type to be integer");
-
-  unsigned bw = elemTy.getWidth();
-  if (bw != 16 && bw != 32)
-    return emitOpError("expects dst element type to be i16 or i32");
-
-  auto sTy = getS().getType().dyn_cast<IntegerType>();
-  if (!sTy)
-    return emitOpError("expects S to be integer");
-
-  if (sTy.getWidth() != bw)
-    return emitOpError("expects S type to match dst element bitwidth");
-
-  return success();
-}
 
 LogicalResult pto::CmpOp_DPS::verify() {
   auto dstTy  = dyn_cast<mlir::MemRefType>(getDst().getType());
@@ -3526,20 +3454,28 @@ LogicalResult pto::TAddOp::verify() {
 }
 
 LogicalResult pto::TAddCOp::verify() {
-  auto t0 = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto t1 = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto t2 = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc2().getType());
-  auto td = llvm::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!t0 || !t1 || !t2 || !td)
-    return emitOpError("expects src0/src1/src2/dst to be tilebuf types");
+  Type t0 = getSrc0().getType();
+  Type t1 = getSrc1().getType();
+  Type t2 = getSrc2().getType();
+  Type td = getDst().getType();
 
-  if (t0.getRank() != t1.getRank() || t0.getRank() != t2.getRank() ||
-      t0.getRank() != td.getRank())
-    return emitOpError("src0/src1/src2/dst rank must match");
+  if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) ||
+      !isPTOShapedLike(t2) || !isPTOShapedLike(td))
+    return emitOpError("expects src0/src1/src2/dst to be memref/tensor/tile_buf/tile_view types");
 
-  Type e0 = t0.getElementType();
-  if (e0 != t1.getElementType() || e0 != t2.getElementType() || e0 != td.getElementType())
-    return emitOpError("element types must match for src0/src1/src2/dst");
+  Type e0 = getElemTy(t0), e1 = getElemTy(t1), e2 = getElemTy(t2), ed = getElemTy(td);
+  if (!e0 || !e1 || !e2 || !ed)
+    return emitOpError("failed to get element type for operands");
+  if (e0 != e1 || e0 != e2 || e0 != ed)
+    return emitOpError("expects src0/src1/src2/dst to have the same element type, but got ")
+           << e0 << ", " << e1 << ", " << e2 << ", " << ed;
+
+  auto s0 = getShapeVec(t0);
+  auto s1 = getShapeVec(t1);
+  auto s2 = getShapeVec(t2);
+  auto sd = getShapeVec(td);
+  if (s0 != s1 || s0 != s2 || s0 != sd)
+    return emitOpError("expects src0/src1/src2/dst to have the same shape");
 
   auto isOK = [&](Type t) -> bool {
     if (auto it = t.dyn_cast<IntegerType>()) {
@@ -3618,21 +3554,29 @@ LogicalResult pto::TAddSCOp::verify() {
 }
 
 LogicalResult pto::TAndOp::verify() {
-  auto m0 = dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto m1 = dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto md = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!m0 || !m1 || !md)
-    return emitOpError("expects src0/src1/dst to be tilebuf types");
+  Type t0 = getSrc0().getType();
+  Type t1 = getSrc1().getType();
+  Type td = getDst().getType();
+  if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) || !isPTOShapedLike(td))
+    return emitOpError("expects src0/src1/dst to be memref/tensor/tile_buf/tile_view types");
 
-  Type e0 = m0.getElementType();
-  Type e1 = m1.getElementType();
-  Type ed = md.getElementType();
+  Type e0 = getElemTy(t0);
+  Type e1 = getElemTy(t1);
+  Type ed = getElemTy(td);
+  if (!e0 || !e1 || !ed)
+    return emitOpError("failed to get element type for operands");
 
   if (!e0.isIntOrIndex() || !e1.isIntOrIndex() || !ed.isIntOrIndex())
     return emitOpError("expects integral element types (int/index) for TAND");
 
   if (e0 != e1 || e0 != ed)
     return emitOpError("src0/src1/dst element types must match");
+
+  auto s0 = getShapeVec(t0);
+  auto s1 = getShapeVec(t1);
+  auto sd = getShapeVec(td);
+  if (s0 != s1 || s0 != sd)
+    return emitOpError("expects src0/src1/dst to have the same shape");
 
   return success();
 }
@@ -3659,11 +3603,11 @@ LogicalResult pto::TAndSOp::verify() {
 }
 
 LogicalResult pto::TCIOp::verify() {
-  auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!dstTy)
-    return emitOpError("expects dst to be a tilebuf");
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(dstTy))
+    return emitOpError("expects dst to be memref/tensor/tile_buf/tile_view");
 
-  auto elemTy = dstTy.getElementType().dyn_cast<IntegerType>();
+  auto elemTy = getElemTy(dstTy).dyn_cast<IntegerType>();
   if (!elemTy)
     return emitOpError("expects dst element type to be integer");
 
@@ -6987,7 +6931,6 @@ void SetValDpsOp::getEffects(
   PTO_ADD_WRITE(getDstMutable());
 }
 
-PTO_DEFINE_TERNARY_EFFECTS(AddCOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
 
 void AddSOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
@@ -7004,17 +6947,11 @@ void AddSCOp_DPS::getEffects(
   PTO_ADD_WRITE(getDstMutable());
 }
 
-PTO_DEFINE_BINARY_EFFECTS(AndOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 
 void AndSOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
   PTO_ADD_READ(getScalarMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void CIOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getDstMutable());
 }
 

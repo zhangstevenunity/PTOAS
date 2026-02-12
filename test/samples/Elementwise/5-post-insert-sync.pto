@@ -37,7 +37,7 @@ func.func @vec_and_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm>
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.tand_dps ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
+  pto.tand ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
           outs(%4 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 6. DMA Store
@@ -137,7 +137,7 @@ func.func @vec_add_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm>
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.tadd_dps ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
+  pto.tadd ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
           outs(%4 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 6. DMA Store
@@ -200,7 +200,7 @@ func.func @vec_addc_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.taddc_dps ins(%ub0, %ub1, %ub2
+  pto.taddc ins(%ub0, %ub1, %ub2
         : memref<1024xi32, #pto.address_space<ub>>,
           memref<1024xi32, #pto.address_space<ub>>,
           memref<1024xi32, #pto.address_space<ub>>)

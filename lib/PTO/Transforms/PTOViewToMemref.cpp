@@ -967,7 +967,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddCOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddCOp>(
             op,
             TypeRange{},
             src0,
@@ -1053,7 +1053,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AndOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAndOp>(
             op,
             TypeRange{},
             src0,
@@ -1107,7 +1107,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::CIOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TCIOp>(
             op,
             TypeRange{},
             s,
