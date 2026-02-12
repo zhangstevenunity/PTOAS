@@ -741,6 +741,12 @@ private:
 
   int biasSpaceSize{0};
 
+  /// The device's SCALING align size
+  int scalingAlignSize{0};
+
+  /// The device's SCALING storage size
+  int scalingSpaceSize{0};
+
 };
 
 } // namespace pto

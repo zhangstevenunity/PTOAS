@@ -72,3 +72,43 @@ if(PTO_ENABLE_PYTHON_BINDING)
 
   add_subdirectory(python)
 endif()
+
+# =========================================================
+# 5. 安装配置 (生成PTOASConfig.cmake)
+# 将 include/PTO目录下的头文件安装到 <prefix>/include/PTO
+install(DIRECTORY include/PTO
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        COMPONENT PTOAS_Development
+        FILES_MATCHING PATTERN "*.h" PATTERN "*.td"
+)
+# 安装构建目录下的 .inc 生成文件
+install(DIRECTORY ${PROJECT_BINARY_DIR}/include/PTO
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        COMPONENT PTOAS_Development
+        FILES_MATCHING PATTERN "*.inc"
+)
+
+# 6. 定义 CMake 配置文件安装位置 (例如 lib/cmake/PTOAS)
+set(PTOAS_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/PTOAS")
+
+# 7. 导出 Targets (PTOASTargets.cmake) 供 find_package 使用
+install(EXPORT PTOASTargets
+        FILE PTOASTargets.cmake
+        NAMESPACE PTOAS::
+        DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
+)
+
+# 8. 生成 Config 文件 (PTOASConfig.cmake)
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/PTOASConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/PTOASConfig.cmake"
+    INSTALL_DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
+    PATH_VARS CMAKE_INSTALL_INCLUDEDIR
+)
+
+# 9. 安装 Config 文件
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/PTOASConfig.cmake"
+    DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
+)

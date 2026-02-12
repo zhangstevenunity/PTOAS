@@ -1,0 +1,85 @@
+#include <pto/pto-inst.hpp>
+#include <pto/common/constants.hpp>
+#include "acl/acl.h"
+
+#include "pto/pto-inst.hpp"
+using namespace pto;
+__global__ AICORE void gqa_qk_block(__gm__ float* v1, __gm__ float* v2, __gm__ float* v3) {
+  unsigned v4 = 1;
+  unsigned v5 = 0;
+  int32_t v6 = 32;
+  int32_t v7 = 1;
+  int64_t v8 = 0;
+  int64_t v9 = 4096;
+  using T = float;
+  unsigned v10 = (unsigned) v6;
+  unsigned v11 = v5 * v10;
+  unsigned v12 = v5 + v11;
+  unsigned v13 = (unsigned) v7;
+  unsigned v14 = v5 * v13;
+  unsigned v15 = v12 + v14;
+  __gm__ float* v16 = v1 + v15;
+  using GTShape_313487024 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_313487024 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_313487024_layout = pto::Layout::ND;
+  GTShape_313487024 v17 = GTShape_313487024();
+  GTStride_313487024 v18 = GTStride_313487024();
+  using GT_313487024 = GlobalTensor<float, GTShape_313487024, GTStride_313487024, GT_313487024_layout>;
+  GT_313487024 v19 = GT_313487024(v16, v17, v18);
+  unsigned v20 = (unsigned) v6;
+  unsigned v21 = v5 * v20;
+  unsigned v22 = v5 + v21;
+  unsigned v23 = (unsigned) v7;
+  unsigned v24 = v5 * v23;
+  unsigned v25 = v22 + v24;
+  __gm__ float* v26 = v2 + v25;
+  using GTShape_313487200 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_313487200 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_313487200_layout = pto::Layout::ND;
+  GTShape_313487200 v27 = GTShape_313487200();
+  GTStride_313487200 v28 = GTStride_313487200();
+  using GT_313487200 = GlobalTensor<float, GTShape_313487200, GTStride_313487200, GT_313487200_layout>;
+  GT_313487200 v29 = GT_313487200(v26, v27, v28);
+  unsigned v30 = (unsigned) v6;
+  unsigned v31 = v5 * v30;
+  unsigned v32 = v5 + v31;
+  unsigned v33 = (unsigned) v7;
+  unsigned v34 = v5 * v33;
+  unsigned v35 = v32 + v34;
+  __gm__ float* v36 = v3 + v35;
+  using GTShape_313487376 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_313487376 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_313487376_layout = pto::Layout::ND;
+  GTShape_313487376 v37 = GTShape_313487376();
+  GTStride_313487376 v38 = GTStride_313487376();
+  using GT_313487376 = GlobalTensor<float, GTShape_313487376, GTStride_313487376, GT_313487376_layout>;
+  GT_313487376 v39 = GT_313487376(v36, v37, v38);
+  Tile<TileType::Mat, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null> v40;
+  TASSIGN(v40, v8);
+  Tile<TileType::Mat, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null> v41;
+  TASSIGN(v41, v9);
+  Tile<TileType::Left, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null> v42;
+  TASSIGN(v42, v8);
+  Tile<TileType::Right, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::ColMajor, 512, PadValue::Null> v43;
+  TASSIGN(v43, v8);
+  Tile<TileType::Acc, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 1024, PadValue::Null> v44;
+  TASSIGN(v44, v8);
+  TLOAD(v40, v19);
+  set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+  TLOAD(v41, v29);
+  set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID1);
+  wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+  TMOV(v42, v40);
+  wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID1);
+  TMOV(v43, v41);
+  set_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+  wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID0);
+  TMATMUL(v44, v42, v43);
+  set_flag(PIPE_M, PIPE_MTE3, EVENT_ID0);
+  wait_flag(PIPE_M, PIPE_MTE3, EVENT_ID0);
+  TSTORE(v39, v44);
+  pipe_barrier(PIPE_ALL);
+  return;
+}
+
+

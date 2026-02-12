@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+# 1. 包含导出的 Targets 定义 (PTOASTargets.cmake)
+include("${CMAKE_CURRENT_LIST_DIR}/PTOASTargets.cmake")
+
+# 2. 设置头文件路径变量
+set_and_check(PTOAS_INCLUDE_DIRS "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+# 3. 打印状态信息
+message(STATUS "Found PTOAS: ${CMAKE_CURRENT_LIST_DIR}")
+message(STATUS "  Include: ${PTOAS_INCLUDE_DIRS}")
+
+check_required_components(PTOAS)

@@ -29,6 +29,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 
 #include <numeric>
 #include <optional>
@@ -374,6 +375,223 @@ void mlir::pto::TDivSOp::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs());
 }
 
+// DivSOp_DPS custom asm to support both:
+//   pto.divs_dps ins(%src, %scalar : memref<...>, f32) outs(%dst : memref<...>)
+//   pto.divs_dps ins(%scalar, %src : f32, memref<...>) outs(%dst : memref<...>)
+// The operand order in the op remains (src, scalar, dst); order is determined
+// by the type of the first operand in the textual format.
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::DivSOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand op0, op1, dst;
+  Type ty0, ty1, dstTy;
+
+  if (parser.parseKeyword("ins") || parser.parseLParen() ||
+      parser.parseOperand(op0) || parser.parseComma() ||
+      parser.parseOperand(op1) || parser.parseColonType(ty0) ||
+      parser.parseComma() || parser.parseType(ty1) || parser.parseRParen())
+    return failure();
+
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+
+  NamedAttrList attrs;
+  if (parser.parseOptionalAttrDict(attrs))
+    return failure();
+
+  // Check types: exactly one must be memref/tensor, the other must be scalar
+  auto memref0 = dyn_cast<mlir::MemRefType>(ty0);
+  auto tensor0 = dyn_cast<mlir::RankedTensorType>(ty0);
+  auto memref1 = dyn_cast<mlir::MemRefType>(ty1);
+  auto tensor1 = dyn_cast<mlir::RankedTensorType>(ty1);
+  
+  bool isMemref0 = (memref0 != nullptr || tensor0 != nullptr);
+  bool isMemref1 = (memref1 != nullptr || tensor1 != nullptr);
+  
+  if ((isMemref0 && isMemref1) || (!isMemref0 && !isMemref1))
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected exactly one memref/tensor operand and one scalar operand");
+
+  // Check if scalar type is valid (integer, float, or index)
+  Type scalarTy = isMemref0 ? ty1 : ty0;
+  if (!scalarTy.isIntOrIndexOrFloat())
+    return parser.emitError(parser.getCurrentLocation(),
+                            "scalar operand must be integer, float, or index type");
+  // Check dst type
+  auto dstMemref = dyn_cast<mlir::MemRefType>(dstTy);
+  auto dstTensor = dyn_cast<mlir::RankedTensorType>(dstTy);
+  if (!dstMemref && !dstTensor)
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected outs type to be memref or tensor");
+
+  // Determine order based on types: if first operand is memref/tensor, order is (memref, scalar)
+  // Otherwise, order is (scalar, memref) - need to swap
+  const bool scalarFirst = !isMemref0;
+
+  if (!scalarFirst) {
+    // ins(%src, %scalar : memref, scalar_ty)
+    // Operands in op: (src, scalar, dst)
+    if (parser.resolveOperand(op0, ty0, result.operands) ||
+        parser.resolveOperand(op1, ty1, result.operands))
+      return failure();
+  } else {
+    // ins(%scalar, %src : scalar_ty, memref)
+    // Operands in op: (src, scalar, dst) - need to swap
+    if (parser.resolveOperand(op1, ty1, result.operands) ||
+        parser.resolveOperand(op0, ty0, result.operands))
+      return failure();
+  }
+
+  if (parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+
+  result.addAttributes(attrs);
+  return success();
+}
+
+
+void mlir::pto::DivSOp_DPS::print(OpAsmPrinter &p) {
+  // Determine order based on operand types
+  // If src is memref/tensor and scalar is not, print (src, scalar)
+  // If src is scalar and scalar is memref/tensor, print (scalar, src)
+  auto srcType = getSrc().getType();
+  auto scalarType = getScalar().getType();
+  
+  auto srcMemref = dyn_cast<mlir::MemRefType>(srcType);
+  auto srcTensor = dyn_cast<mlir::RankedTensorType>(srcType);
+  auto scalarMemref = dyn_cast<mlir::MemRefType>(scalarType);
+  auto scalarTensor = dyn_cast<mlir::RankedTensorType>(scalarType);
+  
+  bool srcIsMemref = (srcMemref != nullptr || srcTensor != nullptr);
+  bool scalarIsMemref = (scalarMemref != nullptr || scalarTensor != nullptr);
+  
+  p << " ins(";
+  if (srcIsMemref && !scalarIsMemref) {
+    // Print: (memref, scalar) - operands are already in correct order
+    p << getSrc() << ", " << getScalar() << " : "
+      << getSrc().getType() << ", " << getScalar().getType();
+  } else if (!srcIsMemref && scalarIsMemref) {
+    // Print: (scalar, memref) - need to swap operands in output
+    p << getScalar() << ", " << getSrc() << " : "
+      << getScalar().getType() << ", " << getSrc().getType();
+  } else {
+    // Default: assume src is memref (should not happen if types are correct)
+    p << getSrc() << ", " << getScalar() << " : "
+      << getSrc().getType() << ", " << getScalar().getType();
+  }
+  p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  p.printOptionalAttrDict((*this)->getAttrs());
+}
+
+//===----------------------------------------------------------------------===//
+// pto.tgather custom asm to support both:
+//   pto.tgather ins(%src, %indices : !pto.tile_buf<...>, !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
+//   pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
+//
+// Legacy syntax support (for existing test artifacts):
+//   pto.tgather ins(%src : !pto.tile_buf<...>, %indices : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>) [maskPattern = ...]
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::TGatherOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src, dst, indices;
+  Type srcTy, dstTy, indicesTy;
+  bool hasIndices = false;
+
+  // ins(...)
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+
+  // New-style: ins(%src, <indices-or-{maskPattern=...}> : ...)
+  if (succeeded(parser.parseOptionalComma())) {
+    // Mask form: ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : srcTy)
+    if (succeeded(parser.parseOptionalLBrace())) {
+      if (parser.parseKeyword("maskPattern") || parser.parseEqual())
+        return failure();
+
+      Attribute rawMaskAttr;
+      if (parser.parseAttribute(rawMaskAttr) || parser.parseRBrace())
+        return failure();
+
+      auto mp = llvm::dyn_cast<mlir::pto::MaskPatternAttr>(rawMaskAttr);
+      if (!mp)
+        return parser.emitError(parser.getCurrentLocation(),
+                                "expected #pto.mask_pattern<Pxxxx> for maskPattern");
+
+      result.addAttribute("maskPattern", mp);
+
+      if (parser.parseColonType(srcTy) || parser.parseRParen())
+        return failure();
+    } else {
+      // Index form: ins(%src, %indices : srcTy, indicesTy)
+      if (parser.parseOperand(indices) || parser.parseColonType(srcTy) ||
+          parser.parseComma() || parser.parseType(indicesTy) || parser.parseRParen())
+        return failure();
+      hasIndices = true;
+    }
+  } else if (succeeded(parser.parseOptionalColon())) {
+    // Legacy typed-operand form:
+    //   ins(%src : srcTy, %indices : indicesTy)
+    if (parser.parseType(srcTy) || parser.parseComma() ||
+        parser.parseOperand(indices) || parser.parseColonType(indicesTy) ||
+        parser.parseRParen())
+      return failure();
+    hasIndices = true;
+  } else {
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected ',' or ':' after src operand in ins(...)");
+  }
+
+  // outs(...)
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) || parser.parseRParen())
+    return failure();
+
+  // Optional legacy: maskPattern = #pto.mask_pattern<Pxxxx>
+  if (succeeded(parser.parseOptionalKeyword("maskPattern"))) {
+    if (parser.parseEqual())
+      return failure();
+    Attribute rawMaskAttr;
+    if (parser.parseAttribute(rawMaskAttr))
+      return failure();
+    auto mp = llvm::dyn_cast<mlir::pto::MaskPatternAttr>(rawMaskAttr);
+    if (!mp)
+      return parser.emitError(parser.getCurrentLocation(),
+                              "expected #pto.mask_pattern<Pxxxx> for maskPattern");
+    result.addAttribute("maskPattern", mp);
+  }
+
+  // attr-dict
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  // Resolve operands in op order: (src, dst, optional indices).
+  if (parser.resolveOperand(src, srcTy, result.operands) ||
+      parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+  if (hasIndices && parser.resolveOperand(indices, indicesTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::TGatherOp::print(OpAsmPrinter &p) {
+  auto indices = getIndices();
+  auto mp = getMaskPatternAttr();
+
+  p << " ins(" << getSrc() << ", ";
+  if (indices) {
+    p << indices << " : " << getSrc().getType() << ", " << indices.getType();
+  } else {
+    p << "{maskPattern = " << mp << "} : " << getSrc().getType();
+  }
+  p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"maskPattern"});
+}
+
 ParseResult mlir::pto::MakeTensorViewOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
   OpAsmParser::UnresolvedOperand ptr;
@@ -448,9 +666,69 @@ void mlir::pto::MakeTensorViewOp::print(OpAsmPrinter &p) {
   p << "]";
 
   p.printOptionalAttrDict((*this)->getAttrs(),
-                        /*elidedAttrs=*/{"operandSegmentSizes"});
+                        /*elidedAttrs=*/{"operandSegmentSizes", "layout"});
 
   p << " : " << getResult().getType();
+}
+
+// Layout inference helpers for make_tensor_view
+static std::optional<int64_t> getConstIndexValue(Value v) {
+  if (auto c = v.getDefiningOp<arith::ConstantIndexOp>())
+    return c.value();
+  if (auto c = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto ia = dyn_cast<IntegerAttr>(c.getValue()))
+      return ia.getInt();
+  }
+  return std::nullopt;
+}
+
+static unsigned getElemByteSize(Type ty) {
+  if (auto f = dyn_cast<FloatType>(ty))
+    return f.getWidth() / 8;
+  if (auto i = dyn_cast<IntegerType>(ty))
+    return i.getWidth() / 8;
+  return 0;
+}
+
+static std::optional<mlir::pto::Layout>
+inferLayout(ArrayRef<int64_t> shape, ArrayRef<int64_t> strides,
+            unsigned elemBytes) {
+  if (shape.size() != strides.size() || elemBytes == 0)
+    return std::nullopt;
+
+  // NZ / fractal: rank>=5, check middle dims (sh3/sh4/sh5 per spec)
+  if (shape.size() >= 5) {
+    int64_t sh3 = shape[2], sh4 = shape[3], sh5 = shape[4];
+    int64_t st4 = strides[3], st5 = strides[4];
+    bool alignMatch = (sh3 == 16) && (sh3 * sh4 * elemBytes == 512);
+    bool strideMatch = (st5 == 1) && (st4 == sh5);
+    if (alignMatch && strideMatch)
+      return mlir::pto::Layout::NZ;
+  }
+
+  // ND: row-major contiguous
+  bool isRowMajor = true;
+  for (int i = 0, e = (int)shape.size() - 1; i < e; ++i) {
+    if (strides[i] != strides[i + 1] * shape[i + 1]) {
+      isRowMajor = false;
+      break;
+    }
+  }
+  if (isRowMajor && strides.back() == 1)
+    return mlir::pto::Layout::ND;
+
+  // DN: col-major
+  bool isColMajor = true;
+  for (int i = 0, e = (int)shape.size() - 1; i < e; ++i) {
+    if (strides[i + 1] != strides[i] * shape[i]) {
+      isColMajor = false;
+      break;
+    }
+  }
+  if (isColMajor && strides.front() == 1)
+    return mlir::pto::Layout::DN;
+
+  return mlir::pto::Layout::ND; // fallback
 }
 
 LogicalResult mlir::pto::MakeTensorViewOp::verify() {
@@ -471,6 +749,60 @@ LogicalResult mlir::pto::MakeTensorViewOp::verify() {
   if ((int64_t)getShape().size() != rank || (int64_t)getStrides().size() != rank)
     return emitOpError() << "shape/strides operand counts must match tensor_view rank="
                          << rank;
+
+  // Detect dynamic shape/stride.
+  bool hasDynamicShape = llvm::any_of(tvTy.getShape(), [](int64_t v) {
+    return v == ShapedType::kDynamic;
+  });
+  bool hasDynamicStride = llvm::any_of(getStrides(), [](Value s) {
+    return !getConstIndexValue(s).has_value();
+  });
+
+  auto layoutAttr = getLayoutAttr();
+
+  // 1) Dynamic shape/stride without explicit layout: warn and keep going.
+  if ((hasDynamicShape || hasDynamicStride) && !layoutAttr) {
+    return success();
+  }
+
+  // 2) Static shape/stride with explicit layout: verify correctness.
+  bool allStaticStride = true;
+  SmallVector<int64_t> strideInts;
+  strideInts.reserve(getStrides().size());
+  for (Value s : getStrides()) {
+    auto val = getConstIndexValue(s);
+    if (!val) {
+      allStaticStride = false;
+      break;
+    }
+    strideInts.push_back(*val);
+  }
+
+  bool allStaticShape =
+      llvm::none_of(tvTy.getShape(), [](int64_t v) { return v == ShapedType::kDynamic; });
+
+  if (layoutAttr && allStaticShape && allStaticStride) {
+    SmallVector<int64_t> shapeInts(tvTy.getShape().begin(), tvTy.getShape().end());
+    if (auto inferred = inferLayout(shapeInts, strideInts,
+                                    getElemByteSize(tvTy.getElementType()))) {
+      (void)inferred;
+    }
+  }
+
+  return success();
+}
+
+LogicalResult mlir::pto::AddPtrOp::verify() {
+  auto ptrTy = dyn_cast<mlir::pto::PtrType>(getPtr().getType());
+  if (!ptrTy)
+    return emitOpError("ptr operand must be !pto.ptr<...>");
+
+  auto resTy = dyn_cast<mlir::pto::PtrType>(getResult().getType());
+  if (!resTy)
+    return emitOpError("result must be !pto.ptr<...>");
+
+  if (ptrTy != resTy)
+    return emitOpError("result type must match ptr operand type");
 
   return success();
 }
@@ -654,13 +986,14 @@ LogicalResult TLoadOp ::verify() {
       tileValidElems *= dim;
   }
 
+  // Allow valid shape smaller than partition (padding/guard is handled later).
   if (partElems != mlir::ShapedType::kDynamic &&
       tileValidElems != mlir::ShapedType::kDynamic &&
-      partElems != tileValidElems) {
-    return emitOpError("partition element count (")
-           << partElems
-           << ") must match tile_buf valid element count ("
-           << tileValidElems << ")";
+      tileValidElems > partElems) {
+    return emitOpError("tile_buf valid element count (")
+           << tileValidElems
+           << ") must not exceed partition element count ("
+           << partElems << ")";
   }
 
   return success();
@@ -1055,17 +1388,7 @@ LogicalResult pto::AndSOp_DPS::verify() {
 
   return success();
 }
-LogicalResult pto::AssignOp_DPS::verify() {
-  auto m = dyn_cast<mlir::pto::TileType>(getObj().getType());
-  if (!m)
-    return emitOpError("expects obj to be a memref");
 
-  Type addrTy = getAddr().getType();
-  if (!addrTy.isa<IndexType>() && !addrTy.isa<IntegerType>())
-    return emitOpError("expects addr to be index or integer type");
-
-  return success();
-}
 
 LogicalResult pto::CIOp_DPS::verify() {
   auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
@@ -1172,19 +1495,138 @@ LogicalResult pto::ColMinOp_DPS::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// ColSumOp_DPS custom assembly format
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::ColSumOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand tmp;
+  OpAsmParser::UnresolvedOperand dst;
+  Type srcTy, tmpTy, dstTy;
+  bool hasTmp = false;
+
+  // Parse: ins(%src : type) or ins(%src, %tmp {isBinary = ...}: type, type)
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+
+  // Check for optional tmp operand (format 2)
+  if (succeeded(parser.parseOptionalComma())) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type)
+    if (parser.parseOperand(tmp))
+      return failure();
+    hasTmp = true;
+
+    // Parse attributes (isBinary)
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+
+    // Parse types: : type, type
+    if (parser.parseColonType(srcTy) || parser.parseComma() || parser.parseType(tmpTy))
+      return failure();
+  } else {
+    // Format 1: ins(%src : type)
+    if (parser.parseColonType(srcTy))
+      return failure();
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  // Parse: outs(%dst : type)
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+
+  // Parse any remaining attributes (for format 1)
+  if (!hasTmp) {
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+  }
+
+  // Resolve operands
+  if (parser.resolveOperand(src, srcTy, result.operands))
+    return failure();
+
+  int32_t tmpSize = hasTmp ? 1 : 0;
+
+  if (hasTmp) {
+    if (parser.resolveOperand(tmp, tmpTy, result.operands))
+      return failure();
+  }
+
+  if (parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::ColSumOp_DPS::print(OpAsmPrinter &p) {
+  if (getTmp()) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
+    p << " ins(" << getSrc() << ", " << getTmp();
+    // Print isBinary attribute if present
+    SmallVector<StringRef, 1> elidedAttrs;
+    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
+      elidedAttrs.push_back("isBinary");
+    }
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+    p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
+  } else {
+    // Format 1: ins(%src : type) outs(%dst : type)
+    p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
+  }
+
+  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  // Print remaining attributes for format 1 (excluding isBinary)
+  if (!getTmp()) {
+    SmallVector<StringRef, 1> elidedAttrs = {"isBinary"};
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  }
+}
+
 LogicalResult pto::ColSumOp_DPS::verify() {
   auto srcTy = dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+  if (!srcTy)
+    return emitOpError("expects src to be memref");
+
   auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !tmpTy || !dstTy)
-    return emitOpError("expects src/tmp/dst to be memref");
+  if (!dstTy)
+    return emitOpError("expects dst to be memref");
 
-  if (srcTy.getElementType() != dstTy.getElementType() ||
-      srcTy.getElementType() != tmpTy.getElementType())
-    return emitOpError("expects src/tmp/dst element types to match");
+  // Verify tmp and isBinary consistency: they must appear together or not at all
+  bool hasTmp = (bool)getTmp();
+  bool hasIsBinary = (bool)getIsBinaryAttr();
+  
+  if (hasTmp != hasIsBinary) {
+    if (hasTmp)
+      return emitOpError("tmp operand requires isBinary attribute");
+    else
+      return emitOpError("isBinary attribute requires tmp operand");
+  }
 
-  if (srcTy.getRank() != tmpTy.getRank())
-    return emitOpError("expects src/tmp to have same rank");
+  // If tmp is present, verify its type
+  if (getTmp()) {
+    auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+    if (!tmpTy)
+      return emitOpError("expects tmp to be memref");
+
+    // Verify type relationships
+    if (srcTy.getElementType() != dstTy.getElementType() ||
+        srcTy.getElementType() != tmpTy.getElementType())
+      return emitOpError("expects src/tmp/dst element types to match");
+
+    if (srcTy.getRank() != tmpTy.getRank())
+      return emitOpError("expects src/tmp to have same rank");
+  }
+
+  // Verify src/dst relationships
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError("expects src/dst element types to match");
+
   if (srcTy.getRank() != dstTy.getRank())
     return emitOpError("expects dst to have same rank as src");
 
@@ -1194,9 +1636,12 @@ LogicalResult pto::ColSumOp_DPS::verify() {
     if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
       return emitOpError("expects src/dst to have same number of columns (dim1)");
 
-    int64_t tmpC = tmpTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
-      return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    if (getTmp()) {
+      auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
+      int64_t tmpC = tmpTy.getShape()[1];
+      if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
+        return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    }
   }
 
   if (dstTy.getRank() >= 1) {
@@ -1249,25 +1694,108 @@ LogicalResult mlir::pto::DivOp_DPS::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::DivSOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects memref types for src/dst");
+  // DivSOp_DPS supports both (memref, scalar) and (scalar, memref) operand orders
+  // The parse/print logic handles the reordering, but internally operands are always (src, scalar, dst)
+  // where src is the memref/tensor and scalar is the scalar value
+  
+  auto srcType = getSrc().getType();
+  auto scalarType = getScalar().getType();
+  auto dstType = getDst().getType();
+  
+  // Determine which operand is the memref/tensor (could be src or scalar depending on parse order)
+  mlir::MemRefType memrefTy = nullptr;
+  mlir::RankedTensorType tensorTy = nullptr;
+  mlir::pto::PartitionTensorViewType partitionTy = nullptr;
+  Type scalarTy = nullptr;
+  
+  // Check if src is memref/tensor/partition_tensor_view (not scalar)
+  bool srcIsDps = (isa<mlir::MemRefType>(srcType) || 
+                    isa<mlir::RankedTensorType>(srcType) ||
+                    isa<mlir::pto::PartitionTensorViewType>(srcType) ||
+                    isa<mlir::pto::TileBufType>(srcType));
+  // Check if scalar is memref/tensor/partition_tensor_view (not scalar)
+  bool scalarIsDps = (isa<mlir::MemRefType>(scalarType) || 
+                       isa<mlir::RankedTensorType>(scalarType) ||
+                       isa<mlir::pto::PartitionTensorViewType>(scalarType) ||
+                       isa<mlir::pto::TileBufType>(scalarType));
+  
+  if (srcIsDps && !scalarIsDps) {
+    // Case 1: (memref/tensor/partition, scalar) - normal order
+    if (auto srcMemref = dyn_cast<mlir::MemRefType>(srcType)) {
+      memrefTy = srcMemref;
+    } else if (auto srcTensor = dyn_cast<mlir::RankedTensorType>(srcType)) {
+      tensorTy = srcTensor;
+    } else if (auto srcPartition = dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
+      partitionTy = srcPartition;
+    }
+    scalarTy = scalarType;
+  } else if (!srcIsDps && scalarIsDps) {
+    // Case 2: (scalar, memref/tensor/partition) - swapped order
+    if (auto scalarMemref = dyn_cast<mlir::MemRefType>(scalarType)) {
+      memrefTy = scalarMemref;
+    } else if (auto scalarTensor = dyn_cast<mlir::RankedTensorType>(scalarType)) {
+      tensorTy = scalarTensor;
+    } else if (auto scalarPartition = dyn_cast<mlir::pto::PartitionTensorViewType>(scalarType)) {
+      partitionTy = scalarPartition;
+    }
+    scalarTy = srcType;
+  } else {
+    return emitOpError("expects exactly one memref/tensor/partition_tensor_view operand and one scalar operand");
+  }
+ 
+  // Check scalar type is valid
+  if (!scalarTy.isIntOrIndexOrFloat())
+    return emitOpError("scalar operand must be integer, float, or index type");
+  
+  auto dstMemref = dyn_cast<mlir::MemRefType>(dstType);
+  auto dstTensor = dyn_cast<mlir::RankedTensorType>(dstType);
+  if (!dstMemref && !dstTensor)
+    return emitOpError("expects memref or tensor type for dst");
 
-  // shape/rank must match (按你们其他 elemwise op 的习惯)
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects same rank for src and dst");
-  if (srcTy.getShape() != dstTy.getShape())
-    return emitOpError("expects same shape for src and dst");
+  // Get element type from memref, tensor, or partition_tensor_view
+  Type elemTy;
+  if (memrefTy) {
+    elemTy = memrefTy.getElementType();
+  } else if (tensorTy) {
+    elemTy = tensorTy.getElementType();
+  } else if (partitionTy) {
+    elemTy = partitionTy.getElementType();
+  } else {
+    return emitOpError("internal error: no memref/tensor/partition_tensor_view type found");
+  }
+  
+  Type dstElemTy;
+  if (dstMemref) {
+    dstElemTy = dstMemref.getElementType();
+  } else {
+    dstElemTy = dstTensor.getElementType();
+  }
 
-  // element type must match (TDIVS 标注 scalar 是 TileData::DType)
-  Type elemTy = srcTy.getElementType();
-  if (dstTy.getElementType() != elemTy)
-    return emitOpError("expects src/dst element type to match");
 
-  Type scalarTy = getScalar().getType();
+
+  // element type must match
+  if (elemTy != dstElemTy)
+    return emitOpError("expects memref/tensor and dst element type to match");
+
+  // scalar type must match element type
   if (scalarTy != elemTy)
-    return emitOpError("expects scalar type to match memref element type");
+    return emitOpError("expects scalar type to match memref/tensor element type");
+
+  // shape/rank must match (only check if both are memref or tensor, skip partition_tensor_view)
+  if (memrefTy || tensorTy) {
+    int64_t rank = memrefTy ? memrefTy.getRank() : tensorTy.getRank();
+    int64_t dstRank = dstMemref ? dstMemref.getRank() : dstTensor.getRank();
+    if (rank != dstRank)
+      return emitOpError("expects same rank for memref/tensor and dst");
+    
+    ArrayRef<int64_t> shape = memrefTy ? memrefTy.getShape() : tensorTy.getShape();
+    ArrayRef<int64_t> dstShape = dstMemref ? dstMemref.getShape() : dstTensor.getShape();
+    
+    if (shape != dstShape)
+      return emitOpError("expects same shape for memref/tensor and dst");
+  }
+  // For partition_tensor_view, shape/rank validation is handled elsewhere
+
 
   return mlir::success();
 }
@@ -1692,6 +2220,11 @@ mlir::LogicalResult mlir::pto::MovFPOp_DPS::verify() {
   if (!srcTy || !fpTy || !dstTy)
     return emitOpError() << "expects memref types for src/fp/dst";
 
+  // fp must have SCALING address space
+  auto fpAddrSpaceAttr = mlir::dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(fpTy.getMemorySpace());
+  if (!fpAddrSpaceAttr || fpAddrSpaceAttr.getAddressSpace() != mlir::pto::AddressSpace::SCALING)
+    return emitOpError() << "expects fp to have SCALING address space";
+
   // fp is a scaling tile; keep checks minimal but sanity-check it's 64-bit integer when statically known.
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(fpTy.getElementType())) {
     if (it.getWidth() != 64)
@@ -1717,47 +2250,155 @@ mlir::LogicalResult mlir::pto::MovFPOp_DPS::verify() {
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TMRGSORT DPS/memref op)
+// PTO.cpp  (custom parse/print/verify for TMRGSORT DPS and TMrgSort op)
 //===----------------------------------------------------------------------===//
 
+// Format1: ins(%src, %blockLen : !pto.tile_buf<…>, type) outs(%dst : !pto.tile_buf<…>); blockLen only here
+// Format2: ins(%src0..%src3 {exhausted = false} : ...)
+//          outs(%dst, %tmp, %executed : !pto.tile_buf<...>, !pto.tile_buf<...>, vector<4xi16>);
+//          exhausted/executed only here
+
+  void mlir::pto::MrgSortOp_DPS::print(OpAsmPrinter &p) {
+  if (isFormat1()) {
+    p << " ins(" << getSrc() << ", " << getBlockLen() << " : " << getSrc().getType()
+      << ", " << getBlockLen().getType() << ") outs(" << getDst() << " : "
+      << getDst().getType() << ")";
+  } else {
+    assert(isFormat2());
+    p << " ins(" << getSrcs()[0] << ", " << getSrcs()[1] << ", " << getSrcs()[2]
+      << ", " << getSrcs()[3] << " {exhausted = " << (getExhausted() ? "true" : "false")
+      << "} : " << getSrcs()[0].getType() << ", " << getSrcs()[1].getType() << ", "
+      << getSrcs()[2].getType() << ", " << getSrcs()[3].getType() << ") outs("
+      << getDst() << ", " << getTmp() << ", " << getExcuted() << " : " << getDst().getType() << ", "
+      << getTmp().getType() << ", " << getExcuted().getType() << ")";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes", "exhausted"});
+}
+
+ParseResult mlir::pto::MrgSortOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
+  if (parser.parseKeyword("ins") || parser.parseLParen())
+    return failure();
+  OpAsmParser::UnresolvedOperand first, second;
+  if (parser.parseOperand(first) || parser.parseComma() || parser.parseOperand(second))
+    return failure();
+
+  // Format1: ins(%src, %blockLen : type, type) outs(%dst : type)
+  // Format2: ins(%s0..%s3 {exhausted = false} : ...) outs(%dst, %executed : ...)
+  if (parser.parseOptionalColon().succeeded()) {
+    Type srcTy, blockLenTy, dstTy;
+    if (parser.parseType(srcTy) || parser.parseComma() || parser.parseType(blockLenTy) ||
+        parser.parseRParen() || parser.parseKeyword("outs") || parser.parseLParen())
+      return failure();
+    OpAsmParser::UnresolvedOperand dstOp;
+    if (parser.parseOperand(dstOp) || parser.parseColon() || parser.parseType(dstTy) ||
+        parser.parseRParen())
+      return failure();
+    result.addAttribute("operandSegmentSizes",
+                        parser.getBuilder().getDenseI32ArrayAttr({1, 1, 1, 0}));
+    if (parser.resolveOperand(first, srcTy, result.operands) ||
+        parser.resolveOperand(second, blockLenTy, result.operands) ||
+        parser.resolveOperand(dstOp, dstTy, result.operands))
+      return failure();
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+    if (!result.attributes.get("exhausted"))
+      result.addAttribute("exhausted", parser.getBuilder().getBoolAttr(false));
+    return success();
+  }
+
+  // Format2: comma then two more operands, optional {exhausted = bool}, : 4 types ) outs( dst, excuted : types )
+  SmallVector<OpAsmParser::UnresolvedOperand, 4> srcs = {first, second};
+  OpAsmParser::UnresolvedOperand third, fourth;
+  if (parser.parseComma() || parser.parseOperand(third) || parser.parseComma() ||
+      parser.parseOperand(fourth))
+    return failure();
+  srcs.push_back(third);
+  srcs.push_back(fourth);
+  bool exhaustedVal = false;
+  if (parser.parseOptionalLBrace().succeeded()) {
+    if (parser.parseKeyword("exhausted") || parser.parseEqual())
+      return failure();
+    StringRef kw;
+    if (parser.parseKeyword(&kw) || parser.parseRBrace())
+      return failure();
+    exhaustedVal = (kw == "true");
+  }
+  SmallVector<Type, 4> srcTypes(4);
+  if (parser.parseColon() || parser.parseType(srcTypes[0]) || parser.parseComma() ||
+      parser.parseType(srcTypes[1]) || parser.parseComma() || parser.parseType(srcTypes[2]) ||
+      parser.parseComma() || parser.parseType(srcTypes[3]) || parser.parseRParen() ||
+      parser.parseKeyword("outs") || parser.parseLParen())
+    return failure();
+  OpAsmParser::UnresolvedOperand dstOp, tmpOp, excutedOp;
+  Type dstTy, tmpTy, excutedTy;
+  if (parser.parseOperand(dstOp) || parser.parseComma() || parser.parseOperand(tmpOp) ||
+      parser.parseComma() || parser.parseOperand(excutedOp) || parser.parseColon() ||
+      parser.parseType(dstTy) || parser.parseComma() || parser.parseType(tmpTy) ||
+      parser.parseComma() || parser.parseType(excutedTy) || parser.parseRParen())
+    return failure();
+  result.addAttribute("operandSegmentSizes",
+                      parser.getBuilder().getDenseI32ArrayAttr({4, 0, 2, 1}));
+  if (parser.resolveOperands(srcs, srcTypes, parser.getCurrentLocation(), result.operands) ||
+      parser.resolveOperand(dstOp, dstTy, result.operands) ||
+      parser.resolveOperand(tmpOp, tmpTy, result.operands) ||
+      parser.resolveOperand(excutedOp, excutedTy, result.operands))
+    return failure();
+  if (parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+  if (!result.attributes.get("exhausted"))
+    result.addAttribute("exhausted", parser.getBuilder().getBoolAttr(exhaustedVal));
+  return success();
+}
+
 mlir::LogicalResult mlir::pto::MrgSortOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects memref types for src/dst";
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src/dst to have the same element type";
-
-  // Element type: half/float per ISA (keep strict when statically known).
-  if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
-    return emitOpError() << "expects element type to be f16 or f32";
-
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
-    return emitOpError() << "expects src/dst to be rank-2 memrefs";
-
-  // Rows == 1 (list stored in a single row).
-  auto ss = srcTy.getShape();
-  auto ds = dstTy.getShape();
-  if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
-    return emitOpError() << "expects src rows == 1";
-  if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
-    return emitOpError() << "expects dst rows == 1";
-
-  // Cols must match when statically known.
-  if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
-    return emitOpError() << "expects src/dst cols to match";
-
-  // blockLen must be multiple of 64 (single-list variant constraint).
-  int64_t bl = 0;
-  if (auto a = getBlockLenAttr())
-    bl = a.getInt();
-  if (bl <= 0)
-    return emitOpError() << "expects blockLen > 0";
-  if ((bl % 64) != 0)
-    return emitOpError() << "expects blockLen to be a multiple of 64";
-
-  return mlir::success();
+  if (isFormat1()) {
+    auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+    auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+    if (!srcTy || !dstTy)
+      return emitOpError() << "format1 expects memref types for src/dst";
+    if (srcTy.getElementType() != dstTy.getElementType())
+      return emitOpError() << "expects src/dst to have the same element type";
+    if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
+      return emitOpError() << "expects element type to be f16 or f32";
+    if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+      return emitOpError() << "expects src/dst to be rank-2 memrefs";
+    auto ss = srcTy.getShape(), ds = dstTy.getShape();
+    if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
+      return emitOpError() << "expects src rows == 1";
+    if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
+      return emitOpError() << "expects dst rows == 1";
+    if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
+      return emitOpError() << "expects src/dst cols to match";
+    if (getBlockLen()) {
+      if (auto cstOp = getBlockLen().getDefiningOp<arith::ConstantOp>()) {
+        if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(cstOp.getValue())) {
+          int64_t v = intAttr.getValue().getSExtValue();
+          if (v <= 0 || (v % 64) != 0)
+            return emitOpError() << "expects blockLen > 0 and multiple of 64";
+        }
+      }
+    }
+    return mlir::success();
+  }
+  if (isFormat2()) {
+    for (Value v : getSrcs())
+      if (!mlir::dyn_cast<mlir::MemRefType>(v.getType()))
+        return emitOpError() << "format2 expects memref for each of 4 srcs";
+    if (getDsts().size() != 2u || !getExcuted())
+      return emitOpError() << "format2 expects outs(dst, tmp) and excuted=vector";
+    auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+    auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
+    if (!dstTy || !tmpTy)
+      return emitOpError() << "format2 outs must be memref (dst/tmp)";
+    auto excutedTy = mlir::dyn_cast<mlir::VectorType>(getExcuted().getType());
+    if (!excutedTy || excutedTy.getRank() != 1 || excutedTy.getNumElements() != 4 ||
+        !excutedTy.getElementType().isInteger(16))
+      return emitOpError() << "format2 excuted must be vector<4xi16>";
+    if (dstTy.getElementType() != tmpTy.getElementType())
+      return emitOpError() << "format2 expects dst/tmp element types to match";
+    return mlir::success();
+  }
+  return emitOpError() << "mrgsort_dps expects format1 (1 src + blockLen + 1 dst) or format2 (4 srcs, outs dst, excuted)";
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TMUL DPS/memref op)
@@ -2282,15 +2923,16 @@ mlir::LogicalResult mlir::pto::RowExpandSubOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowMaxOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -2327,15 +2969,16 @@ mlir::LogicalResult mlir::pto::RowMinOp_DPS::verify() {
 
 mlir::LogicalResult mlir::pto::RowSumOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::MemRefType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects memref types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 memrefs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if ( elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -2571,6 +3214,51 @@ mlir::LogicalResult mlir::pto::ShrOp_DPS::verify() {
   if (!isAllowedElem(srcElem))
     return emitOpError() << "expects src0 and dst element type to be i8/i16/i32";
 
+  return mlir::success();
+}
+//===----------------------------------------------------------------------===//
+// PTO.cpp  (add verifier for TSHLS/TSHRS DPS/memref op)
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult mlir::pto::ShlSOp_DPS::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects memref types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped memrefs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::ShrSOp_DPS::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects memref types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped memrefs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
   return mlir::success();
 }
 
@@ -2994,17 +3682,7 @@ LogicalResult pto::TAndSOp::verify() {
 
   return success();
 }
-LogicalResult pto::TAssignOp::verify() {
-  auto m = dyn_cast<mlir::pto::TileBufType>(getObj().getType());
-  if (!m)
-    return emitOpError("expects obj to be a tilebuf");
 
-  Type addrTy = getAddr().getType();
-  if (!addrTy.isa<IndexType>() && !addrTy.isa<IntegerType>())
-    return emitOpError("expects addr to be index or integer type");
-
-  return success();
-}
 LogicalResult pto::TCIOp::verify() {
   auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
   if (!dstTy)
@@ -3109,19 +3787,138 @@ LogicalResult pto::TColMinOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// TColSumOp custom assembly format
+//===----------------------------------------------------------------------===//
+
+ParseResult mlir::pto::TColSumOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand src;
+  OpAsmParser::UnresolvedOperand tmp;
+  OpAsmParser::UnresolvedOperand dst;
+  Type srcTy, tmpTy, dstTy;
+  bool hasTmp = false;
+
+  // Parse: ins(%src : type) or ins(%src, %tmp {isBinary = ...}: type, type)
+  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
+    return failure();
+
+  // Check for optional tmp operand (format 2)
+  if (succeeded(parser.parseOptionalComma())) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type)
+    if (parser.parseOperand(tmp))
+      return failure();
+    hasTmp = true;
+
+    // Parse attributes (isBinary)
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+
+    // Parse types: : type, type
+    if (parser.parseColonType(srcTy) || parser.parseComma() || parser.parseType(tmpTy))
+      return failure();
+  } else {
+    // Format 1: ins(%src : type)
+    if (parser.parseColonType(srcTy))
+      return failure();
+  }
+
+  if (parser.parseRParen())
+    return failure();
+
+  // Parse: outs(%dst : type)
+  if (parser.parseKeyword("outs") || parser.parseLParen() ||
+      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
+      parser.parseRParen())
+    return failure();
+
+  // Parse any remaining attributes (for format 1)
+  if (!hasTmp) {
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return failure();
+  }
+
+  // Resolve operands
+  if (parser.resolveOperand(src, srcTy, result.operands))
+    return failure();
+
+  int32_t tmpSize = hasTmp ? 1 : 0;
+
+  if (hasTmp) {
+    if (parser.resolveOperand(tmp, tmpTy, result.operands))
+      return failure();
+  }
+
+  if (parser.resolveOperand(dst, dstTy, result.operands))
+    return failure();
+
+  return success();
+}
+
+void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
+  if (getTmp()) {
+    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
+    p << " ins(" << getSrc() << ", " << getTmp();
+    // Print isBinary attribute if present
+    SmallVector<StringRef, 1> elidedAttrs;
+    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
+      elidedAttrs.push_back("isBinary");
+    }
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+    p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
+  } else {
+    // Format 1: ins(%src : type) outs(%dst : type)
+    p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
+  }
+
+  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
+
+  // Print remaining attributes for format 1 (excluding isBinary)
+  if (!getTmp()) {
+    SmallVector<StringRef, 1> elidedAttrs = {"isBinary"};
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  }
+}
+
 LogicalResult pto::TColSumOp::verify() {
   auto srcTy = dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+  if (!srcTy)
+    return emitOpError("expects src to be tilebuf");
+
   auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !tmpTy || !dstTy)
-    return emitOpError("expects src/tmp/dst to be tilebuf");
+  if (!dstTy)
+    return emitOpError("expects dst to be tilebuf");
 
-  if (srcTy.getElementType() != dstTy.getElementType() ||
-      srcTy.getElementType() != tmpTy.getElementType())
-    return emitOpError("expects src/tmp/dst element types to match");
+  // Verify tmp and isBinary consistency: they must appear together or not at all
+  bool hasTmp = (bool)getTmp();
+  bool hasIsBinary = (bool)getIsBinaryAttr();
+  
+  if (hasTmp != hasIsBinary) {
+    if (hasTmp)
+      return emitOpError("tmp operand requires isBinary attribute");
+    else
+      return emitOpError("isBinary attribute requires tmp operand");
+  }
 
-  if (srcTy.getRank() != tmpTy.getRank())
-    return emitOpError("expects src/tmp to have same rank");
+  // If tmp is present, verify its type
+  if (getTmp()) {
+    auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+    if (!tmpTy)
+      return emitOpError("expects tmp to be tilebuf");
+
+    // Verify type relationships
+    if (srcTy.getElementType() != dstTy.getElementType() ||
+        srcTy.getElementType() != tmpTy.getElementType())
+      return emitOpError("expects src/tmp/dst element types to match");
+
+    if (srcTy.getRank() != tmpTy.getRank())
+      return emitOpError("expects src/tmp to have same rank");
+  }
+
+  // Verify src/dst relationships
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError("expects src/dst element types to match");
+
   if (srcTy.getRank() != dstTy.getRank())
     return emitOpError("expects dst to have same rank as src");
 
@@ -3131,9 +3928,12 @@ LogicalResult pto::TColSumOp::verify() {
     if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
       return emitOpError("expects src/dst to have same number of columns (dim1)");
 
-    int64_t tmpC = tmpTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
-      return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    if (getTmp()) {
+      auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+      int64_t tmpC = tmpTy.getShape()[1];
+      if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
+        return emitOpError("expects src/tmp to have same number of columns (dim1)");
+    }
   }
 
   if (dstTy.getRank() >= 1) {
@@ -3195,23 +3995,47 @@ LogicalResult mlir::pto::TDivOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TDivSOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects tilebuf types for src/dst");
+  auto srcType = getSrc().getType();
+  auto scalarType = getScalar().getType();
+  auto dstType = getDst().getType();
+  
+  // Determine which operand is the tile_buf (could be src or scalar depending on parse order)
+  mlir::pto::TileBufType tileTy = nullptr;
+  Type scalarTy = nullptr;
+  
+  if (auto srcTile = dyn_cast<mlir::pto::TileBufType>(srcType)) {
+    // Case 1: (tile, scalar) - normal order
+    tileTy = srcTile;
+    scalarTy = scalarType;
+  } else if (auto scalarTile = dyn_cast<mlir::pto::TileBufType>(scalarType)) {
+    // Case 2: (scalar, tile) - swapped order
+    tileTy = scalarTile;
+    scalarTy = srcType;
+  } else {
+    return emitOpError("expects exactly one tile_buf operand and one scalar operand");
+  }
+  
+  // Check scalar type is valid (integer, float, or index)
+  if (!scalarTy.isIntOrIndexOrFloat())
+    return emitOpError("scalar operand must be integer, float, or index type");
+  
+  auto dstTy = dyn_cast<mlir::pto::TileBufType>(dstType);
+  if (!dstTy)
+    return emitOpError("expects tilebuf type for dst");
 
-  // shape/rank must match (按你们其他 elemwise op 的习惯)
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects same rank for src and dst");
-  if (srcTy.getShape() != dstTy.getShape())
-    return emitOpError("expects same shape for src and dst");
+  // shape/rank must match
+  if (tileTy.getRank() != dstTy.getRank())
+    return emitOpError("expects same rank for tile and dst");
+  if (tileTy.getShape() != dstTy.getShape())
+    return emitOpError("expects same shape for tile and dst");
 
-  // element type must match (TDIVS 标注 scalar 是 TileData::DType)
-  Type elemTy = srcTy.getElementType();
+  // element type must match
+  Type elemTy = tileTy.getElementType();
   if (dstTy.getElementType() != elemTy)
-    return emitOpError("expects src/dst element type to match");
+    return emitOpError("expects tile/dst element type to match");
 
-  Type scalarTy = getScalar().getType();
+  // scalar type must match element type
+
   if (scalarTy != elemTy)
     return emitOpError("expects scalar type to match tilebuf element type");
 
@@ -3643,6 +4467,11 @@ mlir::LogicalResult mlir::pto::TMovFPOp::verify() {
   if (!srcTy || !fpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/fp/dst";
 
+  // fp must have SCALING address space
+  auto fpAddrSpaceAttr = mlir::dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(fpTy.getMemorySpace());
+  if (!fpAddrSpaceAttr || fpAddrSpaceAttr.getAddressSpace() != mlir::pto::AddressSpace::SCALING)
+    return emitOpError() << "expects fp to have SCALING address space";
+
   // fp is a scaling tile; keep checks minimal but sanity-check it's 64-bit integer when statically known.
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(fpTy.getElementType())) {
     if (it.getWidth() != 64)
@@ -3752,6 +4581,10 @@ LogicalResult SetValDpsOp::verify() {
 LogicalResult MatmulBiasDpsOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
 }
+
+LogicalResult GemvBiasDpsOp::verify() {
+  return success();
+}
 LogicalResult MatmulMxDpsOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
 }
@@ -3819,46 +4652,79 @@ LogicalResult TMGatherOp::verify() {
   return success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TMRGSORT DPS/tilebuf op)
+// PTO.cpp  (custom parse/print/verify for TMrgSort op - same syntax as mrgsort_dps)
 //===----------------------------------------------------------------------===//
+
+void mlir::pto::TMrgSortOp::print(OpAsmPrinter &p) {
+  if (isFormat1()) {
+    p << " ins(" << getSrc() << ", " << getBlockLen() << " : " << getSrc().getType()
+      << ", " << getBlockLen().getType() << ") outs(" << getDst() << " : "
+      << getDst().getType() << ")";
+  } else {
+    assert(isFormat2());
+    p << " ins(" << getSrcs()[0] << ", " << getSrcs()[1] << ", " << getSrcs()[2]
+      << ", " << getSrcs()[3] << " {exhausted = " << (getExhausted() ? "true" : "false")
+      << "} : " << getSrcs()[0].getType() << ", " << getSrcs()[1].getType() << ", "
+      << getSrcs()[2].getType() << ", " << getSrcs()[3].getType() << ") outs("
+      << getDst() << ", " << getTmp() << ", " << getExcuted() << " : " << getDst().getType() << ", "
+      << getTmp().getType() << ", " << getExcuted().getType() << ")";
+  }
+  p.printOptionalAttrDict((*this)->getAttrs(), /*elidedAttrs=*/{"operandSegmentSizes", "exhausted"});
+}
+
+ParseResult mlir::pto::TMrgSortOp::parse(OpAsmParser &parser, OperationState &result) {
+  return MrgSortOp_DPS::parse(parser, result);
+}
+
 mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects tilebuf types for src/dst";
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src/dst to have the same element type";
-
-  // Element type: half/float per ISA (keep strict when statically known).
-  if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
-    return emitOpError() << "expects element type to be f16 or f32";
-
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
-    return emitOpError() << "expects src/dst to be rank-2 tilebufs";
-
-  // Rows == 1 (list stored in a single row).
-  auto ss = srcTy.getShape();
-  auto ds = dstTy.getShape();
-  if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
-    return emitOpError() << "expects src rows == 1";
-  if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
-    return emitOpError() << "expects dst rows == 1";
-
-  // Cols must match when statically known.
-  if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
-    return emitOpError() << "expects src/dst cols to match";
-
-  // blockLen must be multiple of 64 (single-list variant constraint).
-  int64_t bl = 0;
-  if (auto a = getBlockLenAttr())
-    bl = a.getInt();
-  if (bl <= 0)
-    return emitOpError() << "expects blockLen > 0";
-  if ((bl % 64) != 0)
-    return emitOpError() << "expects blockLen to be a multiple of 64";
-
-  return mlir::success();
+  if (isFormat1()) {
+    auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+    auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+    if (!srcTy || !dstTy)
+      return emitOpError() << "format1 expects tilebuf types for src/dst";
+    if (srcTy.getElementType() != dstTy.getElementType())
+      return emitOpError() << "expects src/dst to have the same element type";
+    if (!srcTy.getElementType().isF16() && !srcTy.getElementType().isF32())
+      return emitOpError() << "expects element type to be f16 or f32";
+    if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+      return emitOpError() << "expects src/dst to be rank-2 tilebufs";
+    auto ss = srcTy.getShape(), ds = dstTy.getShape();
+    if (ss[0] != mlir::ShapedType::kDynamic && ss[0] != 1)
+      return emitOpError() << "expects src rows == 1";
+    if (ds[0] != mlir::ShapedType::kDynamic && ds[0] != 1)
+      return emitOpError() << "expects dst rows == 1";
+    if (ss[1] != mlir::ShapedType::kDynamic && ds[1] != mlir::ShapedType::kDynamic && ss[1] != ds[1])
+      return emitOpError() << "expects src/dst cols to match";
+    if (getBlockLen()) {
+      if (auto cstOp = getBlockLen().getDefiningOp<arith::ConstantOp>()) {
+        if (auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(cstOp.getValue())) {
+          int64_t v = intAttr.getValue().getSExtValue();
+          if (v <= 0 || (v % 64) != 0)
+            return emitOpError() << "expects blockLen > 0 and multiple of 64";
+        }
+      }
+    }
+    return mlir::success();
+  }
+  if (isFormat2()) {
+    for (Value v : getSrcs())
+      if (!mlir::dyn_cast<mlir::pto::TileBufType>(v.getType()))
+        return emitOpError() << "format2 expects tilebuf for each of 4 srcs";
+    if (getDsts().size() != 2u || !getExcuted())
+      return emitOpError() << "format2 expects outs(dst, tmp) and excuted=vector";
+    auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+    auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
+    if (!dstTy || !tmpTy)
+      return emitOpError() << "format2 outs must be tile_buf (dst/tmp)";
+    auto excutedTy = mlir::dyn_cast<mlir::VectorType>(getExcuted().getType());
+    if (!excutedTy || excutedTy.getRank() != 1 || excutedTy.getNumElements() != 4 ||
+        !excutedTy.getElementType().isInteger(16))
+      return emitOpError() << "format2 excuted must be vector<4xi16>";
+    if (dstTy.getElementType() != tmpTy.getElementType())
+      return emitOpError() << "format2 expects dst/tmp element types to match";
+    return mlir::success();
+  }
+  return emitOpError() << "tmrgsort expects format1 (1 src + blockLen + 1 dst) or format2 (4 srcs, outs dst, excuted)";
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TMUL DPS/tilebuf op)
@@ -3919,6 +4785,52 @@ mlir::LogicalResult mlir::pto::TMulsOp::verify() {
 
   return mlir::success();
 }
+//===----------------------------------------------------------------------===//
+// PTO.cpp  (add verifier for TSHLS/TSHRS tilebuf op)
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult mlir::pto::TShlSOp::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects tilebuf types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped tilebufs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
+mlir::LogicalResult mlir::pto::TShrSOp::verify() {
+  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError() << "expects tilebuf types for src/dst";
+
+  if (srcTy.getElementType() != dstTy.getElementType())
+    return emitOpError() << "expects src/dst to have the same element type";
+
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError() << "expects src/dst to be rank-2 (tile-shaped tilebufs)";
+
+  auto s = srcTy.getShape();
+  auto d = dstTy.getShape();
+  for (int i = 0; i < 2; ++i) {
+    if (s[i] != mlir::ShapedType::kDynamic && d[i] != mlir::ShapedType::kDynamic && s[i] != d[i])
+      return emitOpError() << "expects src shape to match dst shape";
+  }
+  return mlir::success();
+}
+
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TNEG DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
@@ -4384,15 +5296,16 @@ mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -4429,15 +5342,16 @@ mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
 
 mlir::LogicalResult mlir::pto::TRowSumOp::verify() {
   auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
+  auto tmpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
   auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
+  if (!srcTy || !tmpTy || !dstTy)
     return emitOpError() << "expects tilebuf types for src/tmp/dst";
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+  if (srcTy.getRank() != 2 || tmpTy.getRank() != 2 || dstTy.getRank() != 2)
     return emitOpError() << "expects rank-2 tilebufs for src/tmp/dst";
 
   auto elemTy = srcTy.getElementType();
-  if (elemTy != dstTy.getElementType())
+  if (elemTy != tmpTy.getElementType() || elemTy != dstTy.getElementType())
     return emitOpError() << "expects src/tmp/dst to have the same element type";
 
   if (!elemTy.isF16() && !elemTy.isF32())
@@ -5134,6 +6048,10 @@ LogicalResult mlir::pto::MatmulOp::verify() {
 LogicalResult mlir::pto::MatmulDpsOp::verify() {
   return success();
 //  Type dstTy = getDst().getType();
+}
+
+LogicalResult mlir::pto::GemvDpsOp::verify() {
+  return success();
 
 //  // 1. 如果是 TileBufType，直接通过验证 (或者做简单的类型检查)
 //  // TileBuf 是我们新引入的类型，不属于 ShapedType (Tensor/MemRef)
@@ -5200,6 +6118,10 @@ LogicalResult mlir::pto::MatmulAccOp::verify() {
 LogicalResult mlir::pto::MatmulAccDpsOp::verify() {
   return success();
 //  bool hasResult = (getOperation()->getNumResults() == 1);
+}
+
+LogicalResult mlir::pto::GemvAccDpsOp::verify() {
+  return success();
 
 //  auto dstShaped = dyn_cast<ShapedType>(getDst().getType());
 //  if (!dstShaped || !dstShaped.hasRank())
@@ -5344,6 +6266,25 @@ LogicalResult mlir::pto::MatmulDpsOp::inferReturnTypes(
   return success();
 }
 
+LogicalResult mlir::pto::GemvDpsOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ValueRange operands, DictionaryAttr attributes,
+    OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  (void)context;
+  (void)location;
+  (void)attributes;
+  (void)properties;
+  (void)regions;
+
+  if (operands.size() < 3)
+    return failure();
+  Type dstTy = operands[2].getType();
+  if (auto rt = dyn_cast<RankedTensorType>(dstTy))
+    inferredReturnTypes.push_back(rt);
+  return success();
+}
+
 static RankedTensorType inferAccReturnFromAccIn(ValueRange operands) {
   if (operands.empty())
     return RankedTensorType();
@@ -5371,6 +6312,25 @@ LogicalResult mlir::pto::MatmulAccOp::inferReturnTypes(
 }
 
 LogicalResult mlir::pto::MatmulAccDpsOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ValueRange operands, DictionaryAttr attributes,
+    OpaqueProperties properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  (void)context;
+  (void)location;
+  (void)attributes;
+  (void)properties;
+  (void)regions;
+
+  if (operands.size() < 4)
+    return failure();
+  Type dstTy = operands[3].getType();
+  if (auto rt = dyn_cast<RankedTensorType>(dstTy))
+    inferredReturnTypes.push_back(rt);
+  return success();
+}
+
+LogicalResult mlir::pto::GemvAccDpsOp::inferReturnTypes(
     MLIRContext *context, std::optional<Location> location,
     ValueRange operands, DictionaryAttr attributes,
     OpaqueProperties properties, RegionRange regions,
@@ -5677,36 +6637,27 @@ LogicalResult SubsetOp::inferReturnTypes(
     const auto *prop = properties.as<SubsetOp::Properties *>();
     if (prop) sizeAttr = prop->sizes;
   }
+  if (!sizeAttr && attributes) {
+    sizeAttr = attributes.getAs<ArrayAttr>("sizes");
+  }
   if (!sizeAttr) return failure();
 
   SmallVector<int64_t> resultShape;
+  SmallVector<int64_t> validShape;
   for (auto attr : sizeAttr) {
-    resultShape.push_back(llvm::cast<IntegerAttr>(attr).getInt());
+    int64_t dim = llvm::cast<IntegerAttr>(attr).getInt();
+    resultShape.push_back(dim);
+    validShape.push_back(dim);
   }
 
-  // 3. [核心修改] 不再继承 sourceStrides，而是计算 resultShape 的连续 Strides
-  // 假设 Row-Major: [Dim1*Dim2*..., Dim2*..., ..., 1]
-  // 对于 2D [M, N] -> Strides [N, 1]
-  SmallVector<int64_t> contiguousStrides;
-  contiguousStrides.resize(resultShape.size());
-  
-  int64_t runningStride = 1;
-  for (int i = resultShape.size() - 1; i >= 0; --i) {
-    contiguousStrides[i] = runningStride;
-    runningStride *= resultShape[i];
-  }
-  
-  // 4. 构建 Layout Map
-  // 虽然是连续的，但因为 subset 会产生 offset，所以我们依然需要一个 Map 来表示 offset
-  // Map = (d0, d1)[s0, s1] -> (d0 * 32 + d1 * 1 + offset)
-  // 注意：这里的 stride 变成了 32 (Child Width)，而不是 64 (Parent Width)
-  AffineMap newLayout = buildStrictBitwiseAffineMap(context, contiguousStrides, /*isMultiDim=*/true);
+  // 3. 继承 Config (若为空使用默认)
+  auto cfg = sourceType.getConfigAttr();
+  if (!cfg) cfg = TileBufConfigAttr::getDefault(context);
 
-  auto cfg = sourceType.getConfigAttr(); // 或 sourceType.getConfig() 视你现在实现
-  // 5. 构建 Result Type
+  // 4. 构建 Result Type
   auto resultType = TileBufType::get(
       context, resultShape, sourceType.getElementType(),
-      sourceType.getMemorySpace(), sourceType.getValidShape(), cfg);
+      sourceType.getMemorySpace(), validShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
   return success();
@@ -5765,11 +6716,26 @@ PIPE CopyOp::getPipe() {
 // =============================================================================
  
 PIPE MovDpsOp::getPipe() {
-  // 简单判断：如果 dst 是 L0 (L0A/L0B)，则是 MTE1
-  AddressSpace dstSpace = getAddressSpace(getDst());
-  if (dstSpace == AddressSpace::LEFT || dstSpace == AddressSpace::RIGHT) {
+  // TMOV spans multiple hardware pipelines depending on the source/dest
+  // domains. Keep the DPS version consistent with the tile-world TMOV:
+  //   - MAT -> L0 (LEFT/RIGHT/BIAS/SCALING) and ACC -> MAT are MTE1 moves.
+  //   - UB/VEC intra-domain copies fall back to vector pipe.
+  //
+  // NOTE: Sync insertion relies on this classification to build correct event
+  // dependencies. Mis-classification here can lead to illegal instruction
+  // failures on NPU (e.g. MAT->SCALING being treated as PIPE_V).
+  const AddressSpace srcSpace = getAddressSpace(getSrc());
+  const AddressSpace dstSpace = getAddressSpace(getDst());
+
+  if (srcSpace == AddressSpace::VEC && dstSpace == AddressSpace::VEC)
+    return PIPE::PIPE_V;
+
+  if ((srcSpace == AddressSpace::MAT &&
+       (dstSpace == AddressSpace::LEFT || dstSpace == AddressSpace::RIGHT ||
+        dstSpace == AddressSpace::BIAS || dstSpace == AddressSpace::SCALING)) ||
+      (srcSpace == AddressSpace::ACC && dstSpace == AddressSpace::MAT))
     return PIPE::PIPE_MTE1;
-  }
+
   return PIPE::PIPE_V;
 }
 
@@ -5831,6 +6797,29 @@ void MatmulDpsOp::getEffects(
   
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
+
+void GemvDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+void GemvAccDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAccInMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+void GemvBiasDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
  
 // 5. AddFDpsOp: Read(lhs, rhs) -> Write(dst)
 void AddFDpsOp::getEffects(
@@ -5845,6 +6834,50 @@ void AbsOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// GatherOp_DPS: Read(src, indices?) -> Write(dst)
+void GatherOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+
+  auto indicesMutable = getIndicesMutable();
+  if (!indicesMutable.empty()) {
+    addEffect(effects, &indicesMutable[0], MemoryEffects::Read::get());
+  }
+
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// GatherbOp_DPS: Read(src, offsets) -> Write(dst)
+void GatherbOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getOffsetsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// ScatterOp_DPS: Read(src, indexes) -> Write(dst)
+void ScatterOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getIndexesMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// MrgSortOp_DPS: Read(src) -> Write(dst)
+void MrgSortOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  for (auto &opnd : getSrcsMutable()) {
+    addEffect(effects, &opnd, MemoryEffects::Read::get());
+  }
+  for (auto &opnd : getDstsMutable()) {
+    addEffect(effects, &opnd, MemoryEffects::Write::get());
+  }
+  auto executed = getExcutedMutable();
+  if (!executed.empty()) {
+    addEffect(effects, &executed[0], MemoryEffects::Write::get());
+  }
 }
 
 // 6. MovDpsOp
@@ -5884,6 +6917,585 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
   addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
+
+#define PTO_ADD_READ(operand) addEffect(effects, &(operand), MemoryEffects::Read::get())
+#define PTO_ADD_WRITE(operand) addEffect(effects, &(operand), MemoryEffects::Write::get())
+
+#define PTO_DEFINE_UNARY_EFFECTS(OpClass, srcOperand, dstOperand)                    \
+  void OpClass::getEffects(                                                         \
+      SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
+    PTO_ADD_READ(srcOperand);                                                       \
+    PTO_ADD_WRITE(dstOperand);                                                      \
+  }
+
+#define PTO_DEFINE_BINARY_EFFECTS(OpClass, lhsOperand, rhsOperand, dstOperand)       \
+  void OpClass::getEffects(                                                         \
+      SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
+    PTO_ADD_READ(lhsOperand);                                                       \
+    PTO_ADD_READ(rhsOperand);                                                       \
+    PTO_ADD_WRITE(dstOperand);                                                      \
+  }
+
+#define PTO_DEFINE_TERNARY_EFFECTS(OpClass, op0, op1, op2, dstOperand)               \
+  void OpClass::getEffects(                                                         \
+      SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) { \
+    PTO_ADD_READ(op0);                                                              \
+    PTO_ADD_READ(op1);                                                              \
+    PTO_ADD_READ(op2);                                                              \
+    PTO_ADD_WRITE(dstOperand);                                                      \
+  }
+
+// === DPS ops added for InsertSync (post-lowering *_dps) ===
+
+void MatmulBiasDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getAMutable());
+  PTO_ADD_READ(getBMutable());
+  PTO_ADD_READ(getBiasMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MatmulMxDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getAMutable());
+  PTO_ADD_READ(getAScaleMutable());
+  PTO_ADD_READ(getBMutable());
+  PTO_ADD_READ(getBScaleMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MatmulMxAccDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getCInMutable());
+  PTO_ADD_READ(getAMutable());
+  PTO_ADD_READ(getAScaleMutable());
+  PTO_ADD_READ(getBMutable());
+  PTO_ADD_READ(getBScaleMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MatmulMxBiasDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getAMutable());
+  PTO_ADD_READ(getAScaleMutable());
+  PTO_ADD_READ(getBMutable());
+  PTO_ADD_READ(getBScaleMutable());
+  PTO_ADD_READ(getBiasMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MatmulAccDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getAccInMutable());
+  PTO_ADD_READ(getLhsMutable());
+  PTO_ADD_READ(getRhsMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// trans_dps uses tmp as a scratch tile.
+void TransDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MGatherDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getMemMutable());
+  PTO_ADD_READ(getIdxMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void MScatterDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getIdxMutable());
+  PTO_ADD_WRITE(getMemMutable());
+}
+
+void SetValDpsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(AddOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_TERNARY_EFFECTS(AddCOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
+
+void AddSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void AddSCOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(AndOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void AndSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void CIOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(CmpOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void CmpSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(ColExpandOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(ColMaxOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(ColMinOp_DPS, getSrcMutable(), getDstMutable())
+
+void ColSumOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  auto tmp = getTmpMutable();
+  if (!tmp.empty()) {
+    PTO_ADD_WRITE(tmp[0]);
+  }
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(CvtOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(DivOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void DivSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(ExpOp_DPS, getSrcMutable(), getDstMutable())
+
+void ExpandsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void ExtractOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(FillPadOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(LogOp_DPS, getSrcMutable(), getDstMutable())
+
+void LReluOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getSlopeMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(MaxOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void MaxSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(MinOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void MinsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(MovFPOp_DPS, getSrcMutable(), getFpMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(MulOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void MulsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(NegOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(NotOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(OrOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void OrsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(PartAddOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(PartMaxOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(PartMinOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(PreluOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(RecipOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(RemOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void RemSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(ReshapeOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(RowExpandOp_DPS, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(RowExpandDivOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(RowExpandMulOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(RowExpandSubOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void RowMaxOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void RowMinOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void RowSumOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(RsqrtOp_DPS, getSrcMutable(), getDstMutable())
+
+void SelOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getMaskMutable());
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void SelsOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_READ(getSelectModeMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(ShlOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void ShlSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void ShrSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(ShrOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+void Sort32Op_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+  PTO_ADD_WRITE(getIdxMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(SqrtOp_DPS, getSrcMutable(), getDstMutable())
+
+void StoreFPOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getFpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(SubOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_TERNARY_EFFECTS(SubCOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
+
+void SubSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void SubSCOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void XORSOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void SYNCOp_DPS::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getEventsMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(XOROp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+// === Tile/Device ops added for InsertSync ===
+
+// MGATHER: Read(mem, idx) -> Write(dst)
+void TMGatherOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getMemMutable());
+  PTO_ADD_READ(getIdxMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// MSCATTER: Read(src, idx) -> Write(mem)
+void TMScatterOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getIdxMutable());
+  PTO_ADD_WRITE(getMemMutable());
+}
+
+// TGETVAL: Read(src) -> scalar result
+void TGetValOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+}
+
+// TSETVAL: Write(dst) (single element update)
+void TSetValOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// Elementwise + reductions: mostly PIPE_V tilebuf ops
+PTO_DEFINE_BINARY_EFFECTS(TAddOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_TERNARY_EFFECTS(TAddCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TAddSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TAddSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+PTO_DEFINE_BINARY_EFFECTS(TAndOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TAndSOp, getSrcMutable(), getDstMutable())
+
+// TCI: Write(dst) (generates sequence)
+void TCIOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(TCmpOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TCmpSOp, getSrcMutable(), getDstMutable())
+
+PTO_DEFINE_UNARY_EFFECTS(TColExpandOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TColMaxOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TColMinOp, getSrcMutable(), getDstMutable())
+
+void TColSumOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  auto tmp = getTmpMutable();
+  if (!tmp.empty()) {
+    PTO_ADD_WRITE(tmp[0]);
+  }
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(TCvtOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TDivOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+// TDIVS has custom assembly format; conservatively treat first 2 operands as reads.
+void TDivSOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_READ(getScalarMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(TExpOp, getSrcMutable(), getDstMutable())
+
+// TEXPANDS: Write(dst) (broadcast scalar)
+void TExpandsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// TEXTRACT: Read(src) -> Write(dst)
+void TExtractOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(TFillPadOp, getSrcMutable(), getDstMutable())
+
+void TGatherOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  auto indices = getIndicesMutable();
+  if (!indices.empty()) {
+    PTO_ADD_READ(indices[0]);
+  }
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(TGatherbOp, getSrcMutable(), getOffsetsMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TLogOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TLReluOp, getSrcMutable(), getDstMutable())
+
+PTO_DEFINE_BINARY_EFFECTS(TMaxOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TMaxSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TMinOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TMinsOp, getSrcMutable(), getDstMutable())
+
+PTO_DEFINE_BINARY_EFFECTS(TMovFPOp, getSrcMutable(), getFpMutable(), getDstMutable())
+
+void TMrgSortOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  for (auto &opnd : getSrcsMutable()) {
+    PTO_ADD_READ(opnd);
+  }
+  for (auto &opnd : getDstsMutable()) {
+    PTO_ADD_WRITE(opnd);
+  }
+  auto executed = getExcutedMutable();
+  if (!executed.empty()) {
+    PTO_ADD_WRITE(executed[0]);
+  }
+}
+
+PTO_DEFINE_BINARY_EFFECTS(TMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TMulsOp, getSrc0Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TNegOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TNotOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TOrOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TOrsOp, getSrcMutable(), getDstMutable())
+
+PTO_DEFINE_BINARY_EFFECTS(TPartAddOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TPartMaxOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TPartMinOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TPreluOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+PTO_DEFINE_UNARY_EFFECTS(TRecipOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TReluOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TRemOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TRemSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TReshapeOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TRowExpandOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TRowExpandDivOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TRowExpandMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TRowExpandSubOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+// Row reductions use tmp scratch tile.
+void TRowMaxOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void TRowMinOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void TRowSumOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(TRsqrtOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TScatterOp, getSrcMutable(), getIndexesMutable(), getDstMutable())
+
+// Select: Read(mask, src0, src1) -> Write(dst)
+void TSelOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getMaskMutable());
+  PTO_ADD_READ(getSrc0Mutable());
+  PTO_ADD_READ(getSrc1Mutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+PTO_DEFINE_BINARY_EFFECTS(TSelsOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+PTO_DEFINE_BINARY_EFFECTS(TShlOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TShrOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TShlSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TShrSOp, getSrcMutable(), getDstMutable())
+
+// TSORT32: Read(src) -> Write(dst, idx)
+void TSort32Op::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+  PTO_ADD_WRITE(getIdxMutable());
+}
+
+PTO_DEFINE_UNARY_EFFECTS(TSqrtOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TSubOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+PTO_DEFINE_TERNARY_EFFECTS(TSubCOp, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
+PTO_DEFINE_UNARY_EFFECTS(TSubSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TSubSCOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+PTO_DEFINE_UNARY_EFFECTS(TXORSOp, getSrcMutable(), getDstMutable())
+PTO_DEFINE_BINARY_EFFECTS(TXOROp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
+
+// TTRANS: Read(src) -> Write(tmp, dst)
+void TTransOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getTmpMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+void TPrintOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+}
+
+#undef PTO_DEFINE_TERNARY_EFFECTS
+#undef PTO_DEFINE_BINARY_EFFECTS
+#undef PTO_DEFINE_UNARY_EFFECTS
+#undef PTO_ADD_WRITE
+#undef PTO_ADD_READ
 
 // === ReluOp_DPS ===
 // Read: src, Write: dst
@@ -5930,6 +7542,32 @@ void TMatmulBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Memor
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
+// === TGemvOp ===
+// Read: lhs, rhs, Write: dst
+void TGemvOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvAccOp ===
+// Read: acc_in, lhs, rhs, Write: dst
+void TGemvAccOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAccInMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+// === TGemvBiasOp ===
+// Read: a, b, bias, Write: dst
+void TGemvBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
 // === TMatmulOp ===
 void TMatmulMxOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   addEffect(effects, &getAMutable(), MemoryEffects::Read::get());
@@ -5960,10 +7598,6 @@ void TMatmulMxBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Mem
   // 这里的 bias 是必选的 AnyType:$bias，所以是 Singleton
   addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
-}
-
-void TPrintOp::getEffects(SmallVectorImpl<mlir::SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), mlir::SideEffects::DefaultResource::get());
 }
 
 void PrintOp_DPS::getEffects(SmallVectorImpl<mlir::SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

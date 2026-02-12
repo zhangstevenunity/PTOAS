@@ -1,0 +1,95 @@
+#include <pto/pto-inst.hpp>
+#include <pto/common/constants.hpp>
+#include "acl/acl.h"
+
+#include "pto/pto-inst.hpp"
+using namespace pto;
+__global__ AICORE void ffn_act_block(__gm__ float* v1, __gm__ float* v2, __gm__ float* v3, int32_t v4, int32_t v5) {
+  unsigned v6 = 1;
+  unsigned v7 = 0;
+  float v8 = -0.0208333302f;
+  float v9 = 0.25f;
+  float v10 = 0.5f;
+  float v11 = 4.00010014f;
+  float v12 = -4.00010014f;
+  int32_t v13 = 32;
+  int32_t v14 = 1;
+  int64_t v15 = 0;
+  int64_t v16 = 4096;
+  int64_t v17 = 16384;
+  int64_t v18 = 8192;
+  int64_t v19 = 12288;
+  using T = float;
+  size_t v20 = (size_t) v4;
+  size_t v21 = (size_t) v5;
+  unsigned v22 = (unsigned) v13;
+  unsigned v23 = v7 * v22;
+  unsigned v24 = v7 + v23;
+  unsigned v25 = (unsigned) v14;
+  unsigned v26 = v7 * v25;
+  unsigned v27 = v24 + v26;
+  __gm__ float* v28 = v1 + v27;
+  using GTShape_742792480 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_742792480 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_742792480_layout = pto::Layout::ND;
+  GTShape_742792480 v29 = GTShape_742792480();
+  GTStride_742792480 v30 = GTStride_742792480();
+  using GT_742792480 = GlobalTensor<float, GTShape_742792480, GTStride_742792480, GT_742792480_layout>;
+  GT_742792480 v31 = GT_742792480(v28, v29, v30);
+  unsigned v32 = (unsigned) v13;
+  unsigned v33 = v7 * v32;
+  unsigned v34 = v7 + v33;
+  unsigned v35 = (unsigned) v14;
+  unsigned v36 = v7 * v35;
+  unsigned v37 = v34 + v36;
+  __gm__ float* v38 = v2 + v37;
+  using GTShape_742790608 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_742790608 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_742790608_layout = pto::Layout::ND;
+  GTShape_742790608 v39 = GTShape_742790608();
+  GTStride_742790608 v40 = GTStride_742790608();
+  using GT_742790608 = GlobalTensor<float, GTShape_742790608, GTStride_742790608, GT_742790608_layout>;
+  GT_742790608 v41 = GT_742790608(v38, v39, v40);
+  unsigned v42 = (unsigned) v13;
+  unsigned v43 = v7 * v42;
+  unsigned v44 = v7 + v43;
+  unsigned v45 = (unsigned) v14;
+  unsigned v46 = v7 * v45;
+  unsigned v47 = v44 + v46;
+  __gm__ float* v48 = v3 + v47;
+  using GTShape_742790336 = pto::Shape<1, 1, 1, 32, 32>;
+  using GTStride_742790336 = pto::Stride<1024, 1024, 1024, 32, 1>;
+  constexpr pto::Layout GT_742790336_layout = pto::Layout::ND;
+  GTShape_742790336 v49 = GTShape_742790336();
+  GTStride_742790336 v50 = GTStride_742790336();
+  using GT_742790336 = GlobalTensor<float, GTShape_742790336, GTStride_742790336, GT_742790336_layout>;
+  GT_742790336 v51 = GT_742790336(v48, v49, v50);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> v52 = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(v20, v21);
+  TASSIGN(v52, v15);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> v53 = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(v20, v21);
+  TASSIGN(v53, v16);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> v54 = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(v20, v21);
+  TASSIGN(v54, v17);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> v55 = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(v20, v21);
+  TASSIGN(v55, v18);
+  Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> v56 = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(v20, v21);
+  TASSIGN(v56, v19);
+  TLOAD(v52, v31);
+  TLOAD(v53, v41);
+  TMAXS(v52, v52, v12);
+  TMINS(v52, v52, v11);
+  TMUL(v55, v52, v52);
+  TMUL(v56, v55, v52);
+  TMULS(v56, v56, v8);
+  TMULS(v54, v52, v9);
+  TADDS(v54, v54, v10);
+  TADD(v54, v54, v56);
+  set_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  TMUL(v54, v54, v53);
+  wait_flag(PIPE_V, PIPE_MTE3, EVENT_ID0);
+  TSTORE(v51, v54);
+  pipe_barrier(PIPE_ALL);
+  return;
+}
+
+

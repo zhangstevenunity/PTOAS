@@ -5,7 +5,16 @@
  
 using namespace mlir;
 using namespace mlir::pto;
- 
+
+static size_t getEventIdPoolSize(const SyncOperation *sync,
+                                 uint64_t reservedBlockSyncEventIdNum) {
+  if (sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
+      sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
+    return kBlockSyncSetWaitEventIdNum - reservedBlockSyncEventIdNum;
+  }
+  return kTotalEventIdNum;
+}
+
 void SyncEventIdAllocation::Allocate(uint32_t runNum) {
   // 1. 正常分配
   for (auto &element : syncIR_) {
@@ -109,15 +118,26 @@ size_t SyncEventIdAllocation::GetCompilerAvailableEventIdNum(const SyncOperation
 }
  
 void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
-  size_t eventIdNum = GetCompilerAvailableEventIdNum(sync);
-  SmallVector<bool> eventIdLifetimeAvailableStatus = GetEventPool(sync, eventIdNum);
-  SmallVector<bool> eventIdIdleStatus = GetEventIdIdleStatus(sync, eventIdNum);
+  const size_t poolSize = getEventIdPoolSize(sync, reservedBlockSyncEventIdNum);
+  const size_t availableEventIdNum = GetCompilerAvailableEventIdNum(sync);
+
+  SmallVector<bool> eventIdLifetimeAvailableStatus = GetEventPool(sync, poolSize);
+  SmallVector<bool> eventIdIdleStatus = GetEventIdIdleStatus(sync, poolSize);
   
-  assert(eventIdLifetimeAvailableStatus.size() == eventIdNum);
+  assert(eventIdLifetimeAvailableStatus.size() == poolSize);
+  assert(eventIdIdleStatus.size() == poolSize);
+
+  // Apply per-(src,dst) reservations by marking the "reserved tail" as
+  // unavailable. Historically this pass treated reserved IDs as being at the
+  // end of the [0..kTotalEventIdNum) range.
+  if (availableEventIdNum < poolSize) {
+    for (size_t id = availableEventIdNum; id < poolSize; ++id)
+      eventIdLifetimeAvailableStatus[id] = false;
+  }
   
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
   SmallVector<int> canAllocaEventId = GetAvailableEventId(
-      sync, eventIdLifetimeAvailableStatus, eventIdIdleStatus, eventIdNum);
+      sync, eventIdLifetimeAvailableStatus, eventIdIdleStatus, poolSize);
  
   if (canAllocaEventId.empty()) {
     return;
@@ -225,22 +245,30 @@ int SyncEventIdAllocation::ScopePair(const SyncOperation *s) {
       s->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT) {
     return 0;
   }
-  // Pack Src/Dst pipe into an int for map key
-  auto srcT = static_cast<unsigned int>(s->GetActualSrcPipe()); 
-  auto dstT = static_cast<unsigned int>(s->GetActualDstPipe()); 
-  return static_cast<int>((dstT << 8) | srcT);
+  // Event IDs are a limited shared resource and must not be reused across
+  // overlapping lifetimes. In practice, reusing the same event ID number for
+  // different destinations from the same source pipe without waiting in between
+  // can lead to mismatched waits and NPU runtime failures.
+  //
+  // Key by source pipe only (and offset by 1 to avoid clashing with block-sync
+  // scope 0). This prevents assigning the same numeric event ID concurrently to
+  // multiple (src,dst) pairs that share the same source pipe.
+  auto srcT = static_cast<unsigned int>(s->GetActualSrcPipe());
+  return static_cast<int>(srcT + 1);
 }
  
 void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
                                            const SyncOperation *s,
                                            SmallVector<bool> &eventId) {
-  auto eventIdSize = GetCompilerAvailableEventIdNum(s);
-  assert(eventId.size() == eventIdSize);
+  const auto eventIdSize = eventId.size();
   if (begin < end) llvm::errs() << "begin: " << begin << " end: " << end << "\n";
   assert(begin < end);
   int scopePair = ScopePair(s);
   eventCyclePool.try_emplace(scopePair, EventCyclePool(eventIdSize));
   EventCyclePool &seqPool = eventCyclePool[scopePair];
+  // The pool is keyed by scopePair and should have a stable size.
+  if (seqPool.slot.size() < eventIdSize)
+    seqPool.slot.resize(eventIdSize);
   
   for (size_t i = 0; i < eventIdSize; i++) {
     auto &syncLifeCycle = seqPool.slot[i];
@@ -369,10 +397,13 @@ void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
                                           unsigned int eventId) {
   assert(begin < end);
   int scopePair = ScopePair(setFlag);
-  eventCyclePool.try_emplace(
-      scopePair, EventCyclePool(GetCompilerAvailableEventIdNum(setFlag)));
+  const size_t poolSize =
+      getEventIdPoolSize(setFlag, reservedBlockSyncEventIdNum);
+  eventCyclePool.try_emplace(scopePair, EventCyclePool(poolSize));
   
   EventCyclePool &seqPool = eventCyclePool[scopePair];
+  if (seqPool.slot.size() < poolSize)
+    seqPool.slot.resize(poolSize);
   auto &syncLifeCycle = seqPool.slot[eventId];
   bool isInsert = false;
  

@@ -26,7 +26,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_f32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
             tile_buf_i32 = pto.TileBufType.get([32, 32], i32, vec, [32, 32], cfg, ctx)
 
@@ -40,7 +41,6 @@ def build():
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-
                 arg0, arg1, arg2 = entry.arguments
 
                 # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c32,%c1]
@@ -56,7 +56,8 @@ def build():
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
                 tb0 = pto.AllocTileOp(tile_buf_f32).result
                 tb1 = pto.AllocTileOp(tile_buf_i32).result
-                tb2 = pto.AllocTileOp(tile_buf_f32).result
+                tb2 = pto.AllocTileOp(tile_buf_f32).result  # tmp
+                tb3 = pto.AllocTileOp(tile_buf_f32).result  # out
 
                 # pto.load_dps_tb ins(%sv) outs(%tb)
                 # 原生 builder 一般会把 optional operands/attrs 做成可选参数
@@ -64,15 +65,23 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)  # result=None
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
-                # pto.addf_dps_tb ins(%tb0,%tb1) outs(%tb2)
-                # 你在 ODS 里提供了 builders (lhs,rhs,dst) 版本，所以这里直接这么构造
-                pto.TGatherOp(tb0, tb1, tb2)
+                # pto.tgather supports 2 mutually-exclusive forms:
+                # - index gather: ins(%src, %indices) outs(%dst)
+                # - mask gather : ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>}) outs(%dst)
+                #
+                # 这里串起来，确保两种形式都会在最终生成的 C++ 里出现。
+                pto.TGatherOp(tb0, tb2, indices=tb1)
+                # Use a full mask (P1111) so mask-gather overwrites every lane.
+                # This avoids any dependence on previous dst contents and keeps
+                # the output deterministic for the CI "run twice on NPU" check.
+                mp = pto.MaskPatternAttr.get(pto.MaskPattern.P1111, ctx)
+                pto.TGatherOp(tb2, tb3, maskPattern=mp)
 
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_f32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # pto.store_dps_tb ins(%tb2) outs(%sv2)
-                pto.TStoreOp(None, tb2, sv2)
+                pto.TStoreOp(None, tb3, sv2)
 
                 func.ReturnOp([])
             m.operation.verify()

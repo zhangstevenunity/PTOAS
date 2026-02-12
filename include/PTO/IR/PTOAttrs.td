@@ -47,6 +47,7 @@ def PTO_AddressSpace_RIGHT : I32EnumAttrCase<"RIGHT", 4, "right">;
 def PTO_AddressSpace_ACC : I32EnumAttrCase<"ACC", 5, "acc">;
 def PTO_AddressSpace_VEC : I32EnumAttrCase<"VEC", 6, "vec">;
 def PTO_AddressSpace_BIAS : I32EnumAttrCase<"BIAS", 7, "bias">;
+def PTO_AddressSpace_SCALING : I32EnumAttrCase<"SCALING", 8, "scaling">;
 
 def PTO_AddressSpaceEnum : PTO_I32Enum<
   "AddressSpace", "PTO Address Space", [
@@ -57,7 +58,8 @@ def PTO_AddressSpaceEnum : PTO_I32Enum<
     PTO_AddressSpace_RIGHT,
     PTO_AddressSpace_ACC,
     PTO_AddressSpace_VEC,
-    PTO_AddressSpace_BIAS
+    PTO_AddressSpace_BIAS,
+    PTO_AddressSpace_SCALING
   ]>;
 
 def PTO_AddressSpaceAttr : PTO_Attr<"AddressSpace", "address_space"> {
@@ -112,6 +114,69 @@ def PTO_PipeAttr : PTO_Attr<"Pipe", "pipe"> {
   let assemblyFormat = "`<` params `>`";
   let description = [{
     PTO Op pipe attribute.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Sync Op Type (High Level Abstraction)
+//===----------------------------------------------------------------------===//
+
+def PTO_SYNC_TLOAD        : I32EnumAttrCase<"TLOAD", 0>;
+def PTO_SYNC_TSTORE_ACC   : I32EnumAttrCase<"TSTORE_ACC", 1>;
+def PTO_SYNC_TSTORE_VEC   : I32EnumAttrCase<"TSTORE_VEC", 2>;
+def PTO_SYNC_TMOV_M2L     : I32EnumAttrCase<"TMOV_M2L", 3>;
+def PTO_SYNC_TMOV_M2S     : I32EnumAttrCase<"TMOV_M2S", 4>;
+def PTO_SYNC_TMOV_M2B     : I32EnumAttrCase<"TMOV_M2B", 5>;
+def PTO_SYNC_TMOV_M2V     : I32EnumAttrCase<"TMOV_M2V", 6>;
+def PTO_SYNC_TMOV_V2M     : I32EnumAttrCase<"TMOV_V2M", 7>;
+def PTO_SYNC_TMATMUL      : I32EnumAttrCase<"TMATMUL", 8>;
+def PTO_SYNC_TVEC         : I32EnumAttrCase<"TVEC", 9>;
+def PTO_SYNC_TVECWAIT     : I32EnumAttrCase<"TVECWAIT_EVENT", 10>;
+
+def PTO_SyncOpTypeEnum : PTO_I32Enum<
+  "SyncOpType", "PTO High Level Sync Op Type", [
+    PTO_SYNC_TLOAD,
+    PTO_SYNC_TSTORE_ACC,
+    PTO_SYNC_TSTORE_VEC,
+    PTO_SYNC_TMOV_M2L,
+    PTO_SYNC_TMOV_M2S,
+    PTO_SYNC_TMOV_M2B,
+    PTO_SYNC_TMOV_M2V,
+    PTO_SYNC_TMOV_V2M,
+    PTO_SYNC_TMATMUL,
+    PTO_SYNC_TVEC,
+    PTO_SYNC_TVECWAIT
+  ]>;
+
+def PTO_SyncOpTypeAttr : PTO_Attr<"SyncOpType", "sync_op_type"> {
+  let parameters = (ins EnumParameter<PTO_SyncOpTypeEnum>:$op_type);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    High-level synchronization endpoint type. Lowering pass maps it to hardware pipes.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Layout (GlobalTensor layout inference)
+//===----------------------------------------------------------------------===//
+
+def PTO_Layout_ND : I32EnumAttrCase<"ND", 0, "nd">;
+def PTO_Layout_DN : I32EnumAttrCase<"DN", 1, "dn">;
+def PTO_Layout_NZ : I32EnumAttrCase<"NZ", 2, "nz">;
+
+def PTO_LayoutEnum : PTO_I32Enum<
+  "Layout", "Global tensor layout (row/col/fractal)", [
+    PTO_Layout_ND,
+    PTO_Layout_DN,
+    PTO_Layout_NZ
+  ]>;
+
+def PTO_LayoutAttr : PTO_Attr<"Layout", "layout"> {
+  let parameters = (ins EnumParameter<PTO_LayoutEnum>:$layout);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Layout inferred from shape/stride for GlobalTensor:
+      ND (row-major), DN (col-major), NZ (fractal).
   }];
 }
 
@@ -244,12 +309,12 @@ def PTO_VFAttr : PTO_Attr<"VectorFunction", "vector_function"> {
 
 def PTO_CmpModeEnum : PTO_I32Enum<
   "CmpMode", "PTO compare mode", [
-    I32EnumAttrCase<"EQ", 0, "equal">,
-    I32EnumAttrCase<"NE", 1, "not_equal">,
-    I32EnumAttrCase<"LT", 2, "less_than">,
-    I32EnumAttrCase<"LE", 3, "less_equal">,
-    I32EnumAttrCase<"GT", 4, "greater_than">,
-    I32EnumAttrCase<"GE", 5, "greater_equal">
+    I32EnumAttrCase<"EQ", 0, "eq">,
+    I32EnumAttrCase<"NE", 1, "ne">,
+    I32EnumAttrCase<"LT", 2, "lt">,
+    I32EnumAttrCase<"LE", 3, "le">,
+    I32EnumAttrCase<"GT", 4, "gt">,
+    I32EnumAttrCase<"GE", 5, "ge">
   ]>;
 
 def PTO_CmpModeAttr : EnumAttr<PTO_Dialect, PTO_CmpModeEnum, "cmp"> {
@@ -288,8 +353,10 @@ def PTO_MaskPatternEnum : PTO_I32Enum<
   ]
 >;
 
-def PTO_MaskPatternAttr : EnumAttr<PTO_Dialect, PTO_MaskPatternEnum, "mask_pattern"> {
+def PTO_MaskPatternAttr : PTO_Attr<"MaskPattern", "mask_pattern"> {
   let summary = "mask pattern attribute";
+  let parameters = (ins EnumParameter<PTO_MaskPatternEnum>:$value);
+  let assemblyFormat = "`<` params `>`";
 }
 
 // ---------- enums ----------

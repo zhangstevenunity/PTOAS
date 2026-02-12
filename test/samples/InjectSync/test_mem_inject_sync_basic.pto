@@ -1,25 +1,34 @@
-// RUN: ./bin/ptoas --pto-insert-sync %s | FileCheck %s
+// RUN: ./bin/ptoas --enable-insert-sync %s 2>&1 1>/dev/null | FileCheck %s
 
 module {
-  // Case 1: 基础流水线 MTE2 -> Vector -> MTE3
+  // Case 1: 基础流水线 MTE2 -> Vector -> MTE3 (if-only 触发潜在死锁场景)
   func.func @test_basic_pipeline(%arg0: memref<16x16x16xf16, #pto.address_space<gm>>,
-                                 %arg1: memref<16x16x16xf16, #pto.address_space<gm>>) {
-    %ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<ub>>
+                                 %arg1: memref<16x16x16xf16, #pto.address_space<gm>>,
+                                 %cond: i1) {
+    %ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     
+    // CHECK: // === [PTOInsertSync] Final Result === //
+    // CHECK-NEXT: func.func @test_basic_pipeline
     // CHECK: pto.load_dps
-    // CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
+    // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
     pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-                 outs(%ub : memref<16x16x16xf16, #pto.address_space<ub>>)
+                 outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
 
     // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-    // CHECK-NEXT: pto.addf_dps
-    // CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-    pto.addf_dps ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<ub>>, memref<16x16x16xf16, #pto.address_space<ub>>)
-                 outs(%ub : memref<16x16x16xf16, #pto.address_space<ub>>)
+    // CHECK: scf.if
+    // CHECK: pto.addf_dps
+    // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    // CHECK: } else {
+    // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+    scf.if %cond {
+      pto.addf_dps ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<vec>>,
+                                   memref<16x16x16xf16, #pto.address_space<vec>>)
+                   outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
+    }
 
     // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-    // CHECK-NEXT: pto.store_dps
-    pto.store_dps ins(%ub : memref<16x16x16xf16, #pto.address_space<ub>>)
+    // CHECK: pto.store_dps
+    pto.store_dps ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
     
     // CHECK: pto.barrier <PIPE_ALL>

@@ -1,6 +1,6 @@
 from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
-from mlir.ir import F32Type, IndexType
+from mlir.ir import F32Type, IndexType, IntegerType
 
 
 def build():
@@ -21,7 +21,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_1x1024 = pto.TileBufType.get([1, 1024], f32, vec, [1, 1024], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
@@ -35,6 +36,9 @@ def build():
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
                 c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
                 c256 = arith.ConstantOp(IndexType.get(ctx), 256).result
+                # blockLen for tmrgsort format1: ins(src, blockLen) outs(dst), must be integer (e.g. i32)
+                i32 = IntegerType.get_signless(32, ctx)
+                c64_i32 = arith.ConstantOp(i32, 64).result
 
                 arg0, arg1 = entry.arguments
 
@@ -51,7 +55,8 @@ def build():
 
                 pto.TLoadOp(None, sv0, tb0)  # result=None
 
-                pto.TMrgSortOp(tb0, tb1, 64)
+                # Format1: ins(%src, %blockLen : tile_buf, i32) outs(%dst : tile_buf)
+                pto.TMrgSortOp(srcs=[tb0], dsts=[tb1], blockLen=c64_i32)
 
                 # %8 = partition_view on output tensor_view
                 sv1 = pto.PartitionViewOp(part_view_32x32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result

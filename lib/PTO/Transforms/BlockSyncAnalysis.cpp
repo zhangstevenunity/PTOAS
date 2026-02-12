@@ -269,6 +269,29 @@ bool BlockSyncAnalysis::IsMemInfoHasDependency(
     hasDependency |= memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->defVec, depBaseMemInfosVec);
     hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->useVec, depBaseMemInfosVec);
     hasDependency |= memAnalyzer_.DepBetween(nowCompound->defVec, frontCompound->defVec, depBaseMemInfosVec);
+
+    // ---------------------------------------------------------------------
+    // Special hazard: ACC (L0C) read/read cross-pipe ordering.
+    //
+    // Some PTO-ISA sequences (e.g. TMOV_FP reading ACC on PIPE_MTE1 and TSTORE
+    // reading ACC on PIPE_MTE3) are semantically "read/read", but executing
+    // them concurrently can trigger nondeterminism or device exceptions on NPU.
+    //
+    // Model this as a dependency to force an explicit event ordering between
+    // different pipelines when they alias on ACC.
+    // ---------------------------------------------------------------------
+    if (nowCompound->kPipeValue != frontCompound->kPipeValue) {
+      DepBaseMemInfoPairVec rrDepVec;
+      if (memAnalyzer_.DepBetween(nowCompound->useVec, frontCompound->useVec,
+                                 rrDepVec)) {
+        for (auto &pair : rrDepVec) {
+          if (!pair.first) continue;
+          if (pair.first->scope != pto::AddressSpace::ACC) continue;
+          depBaseMemInfosVec.push_back(pair);
+          hasDependency = true;
+        }
+      }
+    }
     
     return hasDependency;
 }

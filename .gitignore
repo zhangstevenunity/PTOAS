@@ -56,6 +56,16 @@ dist/
 .cache/
 .pytest_cache/
 
+# Remote/NPU validation artifacts
+/payload/
+/payload.tgz
+/payload_local*/
+/payload_local*.tgz
+/remote_npu_validation_results*.tsv
+/npu_validation/
+test/samples/**/npu_validation/
+/tmp_gen*
+
 # IDE/editor
 .vscode/
 .idea/

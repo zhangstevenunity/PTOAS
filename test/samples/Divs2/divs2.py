@@ -20,7 +20,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
@@ -49,8 +50,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)
                 pto.TLoadOp(None, sv1, tb1)
 
-                op = pto.TDivSOp(tb0, scale, tb_out)
-                op.operation.attributes["scalar_lhs"] = BoolAttr.get(True)
+                op = pto.TDivSOp(scale, tb0, tb_out)
 
                 sv2 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
                 pto.TStoreOp(None, tb_out, sv2)

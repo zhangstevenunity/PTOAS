@@ -182,6 +182,7 @@ Type TileBufType::parse(AsmParser &parser) {
         .Case("acc", AddressSpace::ACC)
         .Case("vec", AddressSpace::VEC)
         .Case("bias", AddressSpace::BIAS)
+        .Case("scaling", AddressSpace::SCALING)
         .Default(::std::nullopt);
   if (!memorySpace.has_value()) {
     parser.emitError(parser.getNameLoc(), "unknown loc: ") << locStr;
@@ -227,6 +228,7 @@ static llvm::StringRef stringifyLocFromMemorySpace(mlir::Attribute memorySpace) 
     case AddressSpace::ACC: return "acc";
     case AddressSpace::VEC: return "vec";
     case AddressSpace::BIAS: return "bias";
+    case AddressSpace::SCALING: return "scaling";
     default: return "illegal";
   }
 }

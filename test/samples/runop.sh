@@ -8,17 +8,23 @@ BASE_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 PTOAS_BIN="${PTOAS_BIN:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
+PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
+PTOAS_FLAGS="${PTOAS_FLAGS:-}"
+PTO_PTO_DIRS="${PTO_PTO_DIRS:-InjectSync}"
 
 usage() {
   cat <<EOF
 Usage:
-  $0 -t <name>   # e.g. -t a  -> uses folder A, script a.py
-  $0 all         # traverse every subfolder under ${BASE_DIR}
+  $0 -t <name>   # e.g. -t Shls  -> run all .py in folder Shls
+  $0 all         # traverse every subfolder, run all .py under each
 
 Env:
   PTOAS_BIN   # path to ptoas executable (optional)
   PYTHON_BIN  # python executable to run samples (optional)
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
+  PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
+  PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
+  PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: InjectSync)
 EOF
   exit 1
 }
@@ -72,20 +78,6 @@ resolve_python_bin() {
   return 1
 }
 
-has_exact_file() {
-  local dir="$1"
-  local want="$2"
-  local f base
-  for f in "$dir"/*.py; do
-    [[ -e "$f" ]] || continue
-    base="$(basename "$f")"
-    if [[ "$base" == "$want" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
 process_one_dir() {
   local A="$1" # folder name (e.g. Abs)
   local out_dir="$2"
@@ -96,6 +88,27 @@ process_one_dir() {
 
   ptoas="$(resolve_ptoas_bin)"
   python="$(resolve_python_bin)"
+  local -a ptoas_flags=()
+  if [[ -n "${PTOAS_FLAGS}" ]]; then
+    # shellcheck disable=SC2206
+    ptoas_flags=(${PTOAS_FLAGS})
+  fi
+  if [[ "${PTOAS_ENABLE_INSERT_SYNC}" == "1" ]]; then
+    local has_insync=0
+    if ((${#ptoas_flags[@]})); then
+      for f in "${ptoas_flags[@]}"; do
+        if [[ "$f" == "--enable-insert-sync" ]]; then
+          has_insync=1
+          break
+        fi
+      done
+    fi
+    [[ $has_insync -eq 1 ]] || ptoas_flags+=(--enable-insert-sync)
+  fi
+  local -a ptoas_cmd_base=("$ptoas")
+  if (( ${#ptoas_flags[@]} )); then
+    ptoas_cmd_base+=("${ptoas_flags[@]}")
+  fi
 
   if [[ -z "$ptoas" || ! -x "$ptoas" ]]; then
     echo -e "${A}\tFAIL\tMissing executable: PTOAS_BIN (searched common paths)"
@@ -110,39 +123,59 @@ process_one_dir() {
     return 0
   fi
 
-  # Some folders host multiple scripts; enumerate explicitly.
-  local files=()
-  if [[ "$A" == "Partition5D" ]]; then
-    files=("partition5d.py" "partition5d_dynamic.py")
-  else
-    files=("$(lcfirst "$A").py")
-  fi
-
+  # Run every .py file in this directory (no requirement that name matches folder).
   local f mlir cpp base overall=0
-  for f in "${files[@]}"; do
-    if ! has_exact_file "$dir" "$f"; then
-      echo -e "${A}(${f})\tSKIP\tMissing python: ${f}"
-      continue
-    fi
-    base="${f%.py}"
+  for f in "$dir"/*.py; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f" .py)"
     mlir="${out_subdir}/${base}-pto-ir.pto"
     cpp="${out_subdir}/${base}-pto.cpp"
 
-    if ! "$python" "${dir}/${f}" > "$mlir"; then
-      echo -e "${A}(${f})\tFAIL\tpython failed: ${f}"
+    if ! "$python" "$f" > "$mlir"; then
+      echo -e "${A}(${base}.py)\tFAIL\tpython failed: ${base}.py"
       overall=1
       continue
     fi
 
     # Write output via -o to avoid mixing debug prints with generated C++.
-    if ! "$ptoas" "$mlir" -o "$cpp" >/dev/null 2>&1; then
-      echo -e "${A}(${f})\tFAIL\tptoas failed: $(basename "$mlir")"
+    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$mlir" -o "$cpp")
+    if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
+      echo -e "${A}(${base}.py)\tFAIL\tptoas failed: $(basename "$mlir")"
       overall=1
       continue
     fi
 
-    echo -e "${A}(${f})\tOK\tgenerated: $(basename "$cpp")"
+    echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
+
+  # Run .pto files only for allowed dirs (default: InjectSync) to avoid legacy IR.
+  local allow_pto=0
+  for d in ${PTO_PTO_DIRS}; do
+    if [[ "$A" == "$d" ]]; then
+      allow_pto=1
+      break
+    fi
+  done
+
+  if [[ $allow_pto -eq 1 ]]; then
+    for f in "$dir"/*.pto; do
+      [[ -f "$f" ]] || continue
+      case "$f" in
+        *-pto-ir.pto) continue ;;
+      esac
+      base="$(basename "$f" .pto)"
+      cpp="${out_subdir}/${base}.cpp"
+
+      local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$f" -o "$cpp")
+      if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
+        echo -e "${A}(${base}.pto)\tFAIL\tptoas failed: $(basename "$f")"
+        overall=1
+        continue
+      fi
+
+      echo -e "${A}(${base}.pto)\tOK\tgenerated: $(basename "$cpp")"
+    done
+  fi
 
   return $overall
 }

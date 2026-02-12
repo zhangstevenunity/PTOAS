@@ -21,7 +21,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
             tile_buf_1_32 = pto.TileBufType.get([1, 32], f32, vec, [1, 32], cfg, ctx)
 
@@ -61,10 +62,10 @@ def build():
                 pto.TLoadOp(None, sv1, tb1)  # result=None
                 pto.TLoadOp(None, sv2, tb2)  # result=None
 
-                # pto.addf_dps_tb ins(%tb0,%tb1) outs(%tb2)
-                # 你在 ODS 里提供了 builders (lhs,rhs,dst) 版本，所以这里直接这么构造
-                pto.TColSumOp(tb0, tb1, tb2, isBinary=isBinary_attr)
-
+                # pto-isa TCOLSUM requires an explicit tmp tile; keep only the
+                # supported form to ensure the generated C++ compiles on NPU.
+                pto.TColSumOp(tb0, tb2, tmp=tb1, isBinary=isBinary_attr)
+                
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_1_32, tv2, offsets=[c0, c0], sizes=[c1, c32]).result
 

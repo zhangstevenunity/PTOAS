@@ -123,6 +123,10 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     //   return WalkResult::advance();
     } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto getValDpsOp = dyn_cast<pto::GetValDpsOp>(op)) {
+      // GetValDpsOp only reads from buffer, similar to LoadOp.
+      (void)getValDpsOp;
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto tprintOp = dyn_cast<pto::TPrintOp>(op)) {
       // TPrintOp only reads from buffer, similar to LoadOp
       OpKillHandle(curOpInfo, live, op->getBlock());
@@ -1219,6 +1223,8 @@ MemPlan::GetBufferSpaceInfo(pto::AddressSpace &space) const {
     return std::make_pair(l0bAlignSize, l0bSpaceSize);
   case pto::AddressSpace::BIAS:
     return std::make_pair(biasAlignSize, biasSpaceSize);
+  case pto::AddressSpace::SCALING:
+    return std::make_pair(scalingAlignSize, scalingSpaceSize);
   }
   
   llvm_unreachable("Temporarily unsupported memory buffer space !");
@@ -1756,6 +1762,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   l0bAlignSize = 4096;
   biasAlignSize = 256;
   biasSpaceSize = 524288;
+  scalingAlignSize = 256;
+  scalingSpaceSize = 1572864;
 
   auto moduleOp = getTopLevelModuleOp(funcOp);
   StringAttr strAttr = moduleOp->getAttrOfType<StringAttr>("pto.device-spec");
@@ -1792,6 +1800,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
     l0bAlignSize = 4096;
     biasAlignSize = 256;
     biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2097152;
     return success();
   }
 
@@ -1817,6 +1827,8 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
     l0bAlignSize = 4096;
     biasAlignSize = 256;
     biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2031616;
     return success();
   }
   
