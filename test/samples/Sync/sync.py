@@ -1,4 +1,4 @@
-from mlir.ir import Context, Location, Module, InsertionPoint, Attribute
+from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
 from mlir.ir import F32Type, IndexType
 
@@ -24,10 +24,10 @@ def build():
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
 
-            PIPE_MTE2 = Attribute.parse("#pto.pipe<PIPE_MTE2>", ctx)
-            PIPE_V = Attribute.parse("#pto.pipe<PIPE_V>", ctx)
-            PIPE_MTE3 = Attribute.parse("#pto.pipe<PIPE_MTE3>", ctx)
-            EVENT_ID0 = Attribute.parse("#pto.event<EVENT_ID0>", ctx)
+            PIPE_MTE2 = pto.PipeAttr.get(pto.PIPE.PIPE_MTE2, ctx)
+            PIPE_V = pto.PipeAttr.get(pto.PIPE.PIPE_V, ctx)
+            PIPE_MTE3 = pto.PipeAttr.get(pto.PIPE.PIPE_MTE3, ctx)
+            EVENT_ID0 = pto.EventAttr.get(pto.EVENT.EVENT_ID0, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):

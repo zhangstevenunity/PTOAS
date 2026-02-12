@@ -101,6 +101,28 @@ PYBIND11_MODULE(_pto, m) {
       .value("GE", MlirPTOCmpMode_GE)
       .export_values();
 
+    py::enum_<mlir::pto::PIPE>(m, "PIPE")
+      .value("PIPE_S", mlir::pto::PIPE::PIPE_S)
+      .value("PIPE_V", mlir::pto::PIPE::PIPE_V)
+      .value("PIPE_M", mlir::pto::PIPE::PIPE_M)
+      .value("PIPE_MTE1", mlir::pto::PIPE::PIPE_MTE1)
+      .value("PIPE_MTE2", mlir::pto::PIPE::PIPE_MTE2)
+      .value("PIPE_MTE3", mlir::pto::PIPE::PIPE_MTE3)
+      .value("PIPE_ALL", mlir::pto::PIPE::PIPE_ALL)
+      .value("PIPE_MTE4", mlir::pto::PIPE::PIPE_MTE4)
+      .value("PIPE_MTE5", mlir::pto::PIPE::PIPE_MTE5)
+      .value("PIPE_V2", mlir::pto::PIPE::PIPE_V2)
+      .value("PIPE_FIX", mlir::pto::PIPE::PIPE_FIX)
+      .value("VIRTUAL_PIPE_MTE2_L1A", mlir::pto::PIPE::VIRTUAL_PIPE_MTE2_L1A)
+      .value("VIRTUAL_PIPE_MTE2_L1B", mlir::pto::PIPE::VIRTUAL_PIPE_MTE2_L1B)
+      .value("PIPE_NUM", mlir::pto::PIPE::PIPE_NUM)
+      .value("PIPE_UNASSIGNED", mlir::pto::PIPE::PIPE_UNASSIGNED);
+
+    py::enum_<mlir::pto::Layout>(m, "Layout")
+      .value("ND", mlir::pto::Layout::ND)
+      .value("DN", mlir::pto::Layout::DN)
+      .value("NZ", mlir::pto::Layout::NZ);
+
     py::enum_<mlir::pto::SyncOpType>(m, "SyncOpType")
       .value("TLOAD", mlir::pto::SyncOpType::TLOAD)
       .value("TSTORE_ACC", mlir::pto::SyncOpType::TSTORE_ACC)
@@ -124,6 +146,14 @@ PYBIND11_MODULE(_pto, m) {
       .value("EVENT_ID5", mlir::pto::EVENT::EVENT_ID5)
       .value("EVENT_ID6", mlir::pto::EVENT::EVENT_ID6)
       .value("EVENT_ID7", mlir::pto::EVENT::EVENT_ID7)
+      .export_values();
+
+    py::enum_<mlir::pto::MaskPattern>(m, "MaskPattern")
+      .value("P0101", mlir::pto::MaskPattern::P0101)
+      .value("P0011", mlir::pto::MaskPattern::P0011)
+      .value("P0110", mlir::pto::MaskPattern::P0110)
+      .value("P0001", mlir::pto::MaskPattern::P0001)
+      .value("P1111", mlir::pto::MaskPattern::P1111)
       .export_values();
 
     mlir_attribute_subclass(m, "BLayoutAttr",
@@ -221,6 +251,58 @@ PYBIND11_MODULE(_pto, m) {
         return mlirPTORoundModeAttrGetValue(self);
         });
 
+    mlir_attribute_subclass(
+        m, "PipeAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsAPipeAttr(a); })
+      .def_classmethod(
+          "get",
+          [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = value.cast<int32_t>();
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error("PipeAttr.get expects int or PIPE enum");
+            }
+            MlirAttribute a = mlirPTOPipeAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a))
+              return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOPipeAttrGetValue(self);
+          });
+
+    mlir_attribute_subclass(
+        m, "LayoutAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsALayoutAttr(a); })
+      .def_classmethod(
+          "get",
+          [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = value.cast<int32_t>();
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error("LayoutAttr.get expects int or Layout enum");
+            }
+            MlirAttribute a = mlirPTOLayoutAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a))
+              return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOLayoutAttrGetValue(self);
+          });
+
     mlir_attribute_subclass(m, "CmpModeAttr", mlirAttributeIsAPTOCmpModeAttr)
       .def_classmethod(
           "get",
@@ -284,27 +366,31 @@ PYBIND11_MODULE(_pto, m) {
             return mlirPTOEventAttrGetValue(self);
           });
 
-    // [保留 Feature]: GM Type Factory
-    // ==========================================================================
-    // [新增] GM Type Factory: 专门用于隐藏复杂的 memref 定义
-    // ==========================================================================
-    m.def("get_gm_type", 
-        [](py::sequence shape, MlirType elementType, MlirContext context) -> MlirType {
-            // ... (这里保留你之前的完整实现) ...
-            // 为节省篇幅省略中间实现，请保留你原来的代码逻辑
-            std::string typeStr = "memref<";
-            auto shp = toInt64Vector(shape);
-            for (auto s : shp) {
-                typeStr += std::to_string(s) + "x";
+    mlir_attribute_subclass(
+        m, "MaskPatternAttr",
+        [](MlirAttribute a) { return mlirPTOAttrIsAMaskPatternAttr(a); })
+      .def_classmethod(
+          "get",
+          [](py::object cls, py::object value, MlirContext ctx) -> py::object {
+            int32_t v = 0;
+            if (py::isinstance<py::int_>(value)) {
+              v = py::cast<int32_t>(value);
+            } else if (py::hasattr(value, "value")) {
+              v = value.attr("value").cast<int32_t>();
+            } else {
+              throw std::runtime_error("MaskPatternAttr.get expects int or MaskPattern enum");
             }
-            // ... (下略) ...
-            typeStr += "f32"; 
-            typeStr += ", strided<[?, 1], offset: ?>, #pto.address_space<gm>>";
-            MlirType t = mlirTypeParseGet(context, mlirStringRefCreate(typeStr.c_str(), typeStr.length()));
-            return t;
-        },
-        py::arg("shape"), py::arg("element_type"), py::arg("context")
-    );
+            MlirAttribute a = mlirPTOMaskPatternAttrGet(ctx, v);
+            if (mlirAttributeIsNull(a)) return py::none();
+            return cls.attr("__call__")(a);
+          },
+          py::arg("cls"), py::arg("value"), py::arg("context") = py::none())
+      .def_property_readonly(
+          "value",
+          [](MlirAttribute self) -> int32_t {
+            return mlirPTOMaskPatternAttrGetValue(self);
+          });
+
     // --------------------------------------------------------------------------
     // !pto.ptr<elem>
     // --------------------------------------------------------------------------

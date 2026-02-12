@@ -1,4 +1,4 @@
-from mlir.ir import Attribute, Context, Location, Module, InsertionPoint
+from mlir.ir import Context, Location, Module, InsertionPoint
 from mlir.dialects import func, arith, pto
 from mlir.ir import F32Type, IndexType, IntegerType
 
@@ -74,7 +74,7 @@ def build():
                 # Use a full mask (P1111) so mask-gather overwrites every lane.
                 # This avoids any dependence on previous dst contents and keeps
                 # the output deterministic for the CI "run twice on NPU" check.
-                mp = Attribute.parse("#pto.mask_pattern<P1111>", ctx)
+                mp = pto.MaskPatternAttr.get(pto.MaskPattern.P1111, ctx)
                 pto.TGatherOp(tb2, tb3, maskPattern=mp)
 
                 # %8 = subview on output tensor_view

@@ -14,7 +14,6 @@ from .._mlir_libs._pto import (
     TileBufType,
     AddressSpace,
     AddressSpaceAttr,
-    get_gm_type,
     TileBufConfigAttr,
     BLayout,
     BLayoutAttr,
@@ -26,10 +25,16 @@ from .._mlir_libs._pto import (
     RoundModeAttr,
     CmpMode,
     CmpModeAttr,
+    PIPE,
+    PipeAttr,
+    Layout,
+    LayoutAttr,
     SyncOpType,
     SyncOpTypeAttr,
     EVENT,
-    EventAttr
+    EventAttr,
+    MaskPattern,
+    MaskPatternAttr,
 )
 
 __all__ = [
@@ -48,6 +53,8 @@ __all__ = [
     "PadValue","PadValueAttr",
     "RoundMode", "RoundModeAttr",
     "CmpMode", "CmpModeAttr",
+    "PIPE", "PipeAttr",
+    "Layout", "LayoutAttr",
     "SyncOpType", "SyncOpTypeAttr",
     "EVENT", "EventAttr",
     "MaskPattern", "MaskPatternAttr",
