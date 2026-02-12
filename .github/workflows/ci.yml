@@ -26,7 +26,10 @@ on:
       device_id:
         description: "aclrtSetDevice device id"
         type: string
-        default: "0"
+        # NOTE: On our shared remote NPU host, device 0/1 may be unstable or
+        # occupied. Default to a higher id to reduce flakiness for scheduled
+        # runs. Override in workflow_dispatch if needed.
+        default: "2"
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
@@ -242,7 +245,7 @@ jobs:
           STAGE: ${{ github.event.inputs.stage || 'run' }}
           RUN_MODE: ${{ github.event.inputs.run_mode || 'npu' }}
           SOC_VERSION: ${{ github.event.inputs.soc_version || 'Ascend910' }}
-          DEVICE_ID: ${{ github.event.inputs.device_id || '0' }}
+          DEVICE_ID: ${{ github.event.inputs.device_id || '2' }}
           SKIP_CASES: ${{ github.event.inputs.skip_cases || '' }}
           RUN_ONLY_CASES: ${{ github.event.inputs.run_only_cases || '' }}
           PTO_ISA_REPO: ${{ github.event.inputs.pto_isa_repo || 'https://gitcode.com/cann/pto-isa.git' }}
