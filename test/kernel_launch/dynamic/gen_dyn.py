@@ -39,8 +39,6 @@ def build():
 
             with InsertionPoint(entry):
                 arg0, arg1, argN = entry.arguments
-
-                # constants
                 c0 = arith.ConstantOp(idx, 0).result
                 c1 = arith.ConstantOp(idx, 1).result
                 c_tile_w = arith.ConstantOp(idx, tile_w).result

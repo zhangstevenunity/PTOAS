@@ -1,0 +1,33 @@
+module {
+  func.func @sync_kernel_dyn(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: i32) {
+    pto.section.vector {
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %c32 = arith.constant 32 : index
+      %c10 = arith.constant 10 : index
+      %0 = arith.index_cast %arg2 : i32 to index
+      // hardcode these for now since i dont have division...
+      %Narg = arith.constant 2560 : index
+      %1 = arith.constant 256 : index
+      %2 = arith.constant 8 : index
+      %3 = pto.get_block_idx
+      %4 = arith.index_cast %3 : i64 to index
+      %5 = pto.make_tensor_view %arg0, shape = [%0] strides = [%c1] : !pto.tensor_view<?xf32>
+      %6 = pto.make_tensor_view %arg1, shape = [%0] strides = [%c1] : !pto.tensor_view<?xf32>
+      %7 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      %8 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      scf.for %arg3 = %c0 to %2 step %c1 {
+        %9 = arith.muli %4, %1 : index
+        %10 = arith.muli %arg3, %c32 : index
+        %11 = arith.addi %9, %10 : index
+        %12 = pto.partition_view %5, offsets = [%11], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+        %13 = pto.partition_view %6, offsets = [%11], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+        pto.tload ins(%12 : !pto.partition_tensor_view<32xf32>) outs(%7 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        pto.trelu ins(%7 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%8 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        pto.tstore ins(%8 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%13 : !pto.partition_tensor_view<32xf32>)
+      }
+    }
+    return
+  }
+}
+

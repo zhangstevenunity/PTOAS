@@ -21,7 +21,7 @@ using namespace pto;
     - option 2: dispatch special kernel for that layout
 */
 
-__global__ AICORE void sync_kernel_dyn(__gm__ float* v1, __gm__ float* v2, const int N) {
+__global__ AICORE void sync_kernel_dyn(__gm__ float* v1, __gm__ float* v2, const uint32_t N) {
   // let's say the input has n elements with stride (1) (Row-major)
   // each core then gets assigned a range
   // core 0: [0, n/num_blocks]
@@ -37,9 +37,9 @@ __global__ AICORE void sync_kernel_dyn(__gm__ float* v1, __gm__ float* v2, const
   // if we assume 32 element tiles.
 
   #if __CCE_AICORE__ == 220 && defined(__DAV_C220_VEC__)
-  // each tile is 32 consequtive elements
-  constexpr int tile_w = 256;
-  constexpr int NUM_BLOCKS = 10;
+  // each tile is tile_w consequtive elements
+  const unsigned tile_w = 32;
+  const unsigned NUM_BLOCKS = 10;
   int num_el_per_core = N / NUM_BLOCKS;
   int num_tiles = num_el_per_core / tile_w;
 
@@ -126,6 +126,6 @@ In pipeline tpipe, wait until pipeline pipe has set the event flag with ID pipeI
 
 */
 
-extern "C" void call_kernel( uint32_t blockDim, void* stream, void* v1, void* v2, int n) {
+extern "C" void call_kernel( uint32_t blockDim, void* stream, void* v1, void* v2, uint32_t n) {
     sync_kernel_dyn<<<blockDim, nullptr, stream>>>(( __gm__ float *)v1, (__gm__ float *)v2, n);
 }
