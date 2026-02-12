@@ -717,14 +717,16 @@ def TGemvOp : PTO_TOp<"tgemv", [
   let summary = "PTO matrix-vector multiplication operation (optional bias), destination-style (DPS) in tile world.";
 
   let arguments = (ins
-    TileBufType:$lhs,
-    TileBufType:$rhs,
-    TileBufType:$dst
+    PTODpsType:$lhs,
+    PTODpsType:$rhs,
+    PTODpsType:$dst
   );
 
   let results = (outs
     Optional<AnyRankedTensor>:$result
   );
+
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `ins` `(` $lhs `,` $rhs `:` qualified(type($lhs)) `,` qualified(type($rhs)) `)`
@@ -748,15 +750,17 @@ def TGemvAccOp : PTO_TOp<"tgemv.acc", [
   let summary = "PTO matrix-vector multiplication accumulate operation, destination-style (DPS, no bias).";
 
   let arguments = (ins
-    TileBufType:$acc_in,
-    TileBufType:$lhs,
-    TileBufType:$rhs,
-    TileBufType:$dst
+    PTODpsType:$acc_in,
+    PTODpsType:$lhs,
+    PTODpsType:$rhs,
+    PTODpsType:$dst
   );
 
   let results = (outs
     Optional<AnyRankedTensor>:$result
   );
+
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `ins` `(` $acc_in `,` $lhs `,` $rhs `:` qualified(type($acc_in) ) `,` qualified(type($lhs)) `,` qualified(type($rhs)) `)`
@@ -779,13 +783,15 @@ def TGemvBiasOp : PTO_TOp<"tgemv.bias", [
   let summary = "GEMV with bias add (tile world, ins/outs).";
 
   let arguments = (ins
-    TileBufType :$a,
-    TileBufType :$b,
-    TileBufType :$bias,
-    TileBufType :$dst
+    PTODpsType :$a,
+    PTODpsType :$b,
+    PTODpsType :$bias,
+    PTODpsType :$dst
   );
 
   let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `ins` `(` $a `,` $b `,` $bias `:` qualified(type($a)) `,` qualified(type($b)) `,` qualified(type($bias)) `)`
@@ -1279,104 +1285,6 @@ def MatmulAccOp : PTO_Op<"matmul_acc", [
 // Gemv Ops (Matrix-Vector Multiplication)
 //===----------------------------------------------------------------------===//
 
-def GemvDpsOp : PTO_DpsOp<"gemv_dps", [
-    DeclareOpInterfaceMethods<InferTypeOpInterface>,
-    OpPipeInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "PTO matrix-vector multiplication operation (optional bias), destination-style (DPS).";
-
-  let arguments = (ins
-    PTODpsType:$lhs, // L0A Buffer
-    PTODpsType:$rhs, // L0B Buffer (vector)
-    PTODpsType:$dst // L0C Buffer (Accumulator)
-   );
-
-  let results = (outs
-    Optional<AnyRankedTensor>:$result
-  );
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $lhs `,` $rhs `:` qualified(type($lhs)) `,` qualified(type($rhs)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    ( `->` qualified(type($result))^ )?
-  }];
-
-  let extraClassDeclaration = [{
-   ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    static StringRef getOpName() { return "gemv_dps"; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() {
-      return getDstMutable();
-    }
-  }];
-}
-
-def GemvAccDpsOp : PTO_DpsOp<"gemv.acc_dps", [
-    DeclareOpInterfaceMethods<InferTypeOpInterface>,
-    OpPipeInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "PTO matrix-vector multiplication accumulate operation, destination-style (DPS, no bias).";
-
-  let arguments = (ins
-    PTODpsType:$acc_in,
-    PTODpsType:$lhs,
-    PTODpsType:$rhs,
-    PTODpsType:$dst
-  );
-
-  let results = (outs
-    Optional<AnyRankedTensor>:$result
-  );
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $acc_in `,` $lhs `,` $rhs `:` qualified(type($acc_in) ) `,` qualified(type($lhs)) `,` qualified(type($rhs)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    ( `->` qualified(type($result))^ )?
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-def GemvBiasDpsOp : PTO_DpsOp<"gemv.bias_dps", [
-    OpPipeInterface,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "GEMV with bias add (DPS, ins/outs).";
-
-  let arguments = (ins
-    PTODpsType:$a,
-    PTODpsType:$b,
-    PTODpsType:$bias,
-    PTODpsType:$dst);
-
-  let results = (outs Optional<AnyRankedTensor>:$result);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $a `,` $b `,` $bias `:` qualified(type($a)) `,` qualified(type($b)) `,` qualified(type($bias)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`->` qualified(type($result))^)?
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "TGEMV_BIAS"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
 // ===----------------------------------------------------------------------===//
 // Move Ops (For CV Separation)
 // ===----------------------------------------------------------------------===//
@@ -1394,36 +1302,6 @@ def MovOp : PTO_Op<"mov", [
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 }
 
-def MovDpsOp : PTO_DpsOp<"mov_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Move data between domains (DPS version).";
-  
-  let arguments = (ins 
-    PTODpsType:$src,
-    PTODpsType:$dst);
-
-  let results = (outs
-    Optional<AnyRankedTensor>:$result
-  );
-
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    ( `->` qualified(type($result))^ )?
-  }];
-
-  let hasVerifier = 1;
-  
-  let extraClassDeclaration = [{
-    ::mlir::MutableOperandRange getDpsInitsMutable() {
-      return getDstMutable();
-    }
-    ::mlir::pto::PIPE getPipe();
-  }];
-}
 //===----------------------------------------------------------------------===//
 // FFT Configuration Operation
 //===----------------------------------------------------------------------===//
@@ -1437,38 +1315,6 @@ def SetFFTsOp : PTO_Op<"set_ffts", [MemoryEffects<[MemRead, MemWrite]>]> {
 
   let hasVerifier = 1;
 }
-// ---- DPS version (no 't' prefix) ----
-// pto.mgather_dps ins(%mem, %idx) outs(%dst) [...] -> tensor?
-def MGatherDpsOp : PTO_DpsOp<"mgather_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Gather-load elements from global memory into a tile using per-element indices (DPS).";
-
-  let arguments = (ins
-    AnyMemRef:$mem,
-    PTODpsType:$idx,
-    PTODpsType:$dst);
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $mem `,` $idx `:` type($mem) `,` type($idx) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "MGATHER"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE2; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() {
-      return getDstMutable();
-    }
-  }];
-}
-
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
 def TMGatherOp : PTO_TOp<"mgather", [

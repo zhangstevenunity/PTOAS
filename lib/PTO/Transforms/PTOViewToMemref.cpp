@@ -1220,7 +1220,7 @@ struct PTOViewToMemrefPass
 
         auto config = lookupConfig(lhs);
 
-        rewriter.replaceOpWithNewOp<pto::GemvDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvOp>(
           op, TypeRange{}, lhs, rhs, dst);
       }
 
@@ -1230,7 +1230,7 @@ struct PTOViewToMemrefPass
       for (auto op : gemvAccs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::GemvAccDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvAccOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1241,7 +1241,7 @@ struct PTOViewToMemrefPass
       for (auto op : gemvBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::GemvBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1252,7 +1252,7 @@ struct PTOViewToMemrefPass
       for (auto op : movs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MovDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMovOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1));
       }
 
@@ -3110,7 +3110,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MGatherDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMGatherOp>(
             op,
             TypeRange{},
             mem,

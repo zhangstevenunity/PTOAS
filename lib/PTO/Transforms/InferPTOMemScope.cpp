@@ -152,7 +152,7 @@ private:
 };
 } // namespace
 
-LogicalResult pto::inferAndPropagateMemScopeForMovDps(pto::MovDpsOp op) {
+LogicalResult pto::inferAndPropagateMemScopeForMovDps(pto::TMovOp op) {
   // 替换 hasPureBufferSemantics()
   // 在 PTO 的语义中，如果 Op 没有返回值 (Result)，就意味着它是 Buffer 语义（操作的是 TileBuf 或 MemRef）
   if (op.getNumResults() != 0) {
@@ -661,7 +661,7 @@ void InferPTOMemScopePass::runOnOperation() {
         signalPassFailure();
     });
 
-    func->walk([&](mlir::pto::MovDpsOp op) {
+    func->walk([&](mlir::pto::TMovOp op) {
       if (failed(pto::inferAndPropagateMemScopeForMovDps(op)))
         signalPassFailure();
     });

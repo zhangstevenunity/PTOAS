@@ -173,10 +173,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       (void)tmatmulAccOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
-    } else if (auto movDpsOp = dyn_cast<pto::MovDpsOp>(op)) {
-      (void)movDpsOp;
-      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
-      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto tmatmulBiasOp = dyn_cast<pto::TMatmulBiasOp>(op)) {
       (void)tmatmulBiasOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
@@ -191,6 +187,34 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto tmatmulMxBiasOp = dyn_cast<pto::TMatmulMxBiasOp>(op)) {
       (void)tmatmulMxBiasOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tgemvOp = dyn_cast<pto::TGemvOp>(op)) {
+      (void)tgemvOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tgemvAccOp = dyn_cast<pto::TGemvAccOp>(op)) {
+      (void)tgemvAccOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tgemvBiasOp = dyn_cast<pto::TGemvBiasOp>(op)) {
+      (void)tgemvBiasOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto mgatherOp = dyn_cast<pto::TMGatherOp>(op)) {
+      (void)mgatherOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto textractOp = dyn_cast<pto::TExtractOp>(op)) {
+      (void)textractOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tmovfpOp = dyn_cast<pto::TMovFPOp>(op)) {
+      (void)tmovfpOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tstorefpOp = dyn_cast<pto::TStoreFPOp>(op)) {
+      (void)tstorefpOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
