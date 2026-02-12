@@ -13,10 +13,9 @@ def build():
             f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
 
-            gm = pto.AddressSpaceAttr.get(pto.AddressSpace.GM, ctx)
-            ptr_f32_gm = pto.PtrType.get(f32, gm, ctx)
+            ptr_f32 = pto.PtrType.get(f32, ctx)
 
-            fn_ty = func.FunctionType.get([ptr_f32_gm, ptr_f32_gm], [])
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("ptr_scalar_rw", fn_ty)
                 entry = fn.add_entry_block()

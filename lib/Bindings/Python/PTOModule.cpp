@@ -399,45 +399,20 @@ PYBIND11_MODULE(_pto, m) {
         [](MlirType type) -> bool { return mlirPTOTypeIsAPtrType(type); })
         .def_classmethod(
             "get",
-            [](py::object cls, MlirType elementType, py::object memorySpaceObj,
+            [](py::object cls, MlirType elementType,
                MlirContext context) -> py::object {
-                MlirAttribute memorySpace = {nullptr};
                 MlirContext ctx = context;
-
-                // Back-compat: allow get(elem, ctx) with no memory_space.
-                if (!memorySpaceObj.is_none()) {
-                    py::object ctxType = py::module_::import("mlir.ir").attr("Context");
-                    if (py::isinstance(memorySpaceObj, ctxType)) {
-                        ctx = memorySpaceObj.cast<MlirContext>();
-                    } else if (py::isinstance<py::int_>(memorySpaceObj)) {
-                        auto v = memorySpaceObj.cast<int32_t>();
-                        memorySpace = mlirPTOAddressSpaceAttrGet(ctx, v);
-                    } else {
-                        memorySpace = memorySpaceObj.cast<MlirAttribute>();
-                    }
-                }
-
-                MlirType t;
-                if (memorySpace.ptr) {
-                    t = mlirPTOPtrTypeGetWithMemorySpace(ctx, elementType, memorySpace);
-                } else {
-                    t = mlirPTOPtrTypeGet(ctx, elementType);
-                }
-                // Construct the Python wrapper object from the underlying MlirType.
+                if (!ctx.ptr)
+                    ctx = mlirTypeGetContext(elementType);
+                MlirType t = mlirPTOPtrTypeGet(ctx, elementType);
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("element_type"),
-            py::arg("memory_space") = py::none(),
             py::arg("context") = py::none())
         .def_property_readonly(
             "element_type",
             [](MlirType self) -> MlirType {
                 return mlirPTOPtrTypeGetElementType(self);
-            })
-        .def_property_readonly(
-            "memory_space",
-            [](MlirType self) -> MlirAttribute {
-                return mlirPTOPtrTypeGetMemorySpace(self);
             });
 
     // --------------------------------------------------------------------------

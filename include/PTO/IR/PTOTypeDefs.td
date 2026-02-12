@@ -7,14 +7,13 @@ include "PTO/IR/PTOAttrs.td"
 def PtrType : TypeDef<PTO_Dialect, "Ptr"> {
   let mnemonic = "ptr";
   let parameters = (ins
-    "mlir::Type":$elementType,
-    OptionalParameter<"mlir::Attribute">:$memorySpace
+    "mlir::Type":$elementType
   );
-  let assemblyFormat = "`<` $elementType (`,` $memorySpace^)? `>`";
+  let assemblyFormat = "`<` $elementType `>`";
 
   let builders = [
     TypeBuilder<(ins "Type":$elementType), [{
-      return Base::get($_ctxt, elementType, Attribute());
+      return Base::get($_ctxt, elementType);
     }]>
   ];
 }

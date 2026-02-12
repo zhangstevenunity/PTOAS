@@ -170,15 +170,6 @@ public:
       }
 
       std::string qualifier = "__gm__";
-      if (auto ms = type.getMemorySpace()) {
-        if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(ms)) {
-          qualifier = addrSpaceQualifier(ptoAttr.getAddressSpace());
-        } else {
-          llvm::errs() << "  [Warning] Unknown PtrType memorySpace: " << ms
-                       << "\n";
-          qualifier = "__gm__";
-        }
-      }
 
       std::string finalTypeStr = qualifier + " " + elemTypeStr;
       return emitc::PointerType::get(

@@ -13,10 +13,7 @@ MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(PTO, pto);
 // ---- !pto.ptr<elem> ----
 bool mlirPTOTypeIsAPtrType(MlirType type);
 MlirType mlirPTOPtrTypeGet(MlirContext ctx, MlirType elementType);
-MlirType mlirPTOPtrTypeGetWithMemorySpace(MlirContext ctx, MlirType elementType,
-                                          MlirAttribute memorySpace);
 MlirType mlirPTOPtrTypeGetElementType(MlirType type);
-MlirAttribute mlirPTOPtrTypeGetMemorySpace(MlirType type);
 
 // ---- #pto.address_space<...> ----
 bool mlirPTOAttrIsAAddressSpaceAttr(MlirAttribute attr);

@@ -329,10 +329,8 @@ static void dumpPretty(Operation *op, llvm::raw_ostream &os) {
 static Type convertPTOTypeToMemRef(Type t) {
   // 1. 处理 !pto.ptr<T>
   if (auto pty = dyn_cast<mlir::pto::PtrType>(t)) {
-    Attribute memorySpace = pty.getMemorySpace();
     return MemRefType::get({ShapedType::kDynamic}, pty.getElementType(),
-                           MemRefLayoutAttrInterface(),
-                           memorySpace ? memorySpace : Attribute());
+                           MemRefLayoutAttrInterface(), Attribute());
   }
   
   // 2. 处理 !pto.tile_buf<...>

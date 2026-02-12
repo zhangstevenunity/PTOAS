@@ -194,20 +194,17 @@ static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
     mlir::Type elem;
     if (failed(parser.parseType(elem)))
       return mlir::Type();
-    mlir::Attribute memorySpace;
     if (succeeded(parser.parseOptionalComma())) {
-      if (failed(parser.parseAttribute(memorySpace)))
-        return mlir::Type();
-      if (memorySpace && !memorySpace.isa<mlir::pto::AddressSpaceAttr>()) {
-        parser.emitError(parser.getCurrentLocation(),
-                         "expected #pto.address_space attr for ptr memory space");
-        return mlir::Type();
-      }
+      // ptr no longer accepts an address space; consume the attr for recovery.
+      mlir::Attribute memorySpace;
+      (void)parser.parseAttribute(memorySpace);
+      parser.emitError(parser.getCurrentLocation(),
+                       "!pto.ptr no longer accepts address space; use !pto.ptr<elem>");
+      return mlir::Type();
     }
     if (failed(parser.parseGreater()))
       return mlir::Type();
-    return mlir::pto::PtrType::get(ctx, elem,
-                                   memorySpace ? memorySpace : mlir::Attribute());
+    return mlir::pto::PtrType::get(ctx, elem);
   }
 
   if (head == "pto.tensor_view") {
@@ -864,7 +861,7 @@ AddressSpaceAttr mlir::pto::getPTOAddressSpaceAttr(Type type) {
 
 bool mlir::pto::isScalarPtrOrMemRef(Type type) {
   if (auto pty = dyn_cast<mlir::pto::PtrType>(type))
-    return isGmAddressSpaceAttr(pty.getMemorySpace());
+    return true;
   if (auto memTy = dyn_cast<MemRefType>(type))
     return isGmAddressSpaceAttr(memTy.getMemorySpace());
   return false;
@@ -4615,8 +4612,6 @@ LogicalResult LoadScalarOp::verify() {
   Type elemTy;
   if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
     elemTy = pty.getElementType();
-    if (!isGmAddressSpaceAttr(pty.getMemorySpace()))
-      return emitOpError() << "scalar load only supports GM address space pointers";
   } else if (auto memTy = dyn_cast<MemRefType>(ptrTy)) {
     elemTy = memTy.getElementType();
     if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
@@ -4636,8 +4631,6 @@ LogicalResult StoreScalarOp::verify() {
   Type elemTy;
   if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
     elemTy = pty.getElementType();
-    if (!isGmAddressSpaceAttr(pty.getMemorySpace()))
-      return emitOpError() << "scalar store only supports GM address space pointers";
   } else if (auto memTy = dyn_cast<MemRefType>(ptrTy)) {
     elemTy = memTy.getElementType();
     if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
