@@ -133,6 +133,10 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     } else if (auto printDpsOp = dyn_cast<pto::PrintOp_DPS>(op)) {
       // PrintOp_DPS only reads from buffer, similar to LoadOp
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto tabsOp = dyn_cast<pto::TAbsOp>(op)) {
+      // tabs is a read(src)+write(dst) local-buffer op.
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(tabsOp->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
       UpdateStoreOpInfo(curOpInfo, storeOp.getMemRef(), live);
     } else if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(op)) {

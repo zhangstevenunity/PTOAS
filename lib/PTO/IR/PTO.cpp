@@ -1196,66 +1196,6 @@ LogicalResult mlir::pto::TransOp::verify() {
 }
 
 
-LogicalResult pto::AbsOp_DPS::verify() {
-  auto srcTy = llvm::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects src and dst to be memref types");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("src and dst rank must match");
-
-  Type se = srcTy.getElementType();
-  Type de = dstTy.getElementType();
-  if (se != de)
-    return emitOpError("src and dst element type must match");
-
-  bool ok = false;
-  if (auto it = se.dyn_cast<IntegerType>()) {
-    ok = (it.getWidth() == 32 || it.getWidth() == 16) && it.isSignless();
-  } else if (se.isF32() || se.isF16()) {
-    ok = true;
-  }
-  if (!ok)
-    return emitOpError("element type must be i32, i16, f16(half), or f32");
-
-  return success();
-}
-
-LogicalResult pto::AddOp_DPS::verify() {
-  auto t0 = llvm::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto t1 = llvm::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto td = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!t0 || !t1 || !td)
-    return emitOpError("expects src0/src1/dst to be memref types");
-
-  if (t0.getRank() != t1.getRank() || t0.getRank() != td.getRank())
-    return emitOpError("src0/src1/dst rank must match");
-
-  Type e0 = t0.getElementType();
-  Type e1 = t1.getElementType();
-  Type ed = td.getElementType();
-  if (e0 != e1 || e0 != ed)
-    return emitOpError("element types must match for src0/src1/dst");
-
-  auto isOK = [&](Type t) -> bool {
-    if (auto it = t.dyn_cast<IntegerType>()) {
-      if (!it.isSignless() && !it.isUnsigned()) return false;
-      unsigned w = it.getWidth();
-      // A2A3: i32/i16 ; A5: i32/u32/i16/u16/i8/u8
-      return (w == 32 || w == 16 || w == 8);
-    }
-    if (t.isF32() || t.isF16()) return true;
-    // A5: bfloat16
-    if (t.isBF16()) return true;
-    return false;
-  };
-
-  if (!isOK(e0))
-    return emitOpError("element type must be one of: i32/u32, i16/u16, i8/u8, f16(half), bf16, f32");
-
-  return success();
-}
 LogicalResult pto::AddCOp_DPS::verify() {
   auto t0 = llvm::dyn_cast<mlir::MemRefType>(getSrc0().getType());
   auto t1 = llvm::dyn_cast<mlir::MemRefType>(getSrc1().getType());
@@ -3468,21 +3408,43 @@ mlir::LogicalResult mlir::pto::PrintOp_DPS::verify() {
   
 
 LogicalResult pto::TAbsOp::verify() {
-  auto srcTy = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = llvm::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects src and dst to be tilebuf types");
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
 
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("src and dst rank must match");
+  auto isPTOShapedLikeLocal = [&](Type ty) -> bool {
+    return ty.isa<MemRefType, RankedTensorType,
+                  pto::TileBufType, pto::PartitionTensorViewType>();
+  };
+  if (!isPTOShapedLikeLocal(srcTy) || !isPTOShapedLikeLocal(dstTy))
+    return emitOpError("expects src and dst to be memref/tensor/tile_buf/tile_view types");
 
-  if (srcTy.getShape() != dstTy.getShape())
-    return emitOpError("src and dst shape must match");
-
-  Type se = srcTy.getElementType();
-  Type de = dstTy.getElementType();
+  auto getElemTyLocal = [&](Type ty) -> Type {
+    if (auto mr = ty.dyn_cast<MemRefType>()) return mr.getElementType();
+    if (auto tt = ty.dyn_cast<RankedTensorType>()) return tt.getElementType();
+    if (auto tb = ty.dyn_cast<pto::TileBufType>()) return tb.getElementType();
+    if (auto tv = ty.dyn_cast<pto::PartitionTensorViewType>()) return tv.getElementType();
+    return Type();
+  };
+  Type se = getElemTyLocal(srcTy);
+  Type de = getElemTyLocal(dstTy);
+  if (!se || !de)
+    return emitOpError("failed to get element type for src/dst");
   if (se != de)
     return emitOpError("src and dst element type must match");
+
+  auto getShapeVecLocal = [&](Type ty) -> SmallVector<int64_t, 4> {
+    if (auto mr = ty.dyn_cast<MemRefType>())
+      return SmallVector<int64_t, 4>(mr.getShape().begin(), mr.getShape().end());
+    if (auto tt = ty.dyn_cast<RankedTensorType>())
+      return SmallVector<int64_t, 4>(tt.getShape().begin(), tt.getShape().end());
+    if (auto tb = ty.dyn_cast<pto::TileBufType>())
+      return SmallVector<int64_t, 4>(tb.getShape().begin(), tb.getShape().end());
+    if (auto tv = ty.dyn_cast<pto::PartitionTensorViewType>())
+      return SmallVector<int64_t, 4>(tv.getShape().begin(), tv.getShape().end());
+    return {};
+  };
+  if (getShapeVecLocal(srcTy) != getShapeVecLocal(dstTy))
+    return emitOpError("src and dst shape must match");
 
   bool ok = false;
   if (auto it = se.dyn_cast<IntegerType>()) {
@@ -3546,6 +3508,19 @@ LogicalResult pto::TAddOp::verify() {
   auto sd = getShapeVec(td);
   if (s0 != s1 || s0 != sd)
     return emitOpError("expects src0/src1/dst to have the same shape");
+
+  // 4) element type 必须是后端支持的算术类型（与已移除的 add_dps 兼容）
+  auto isOK = [&](Type t) -> bool {
+    if (auto it = t.dyn_cast<IntegerType>()) {
+      if (!it.isSignless() && !it.isUnsigned())
+        return false;
+      unsigned w = it.getWidth();
+      return (w == 32 || w == 16 || w == 8);
+    }
+    return t.isF32() || t.isF16() || t.isBF16();
+  };
+  if (!isOK(e0))
+    return emitOpError("element type must be one of: i32/u32, i16/u16, i8/u8, f16(half), bf16, f32");
 
   return success();
 }
@@ -6829,13 +6804,6 @@ void AddFDpsOp::getEffects(
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
-// AbsDpsOp: Read src -> Write dst
-void AbsOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
-  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
-}
-
 // GatherOp_DPS: Read(src, indices?) -> Write(dst)
 void GatherOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
@@ -7019,7 +6987,6 @@ void SetValDpsOp::getEffects(
   PTO_ADD_WRITE(getDstMutable());
 }
 
-PTO_DEFINE_BINARY_EFFECTS(AddOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_TERNARY_EFFECTS(AddCOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
 
 void AddSOp_DPS::getEffects(

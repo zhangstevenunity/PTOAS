@@ -3605,10 +3605,10 @@ struct PTOGetValToGETVAL : public OpConversionPattern<pto::GetValDpsOp> {
 // pto.tabs lowering -> TABS(dst, src)
 //===----------------------------------------------------------------------===//
 
-struct PTOAbsToTABS : public OpConversionPattern<pto::AbsOp_DPS> {
-  using OpConversionPattern<pto::AbsOp_DPS>::OpConversionPattern;
+struct PTOTAbsToTABS : public OpConversionPattern<pto::TAbsOp> {
+  using OpConversionPattern<pto::TAbsOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::AbsOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TAbsOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
@@ -3627,10 +3627,10 @@ struct PTOAbsToTABS : public OpConversionPattern<pto::AbsOp_DPS> {
 // pto.tadd lowering -> TADD(dst, src0, src1)
 //===----------------------------------------------------------------------===//
 
-struct PTOAddToTADD : public OpConversionPattern<pto::AddOp_DPS> {
-  using OpConversionPattern<pto::AddOp_DPS>::OpConversionPattern;
+struct PTOTAddToTADD : public OpConversionPattern<pto::TAddOp> {
+  using OpConversionPattern<pto::TAddOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::AddOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TAddOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
@@ -6831,8 +6831,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOGemvDpsToTGEMV>(typeConverter, ctx);
   patterns.add<PTOGemvAccDpsToTGEMVACC>(typeConverter, ctx);
   patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
-  patterns.add<PTOAbsToTABS>(typeConverter, ctx);
-  patterns.add<PTOAddToTADD>(typeConverter, ctx);
+  patterns.add<PTOTAbsToTABS>(typeConverter, ctx);
+  patterns.add<PTOTAddToTADD>(typeConverter, ctx);
   patterns.add<PTOAddSCToTADDSC>(typeConverter, ctx);
   patterns.add<ArithCastOPToEmitC>(typeConverter, ctx);
   patterns.add<ArithTruncIToEmitC>(typeConverter, ctx);

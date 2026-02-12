@@ -119,26 +119,6 @@ struct StoreToDPSPattern : public OpRewritePattern<pto::StoreOp> {
 };
 
 // ============================================================================
-// Pattern: TAddOp -> AddOp_DPS
-// ============================================================================
-struct TAddToAddDPSPattern : public OpRewritePattern<pto::TAddOp> {
-  using OpRewritePattern<pto::TAddOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(pto::TAddOp op, PatternRewriter &rewriter) const override {
-    Value a   = op.getSrc0();
-    Value b   = op.getSrc1();
-    Value out = op.getDst();
-
-    rewriter.replaceOpWithNewOp<pto::AddOp_DPS>(
-        op,
-        a, b, out
-    );
-    return success();
-  }
-};
-
-
-// ============================================================================
 // Pattern 4: MatmulOp -> MatmulDpsOp
 // ============================================================================
 struct MatmulToDPSPattern : public OpRewritePattern<pto::MatmulOp> {
@@ -346,7 +326,6 @@ struct PTOConvertToDPSPass : public PassWrapper<PTOConvertToDPSPass, OperationPa
     // [注册所有 Pattern]
     patterns.add<LoadToDPSPattern, 
                  StoreToDPSPattern, 
-                 TAddToAddDPSPattern,
                  MatmulToDPSPattern,
                  MatmulAccToDPSPattern,
                  MovToDPSPattern,
