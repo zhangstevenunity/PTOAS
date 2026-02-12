@@ -2059,7 +2059,7 @@ enum class Role { A, B, C, Unknown };
 
 static Role inferSubviewRole(memref::SubViewOp sv) {
   for (Operation *u : sv.getResult().getUsers()) {
-    if (auto ld = dyn_cast<mlir::pto::LoadDpsOp>(u)) {
+    if (auto ld = dyn_cast<mlir::pto::TLoadOp>(u)) {
       Value ub = ld.getDst();
       if (!ub) continue;
       for (Operation *uu : ub.getUsers()) {
@@ -3039,13 +3039,13 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
 // pto.load_dps / pto.store_dps lowering (FIX: keep optional result)
 //===----------------------------------------------------------------------===
 
-struct PTOLoadDpsToTLOAD : public OpConversionPattern<pto::LoadDpsOp> {
-  using OpConversionPattern<pto::LoadDpsOp>::OpConversionPattern;
+struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
+  using OpConversionPattern<pto::TLoadOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::LoadDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TLoadOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     if (!op.getDst())
-      return rewriter.notifyMatchFailure(op, "expected outs(dst) on pto.load_dps");
+      return rewriter.notifyMatchFailure(op, "expected outs(dst) on pto.tload");
 
     Value src = peelUnrealized(adaptor.getSrc());
     Value dst = peelUnrealized(adaptor.getDst());
@@ -5459,84 +5459,6 @@ static void replaceOrEraseWithOpaqueCall(Operation *op,
     rewriter.replaceOp(op, call.getResults());
 }
 
-// ---------- DPS ----------
-struct PTOMatmulBiasDpsToTMATMUL_BIAS
-    : public OpConversionPattern<pto::MatmulBiasDpsOp> {
-  using OpConversionPattern<pto::MatmulBiasDpsOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::MatmulBiasDpsOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value a    = peelUnrealized(adaptor.getA());
-    Value b    = peelUnrealized(adaptor.getB());
-    Value bias = peelUnrealized(adaptor.getBias());
-    Value dst  = peelUnrealized(adaptor.getDst());
-
-    // intrinsic: TMATMUL_BIAS(dst, a, b, bias)
-    replaceOrEraseWithOpaqueCall(op.getOperation(), "TMATMUL_BIAS",
-                                {dst, a, b, bias}, rewriter);
-    return success();
-  }
-};
-
-struct PTOMatmulMxDpsToTMATMUL_MX
-    : public OpConversionPattern<pto::MatmulMxDpsOp> {
-  using OpConversionPattern<pto::MatmulMxDpsOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::MatmulMxDpsOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value a       = peelUnrealized(adaptor.getA());
-    Value aScale  = peelUnrealized(adaptor.getAScale());
-    Value b       = peelUnrealized(adaptor.getB());
-    Value bScale  = peelUnrealized(adaptor.getBScale());
-    Value dst     = peelUnrealized(adaptor.getDst());
-
-    // intrinsic: TMATMUL_MX(dst, a, a_scale, b, b_scale)
-    replaceOrEraseWithOpaqueCall(op.getOperation(), "TMATMUL_MX",
-                                {dst, a, aScale, b, bScale}, rewriter);
-    return success();
-  }
-};
-
-struct PTOMatmulMxAccDpsToTMATMUL_MX_ACC
-    : public OpConversionPattern<pto::MatmulMxAccDpsOp> {
-  using OpConversionPattern<pto::MatmulMxAccDpsOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::MatmulMxAccDpsOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value cIn     = peelUnrealized(adaptor.getCIn());
-    Value a       = peelUnrealized(adaptor.getA());
-    Value aScale  = peelUnrealized(adaptor.getAScale());
-    Value b       = peelUnrealized(adaptor.getB());
-    Value bScale  = peelUnrealized(adaptor.getBScale());
-    Value dst     = peelUnrealized(adaptor.getDst());
-
-    // intrinsic: TMATMUL_MX_ACC(dst, c_in, a, a_scale, b, b_scale)
-    replaceOrEraseWithOpaqueCall(op.getOperation(), "TMATMUL_MX_ACC",
-                                {dst, cIn, a, aScale, b, bScale}, rewriter);
-    return success();
-  }
-};
-
-struct PTOMatmulMxBiasDpsToTMATMUL_MX_BIAS
-    : public OpConversionPattern<pto::MatmulMxBiasDpsOp> {
-  using OpConversionPattern<pto::MatmulMxBiasDpsOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::MatmulMxBiasDpsOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value a       = peelUnrealized(adaptor.getA());
-    Value aScale  = peelUnrealized(adaptor.getAScale());
-    Value b       = peelUnrealized(adaptor.getB());
-    Value bScale  = peelUnrealized(adaptor.getBScale());
-    Value bias    = peelUnrealized(adaptor.getBias());
-    Value dst     = peelUnrealized(adaptor.getDst());
-
-    // intrinsic: TMATMUL_MX_BIAS(dst, a, a_scale, b, b_scale, bias)
-    replaceOrEraseWithOpaqueCall(op.getOperation(), "TMATMUL_MX_BIAS",
-                                {dst, a, aScale, b, bScale, bias}, rewriter);
-    return success();
-  }
-};
-
 // ---------- Gemv DPS Ops ----------
 struct PTOGemvBiasDpsToTGEMV_BIAS
     : public OpConversionPattern<pto::GemvBiasDpsOp> {
@@ -7032,7 +6954,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOColExpandToEmitC>(typeConverter, ctx);
   patterns.add<PTOColMaxToEmitC>(typeConverter, ctx);
   patterns.add<PTOMinToEmitC>(typeConverter, ctx);
-  patterns.add<PTOLoadDpsToTLOAD>(typeConverter, ctx);
+  patterns.add<PTOTLoadToTLOAD>(typeConverter, ctx);
   patterns.add<PTOStoreDpsToTSTORE>(typeConverter, ctx);
   patterns.add<PTOMScatterToMSCATTER>(typeConverter, ctx);
   patterns.add<PTOTAddCToTADDC>(typeConverter, ctx);
@@ -7059,10 +6981,10 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOGetSubBlockNumToEmitC>(typeConverter, ctx);
   patterns.add<PTOPrintToTPRINT>(typeConverter, ctx);
   patterns.add<
-    PTOMatmulBiasDpsToTMATMUL_BIAS,
-    PTOMatmulMxDpsToTMATMUL_MX,
-    PTOMatmulMxAccDpsToTMATMUL_MX_ACC,
-    PTOMatmulMxBiasDpsToTMATMUL_MX_BIAS,
+    PTOTMatmulBiasToTMATMUL_BIAS,
+    PTOTMatmulMxToTMATMUL_MX,
+    PTOTMatmulMxAccToTMATMUL_MX_ACC,
+    PTOTMatmulMxBiasToTMATMUL_MX_BIAS,
     PTOTMatmulBiasToTMATMUL_BIAS,
     PTOTMatmulMxToTMATMUL_MX,
     PTOTMatmulMxAccToTMATMUL_MX_ACC,

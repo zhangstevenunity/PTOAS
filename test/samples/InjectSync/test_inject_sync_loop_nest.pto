@@ -4,7 +4,7 @@ module {
   // CHECK-LABEL: func.func @test_loop_nest_sync
   // CHECK: scf.for
   // CHECK: scf.for
-  // CHECK: pto.load_dps
+  // CHECK: pto.tload
   // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: scf.if
@@ -23,7 +23,7 @@ module {
     %ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     scf.for %i = %c0 to %c2 step %c1 {
       scf.for %j = %c0 to %c2 step %c1 {
-        pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+        pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                      outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
         %cond = arith.cmpi eq, %j, %c0 : index
         scf.if %cond {

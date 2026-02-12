@@ -19,9 +19,9 @@ module {
                                 %arg3: memref<16x16x16xf16, #pto.address_space<gm>>) {
     %ub0 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     %ub1 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.load_dps ins(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
     pto.addf_dps ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
                                  memref<16x16x16xf16, #pto.address_space<vec>>)

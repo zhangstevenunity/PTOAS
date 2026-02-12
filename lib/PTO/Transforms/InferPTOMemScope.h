@@ -50,7 +50,7 @@ private:
 
 LogicalResult inferAndPropagateMemScopeForMatmulDps(MatmulDpsOp op);
 LogicalResult inferAndPropagateMemScopeForMatmulAccDps(MatmulAccDpsOp op);
-LogicalResult inferAndPropagateMemScopeForMatmulBiasDps(MatmulBiasDpsOp op);
+LogicalResult inferAndPropagateMemScopeForMatmulBiasDps(TMatmulBiasOp op);
 LogicalResult inferAndPropagateMemScopeForMovDps(MovDpsOp op);
 /// Infer, propagate, and set memory scope information to FuncOp.
 /// \note FuncOp should be bufferized beforehand.

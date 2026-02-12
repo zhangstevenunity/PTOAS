@@ -296,7 +296,7 @@ LogicalResult pto::inferAndPropagateMemScopeForMatmulAccDps(pto::MatmulAccDpsOp 
 }
 
 
-LogicalResult pto::inferAndPropagateMemScopeForMatmulBiasDps(pto::MatmulBiasDpsOp op) {
+LogicalResult pto::inferAndPropagateMemScopeForMatmulBiasDps(pto::TMatmulBiasOp op) {
   // 替换 hasPureBufferSemantics()
   // 在 PTO 的语义中，如果 Op 没有返回值 (Result)，就意味着它是 Buffer 语义（操作的是 TileBuf 或 MemRef）
   if (op.getNumResults() != 0) {
@@ -656,7 +656,7 @@ void InferPTOMemScopePass::runOnOperation() {
         signalPassFailure();
     });
 
-    func->walk([&](mlir::pto::MatmulBiasDpsOp op) {
+    func->walk([&](mlir::pto::TMatmulBiasOp op) {
       if (failed(pto::inferAndPropagateMemScopeForMatmulBiasDps(op)))
         signalPassFailure();
     });

@@ -164,7 +164,7 @@ static LogicalResult bufferizeDestinationStyleOpInterface(
 
 struct PTOLoadOpInterface
     : public DstBufferizableOpInterfaceExternalModel<PTOLoadOpInterface,
-                                                     pto::LoadDpsOp> {
+                                                     pto::TLoadOp> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
@@ -657,7 +657,7 @@ void mlir::pto::registerBufferizableOpInterfaceExternalModels(
     // ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     // NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
     // CopyOp::attachInterface<PTOCopyOpInterface>(*ctx);
-    LoadDpsOp::attachInterface<PTOLoadOpInterface>(*ctx);
+    TLoadOp::attachInterface<PTOLoadOpInterface>(*ctx);
     StoreDpsOp::attachInterface<PTOStoreOpInterface>(*ctx);
     MrgSortOp_DPS::attachInterface<PTOMrgSortDpsOpInterface>(*ctx);
     AddFDpsOp::attachInterface<PTOAddFOpInterface>(*ctx);

@@ -81,15 +81,15 @@ static void buildOptimizedLoopNest(
 }
 
 // --------------------------------------------------------------------------
-// Specialized Lowering for LoadDpsOp
+// Specialized Lowering for TLoadOp
 // --------------------------------------------------------------------------
-struct HighDimLoadDPSLowering : public OpRewritePattern<pto::LoadDpsOp> {
-  using OpRewritePattern<pto::LoadDpsOp>::OpRewritePattern;
+struct HighDimLoadDPSLowering : public OpRewritePattern<pto::TLoadOp> {
+  using OpRewritePattern<pto::TLoadOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(pto::LoadDpsOp op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(pto::TLoadOp op, PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
 
-    llvm::errs() << "\n=== [PTOHighDim] Start Matching LoadDpsOp ===\n";
+    llvm::errs() << "\n=== [PTOHighDim] Start Matching TLoadOp ===\n";
 
     Value src = op.getSrc();
     Value dst = op.getDst();
@@ -118,7 +118,7 @@ struct HighDimLoadDPSLowering : public OpRewritePattern<pto::LoadDpsOp> {
           Value subSrc = createSlice(builder, loc, src, srcType, ivs, outerDimsCount, rank);
           Value subDst = createSlice(builder, loc, dst, dstType, ivs, outerDimsCount, rank);
 
-          builder.create<pto::LoadDpsOp>(
+          builder.create<pto::TLoadOp>(
               loc, TypeRange{}, subSrc, subDst, padMode, padValue, leftPad, rightPad, initOut, initCond
           );
         });

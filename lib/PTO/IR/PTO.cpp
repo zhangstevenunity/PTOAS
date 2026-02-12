@@ -977,27 +977,24 @@ LogicalResult AllocTileOp::verify() {
   return success();
 }
 
-LogicalResult LoadDpsOp::verify() {
-  Type srcType = getSrc().getType();
-  int64_t rank = getPTOTypeRank(srcType);
-
-  if (rank == -1) {
-    return emitOpError("source type ") << srcType << " does not support PTO type";
-  }
-  
-  return success();
-}
-
 LogicalResult TLoadOp ::verify() {
-  auto srcType = dyn_cast<pto::PartitionTensorViewType>(getSrc().getType());
-  if (!srcType)
-    return emitOpError("expects src to be !pto.partition_tensor_view, got ")
-           << getSrc().getType();
+  Type srcType = getSrc().getType();
+  Type dstType = getDst().getType();
+  int64_t srcRank = getPTOTypeRank(srcType);
+  int64_t dstRank = getPTOTypeRank(dstType);
+  if (srcRank == -1 || dstRank == -1)
+    return emitOpError("source/destination type does not support PTO type");
 
-  auto dstType = dyn_cast<pto::TileBufType>(getDst().getType());
-  if (!dstType)
-    return emitOpError("expects dst to be !pto.tile_buf, got ")
-           << getDst().getType();
+  // Keep stricter checks for the canonical partition_view -> tile_buf path.
+  auto srcPart = dyn_cast<pto::PartitionTensorViewType>(srcType);
+  auto dstTile = dyn_cast<pto::TileBufType>(dstType);
+  if (srcPart && dstTile) {
+    if (dstTile.getShape().size() != 2)
+      return emitOpError("dst tile_buf rank must be 2, got ")
+             << dstTile.getShape().size();
+    if (dstTile.getValidShape().size() != 2)
+      return emitOpError("dst tile_buf valid_shape rank must be 2, got ")
+             << dstTile.getValidShape().size();
 
   // TileBuf must always be 2D for PTO hardware tiles.
   if (dstType.getShape().size() != 2)
@@ -1018,17 +1015,6 @@ LogicalResult TLoadOp ::verify() {
     for (int64_t dim : validShape)
       tileValidElems *= dim;
   }
-
-  // Allow valid shape smaller than partition (padding/guard is handled later).
-  if (partElems != mlir::ShapedType::kDynamic &&
-      tileValidElems != mlir::ShapedType::kDynamic &&
-      tileValidElems > partElems) {
-    return emitOpError("tile_buf valid element count (")
-           << tileValidElems
-           << ") must not exceed partition element count ("
-           << partElems << ")";
-  }
-
   return success();
 }
 
@@ -4568,28 +4554,13 @@ LogicalResult StoreScalarOp::verify() {
   return success();
 }
 // ---- DPS ----
-LogicalResult MatmulBiasDpsOp::verify() {
-  return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
-}
-
 LogicalResult GemvBiasDpsOp::verify() {
   return success();
 }
-LogicalResult MatmulMxDpsOp::verify() {
-  return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
-}
-LogicalResult MatmulMxAccDpsOp::verify() {
-  // treat c_in as shaped too, but only check a/b/dst ranks here
-  return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
-}
-LogicalResult MatmulMxBiasDpsOp::verify() {
-  return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
-}
-
 // ---- TOp ----
-//LogicalResult TMatmulBiasOp::verify() {
-  //return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType(), getValidDims());
-//}
+LogicalResult TMatmulBiasOp::verify() {
+  return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
+}
 LogicalResult TMatmulMxOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
 }
@@ -6981,14 +6952,6 @@ static void addEffect(
     effects.emplace_back(effect, result, SideEffects::DefaultResource::get());
 }
  
-// 1. LoadDpsOp: Read(src) -> Write(dst)
-void LoadDpsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  // 使用 &getSrcMutable() 获取 OpOperand*
-  addEffect(effects, &getSrcMutable(), MemoryEffects::Read::get());
-  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
-}
- 
 // 2. StoreDpsOp: Read(src) -> Write(dst)
 void StoreDpsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
@@ -7159,43 +7122,6 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
   }
 
 // === DPS ops added for InsertSync (post-lowering *_dps) ===
-
-void MatmulBiasDpsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getAMutable());
-  PTO_ADD_READ(getBMutable());
-  PTO_ADD_READ(getBiasMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void MatmulMxDpsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getAMutable());
-  PTO_ADD_READ(getAScaleMutable());
-  PTO_ADD_READ(getBMutable());
-  PTO_ADD_READ(getBScaleMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void MatmulMxAccDpsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getCInMutable());
-  PTO_ADD_READ(getAMutable());
-  PTO_ADD_READ(getAScaleMutable());
-  PTO_ADD_READ(getBMutable());
-  PTO_ADD_READ(getBScaleMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void MatmulMxBiasDpsOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getAMutable());
-  PTO_ADD_READ(getAScaleMutable());
-  PTO_ADD_READ(getBMutable());
-  PTO_ADD_READ(getBScaleMutable());
-  PTO_ADD_READ(getBiasMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
 
 void MatmulAccDpsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

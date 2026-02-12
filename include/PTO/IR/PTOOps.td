@@ -294,8 +294,8 @@ def TLoadOp  : PTO_TOp<"tload", [
   }];
 
   let arguments = (ins 
-    PartitionTensorViewType:$src,
-    TileBufType:$dst,
+    PTODpsType:$src,
+    PTODpsType:$dst,
     OptionalAttr<PTO_PadModeAttr>:$pad_mode,
     Optional<AnyType>:$pad_value,
     Optional<Index>:$left_padding_num,
@@ -503,136 +503,6 @@ def TTransOp : PTO_TOp<"ttrans", [
 // DPS versions (AnyMemRef)
 // -------------------------
 
-// pto.matmul.bias_dps ins(%a, %b, %bias) outs(%dst) -> tensor?
-def MatmulBiasDpsOp : PTO_DpsOp<"matmul.bias_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Matmul with bias add (DPS, ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$a,
-    AnyMemRef:$b,
-    AnyMemRef:$bias,
-    AnyMemRef:$dst);
-
-  let results = (outs Optional<AnyRankedTensor>:$result);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $a `,` $b `,` $bias `:` type($a) `,` type($b) `,` qualified(type($bias)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`->` qualified(type($result))^)?
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "TMATMUL_BIAS"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-// pto.matmul.mx_dps ins(%a, %a_scale, %b, %b_scale) outs(%dst) -> tensor?
-def MatmulMxDpsOp : PTO_DpsOp<"matmul.mx_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Matmul mx (with scaling tiles) (DPS, ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$a,
-    AnyMemRef:$a_scale,
-    AnyMemRef:$b,
-    AnyMemRef:$b_scale,
-    AnyMemRef:$dst);
-
-  let results = (outs Optional<AnyRankedTensor>:$result);
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $a `,` $a_scale `,` $b `,` $b_scale
-          `:` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`->` qualified(type($result))^)?
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "TMATMUL_MX"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-// pto.matmul.mx.acc_dps ins(%c_in, %a, %a_scale, %b, %b_scale) outs(%dst) -> tensor?
-def MatmulMxAccDpsOp : PTO_DpsOp<"matmul.mx.acc_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Matmul mx accumulate (DPS, ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$c_in,
-    AnyMemRef:$a,
-    AnyMemRef:$a_scale,
-    AnyMemRef:$b,
-    AnyMemRef:$b_scale,
-    AnyMemRef:$dst);
-
-  let results = (outs Optional<AnyRankedTensor>:$result);
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $c_in `,` $a `,` $a_scale `,` $b `,` $b_scale
-          `:` type($c_in) `,` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`->` qualified(type($result))^)?
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "TMATMUL_MX_ACC"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-// pto.matmul.mx.bias_dps ins(%a,%a_scale,%b,%b_scale,%bias) outs(%dst) -> tensor?
-def MatmulMxBiasDpsOp : PTO_DpsOp<"matmul.mx.bias_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Matmul mx with bias (DPS, ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$a,
-    AnyMemRef:$a_scale,
-    AnyMemRef:$b,
-    AnyMemRef:$b_scale,
-    AnyMemRef:$bias,
-    AnyMemRef:$dst);
-
-  let results = (outs Optional<AnyRankedTensor>:$result);
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $a `,` $a_scale `,` $b `,` $b_scale `,` $bias
-          `:` type($a) `,` type($a_scale) `,` type($b) `,` type($b_scale) `,` qualified(type($bias)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`->` qualified(type($result))^)?
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "TMATMUL_MX_BIAS"; }
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_M; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-
 // -------------------------
 // Tile-world TOp versions (PTODpsType)
 // -------------------------
@@ -644,14 +514,14 @@ def TMatmulBiasOp : PTO_TOp<"tmatmul.bias", [
   let summary = "Matmul with bias add (tile world, ins/outs).";
 
   let arguments = (ins
-    TileBufType :$a,
-    TileBufType :$b,
-    TileBufType :$bias,
-    TileBufType :$dst
+    PTODpsType:$a,
+    PTODpsType:$b,
+    PTODpsType:$bias,
+    PTODpsType:$dst
   );
 
   let results = (outs Optional<AnyRankedTensor>:$result);
-  //let hasVerifier = 1;
+  let hasVerifier = 1;
 
   //let builders = [
   //  OpBuilder<(ins "TypeRange":$resultTypes, "Value":$a, "Value":$b, "Value":$bias, "Value":$dst), [{
@@ -986,115 +856,6 @@ def TMovOp  : PTO_TOp<"tmov", [
 
       // Fallback: treat as vector pipe (safe default for most intra-domain moves).
       return ::mlir::pto::PIPE::PIPE_V;
-    }
-  }];
-}
-
-// -------------------------
-// DPS versions (with suffix)
-// -------------------------
-def LoadDpsOp : PTO_DpsOp<"load_dps", [
-  AttrSizedOperandSegments,
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-  ]> {
-  let summary = "PTO data load operation (destination-style, DPS).";
-  let description = [{
-    DPS form:
-      tensor:  %res = pto.load_dps ins(%src) outs(%dst) -> tensor<...>  (optional result)
-      memref:  pto.load_dps ins(%src) outs(%dst)
-  }];
-
-  let arguments = (ins 
-    PTODpsType:$src,
-    PTODpsType:$dst,
-    OptionalAttr<PTO_PadModeAttr>:$pad_mode,
-    Optional<AnyType>:$pad_value,
-    Optional<Index>:$left_padding_num,
-    Optional<AnyType>:$right_padding_num,
-    DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
-    Optional<AnyType>:$init_condition);
-
-  let results = (outs
-    Optional<AnyRankedTensor>:$result
-  );
-  
-  let hasVerifier = 1;
-
-  let builders = [
-    // 1. Basic: (src, dst)
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst), [{
-      build($_builder, $_state, res, src, dst, 
-            /*pad_mode=*/nullptr, /*pad_value=*/nullptr, 
-            /*left=*/nullptr, /*right=*/nullptr, 
-            /*init_out=*/nullptr, /*init_cond=*/nullptr); 
-    }]>,
-
-    // 2. With left_padding_num
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-                   "Value":$left_padding_num), [{
-      build($_builder, $_state, res, src, dst, 
-            nullptr, nullptr, left_padding_num, nullptr, nullptr, nullptr);
-    }]>,
-
-    // 3. With pad_mode, pad_value
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-                   "pto::PadModeAttr":$pad_mode, "Value":$pad_value), [{
-      build($_builder, $_state, res, src, dst, 
-            pad_mode, pad_value, nullptr, nullptr, nullptr, nullptr);
-    }]>,
-
-    // 4. ... + left
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-                   "pto::PadModeAttr":$pad_mode, "Value":$pad_value,
-                   "Value":$left_padding_num), [{
-      build($_builder, $_state, res, src, dst, 
-            pad_mode, pad_value, left_padding_num, nullptr, nullptr, nullptr);
-    }]>,
-
-    // 5. ... + left + right
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-                   "pto::PadModeAttr":$pad_mode, "Value":$pad_value,
-                   "Value":$left_padding_num, "Value":$right_padding_num), [{
-      build($_builder, $_state, res, src, dst, 
-            pad_mode, pad_value, left_padding_num, right_padding_num, nullptr, nullptr);
-    }]>,
-
-    // 6. ... + left + right + bool
-    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-                   "pto::PadModeAttr":$pad_mode, "Value":$pad_value,
-                   "Value":$left_padding_num, "Value":$right_padding_num,
-                   "bool":$init_out_buffer), [{
-      build($_builder, $_state, res, src, dst, 
-            pad_mode, pad_value, left_padding_num, right_padding_num, 
-            init_out_buffer, nullptr);
-    }]>
-  ];
-
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-    (`pad_mode` `=` $pad_mode^)?
-    (`pad_value` `=` $pad_value^ `:` type($pad_value))?
-    (`left_padding_num` `=` $left_padding_num^ `:` type($left_padding_num))?
-    (`init_out_buffer` `=` $init_out_buffer^ )?
-    (`right_padding_num` `=` $right_padding_num^ `:` type($right_padding_num))?
-    (`init_condition` `=` $init_condition^ `:` type($init_condition))?
-    (`->` qualified(type($result))^)?
-  }];
-  
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE2; }
-    static StringRef getOpName() { return "pto_load"; }
-    ShapedType getSrcOperandType() {
-      return cast<ShapedType>(getSrc().getType());
-    }
-    ShapedType getDstOperandType() {
-      return cast<ShapedType>(getDst().getType());
-    }
-    ::mlir::MutableOperandRange getDpsInitsMutable() {
-        return getDstMutable();
     }
   }];
 }

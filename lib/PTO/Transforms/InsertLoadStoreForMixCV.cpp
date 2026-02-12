@@ -165,7 +165,7 @@ static bool match(func::FuncOp func, MatchInfo &mi) {
   // 4) locate CC->CBUF op producing one add input
   auto isCCtoCBUF = [&](Operation *op, Value &dstOut) -> bool {
     StringRef n = op->getName().getStringRef();
-    if (n != "pto.load_dps" && n != "pto.copy" && n != "pto.mov")
+    if (n != "pto.tload" && n != "pto.copy" && n != "pto.mov")
       return false;
     if (op->getNumOperands() < 2)
       return false;
@@ -207,7 +207,7 @@ static bool match(func::FuncOp func, MatchInfo &mi) {
 
   // 5) find GM->CBUF load for C
   for (Operation &op : func.front().getOperations()) {
-    if (op.getName().getStringRef() != "pto.load_dps")
+    if (op.getName().getStringRef() != "pto.tload")
       continue;
     if (op.getNumOperands() < 2)
       continue;
@@ -339,11 +339,11 @@ struct InsertLoadStoreForMixCVPass
 
     // workspace(GM) -> UB
     auto tmatUb = createAllocWithAlign(rewriter, loc, ubTileTy, 64);
-    rewriter.create<pto::LoadDpsOp>(loc, TypeRange{}, wsTile, tmatUb.getResult());
+    rewriter.create<pto::TLoadOp>(loc, TypeRange{}, wsTile, tmatUb.getResult());
 
     // C(GM) -> UB
     auto cUb = createAllocWithAlign(rewriter, loc, ubTileTy, 64);
-    rewriter.create<pto::LoadDpsOp>(loc, TypeRange{}, mi.cGMSubview, cUb.getResult());
+    rewriter.create<pto::TLoadOp>(loc, TypeRange{}, mi.cGMSubview, cUb.getResult());
 
     // addf on UB
     auto outUb = createAllocWithAlign(rewriter, loc, ubTileTy, 64);

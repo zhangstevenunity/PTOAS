@@ -30,7 +30,7 @@ func.func @test_textract_dps_2d(%arg0: memref<1024x1024xi32, #pto.address_space<
   // =========================================================
   // 4) DMA load 32x32 src tile into UB
   // =========================================================
-  pto.load_dps ins(%src_gm : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%src_gm : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
            outs(%ub_src : memref<32x32xi32, #pto.address_space<ub>>)
   // =========================================================
   // 5) Compute: textract_dps (extract 16x16 window from 32x32 UB tile)

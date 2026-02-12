@@ -1000,7 +1000,7 @@ struct PTOViewToMemrefPass
           
           auto config = lookupConfig(dst); // Config on Tile
 
-          rewriter.replaceOpWithNewOp<pto::LoadDpsOp>(op, TypeRange{}, src, dst);
+          rewriter.replaceOpWithNewOp<pto::TLoadOp>(op, TypeRange{}, src, dst);
       }
 
       // --- TStoreOp [Src, Dst] ---
@@ -1169,7 +1169,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1180,7 +1180,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4));
       }
@@ -1191,7 +1191,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxAccs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxAccDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxAccOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
       }
@@ -1202,7 +1202,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
       }

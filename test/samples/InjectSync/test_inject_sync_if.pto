@@ -2,7 +2,7 @@
 
 module {
   // CHECK-LABEL: func.func @test_if_sync
-  // CHECK: pto.load_dps
+  // CHECK: pto.tload
   // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: scf.if
@@ -17,7 +17,7 @@ module {
                           %cond: i1) {
     %ub0 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     %ub1 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
     scf.if %cond {
       pto.addf_dps ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
