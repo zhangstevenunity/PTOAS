@@ -1872,10 +1872,10 @@ struct ArithTruncIToEmitC : public OpConversionPattern<arith::TruncIOp> {
 // %dst = pto.mgather %mem, %idx : memref<...>, memref<...> -> memref<...>
 //===----------------------------------------------------------------------===//
 
-struct PTOMGatherToMGATHER : public OpConversionPattern<pto::MGatherDpsOp> {
-  using OpConversionPattern<pto::MGatherDpsOp>::OpConversionPattern;
+struct PTOMGatherToMGATHER : public OpConversionPattern<pto::TMGatherOp> {
+  using OpConversionPattern<pto::TMGatherOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::MGatherDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TMGatherOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value mem = peelUnrealized(adaptor.getMem());
     Value dst = peelUnrealized(adaptor.getDst());
@@ -3007,12 +3007,12 @@ struct PTOTMatmulToTMATMUL : public OpConversionPattern<pto::TMatmulOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// pto.gemv_dps lowering
+// pto.tgemv lowering
 //===----------------------------------------------------------------------===//
-struct PTOGemvDpsToTGEMV : public OpConversionPattern<pto::GemvDpsOp> {
-  using OpConversionPattern<pto::GemvDpsOp>::OpConversionPattern;
+struct PTOTGemvToTGEMV : public OpConversionPattern<pto::TGemvOp> {
+  using OpConversionPattern<pto::TGemvOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::GemvDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TGemvOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     // 1. 获取操作数 (剥离 Cast)
     Value lhs = peelUnrealized(adaptor.getLhs()); // A (Matrix)
@@ -3036,15 +3036,15 @@ struct PTOGemvDpsToTGEMV : public OpConversionPattern<pto::GemvDpsOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// pto.gemv_acc_dps lowering
+// pto.tgemv.acc lowering
 //===----------------------------------------------------------------------===//
-struct PTOGemvAccDpsToTGEMVACC : public OpConversionPattern<pto::GemvAccDpsOp> {
-  using OpConversionPattern<pto::GemvAccDpsOp>::OpConversionPattern;
+struct PTOTGemvAccToTGEMVACC : public OpConversionPattern<pto::TGemvAccOp> {
+  using OpConversionPattern<pto::TGemvAccOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::GemvAccDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TGemvAccOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     if (!op.getDst())
-      return rewriter.notifyMatchFailure(op, "expected outs(dst) for pto.gemv_acc_dps");
+      return rewriter.notifyMatchFailure(op, "expected outs(dst) for pto.tgemv.acc");
 
     // 1. 获取操作数
     Value accIn = peelUnrealized(adaptor.getAccIn()); // AccOld
@@ -4692,13 +4692,13 @@ struct PTOMinsToEmitC : public OpConversionPattern<pto::MinsOp_DPS> {
   }
 };
 //===----------------------------------------------------------------------===//
-// PTOConvert.cpp  (add lowering for TMOV DPS/memref op -> EmitC)
+// PTOConvert.cpp  (add lowering for TMOV op -> EmitC)
 //===----------------------------------------------------------------------===//
 
-struct PTOMovToEmitC : public OpConversionPattern<pto::MovDpsOp> {
-  using OpConversionPattern<pto::MovDpsOp>::OpConversionPattern;
+struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
+  using OpConversionPattern<pto::TMovOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::MovDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TMovOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5246,24 +5246,6 @@ static void replaceOrEraseWithOpaqueCall(Operation *op,
   else
     rewriter.replaceOp(op, call.getResults());
 }
-
-// ---------- Gemv DPS Ops ----------
-struct PTOGemvBiasDpsToTGEMV_BIAS
-    : public OpConversionPattern<pto::GemvBiasDpsOp> {
-  using OpConversionPattern<pto::GemvBiasDpsOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::GemvBiasDpsOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value a    = peelUnrealized(adaptor.getA());
-    Value b    = peelUnrealized(adaptor.getB());
-    Value bias = peelUnrealized(adaptor.getBias());
-    Value dst  = peelUnrealized(adaptor.getDst());
-
-    replaceOrEraseWithOpaqueCall(op.getOperation(), "TGEMV_BIAS",
-                                {dst, a, b, bias}, rewriter);
-    return success();
-  }
-};
 
 // ---------- TOp ----------
 struct PTOTGemvBiasToTGEMV_BIAS
@@ -6750,8 +6732,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMGatherToMGATHER>(typeConverter, ctx);
   patterns.add<PTOTMatmulToTMATMUL>(typeConverter, ctx);
   patterns.add<PTOTMatmulAccToTMATMULACC>(typeConverter, ctx);
-  patterns.add<PTOGemvDpsToTGEMV>(typeConverter, ctx);
-  patterns.add<PTOGemvAccDpsToTGEMVACC>(typeConverter, ctx);
+  patterns.add<PTOTGemvToTGEMV>(typeConverter, ctx);
+  patterns.add<PTOTGemvAccToTGEMVACC>(typeConverter, ctx);
   patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAbsToTABS>(typeConverter, ctx);
   patterns.add<PTOTAddToTADD>(typeConverter, ctx);
@@ -6776,7 +6758,6 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
     PTOTMatmulMxToTMATMUL_MX,
     PTOTMatmulMxAccToTMATMUL_MX_ACC,
     PTOTMatmulMxBiasToTMATMUL_MX_BIAS,
-    PTOGemvBiasDpsToTGEMV_BIAS,
     PTOTGemvBiasToTGEMV_BIAS,
     PTOBarrierToEmitC
   >(typeConverter, ctx);

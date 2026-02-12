@@ -173,10 +173,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       (void)tmatmulAccOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
-    } else if (auto movDpsOp = dyn_cast<pto::MovDpsOp>(op)) {
-      (void)movDpsOp;
-      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
-      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto tmatmulBiasOp = dyn_cast<pto::TMatmulBiasOp>(op)) {
       (void)tmatmulBiasOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
