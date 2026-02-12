@@ -18,11 +18,13 @@
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeRange.h"
@@ -37,6 +39,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"                   
 #include "mlir/Conversion/SCFToEmitC/SCFToEmitC.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 
 #include <cstdint>
 #include <string>
@@ -209,6 +212,8 @@ public:
 
     addSourceMaterialization(materializeCast);
     addTargetMaterialization(materializeCast);
+    // Needed for region/block signature conversions (e.g. CFG block args).
+    addArgumentMaterialization(materializeCast);
   }
 };
 
@@ -1919,96 +1924,42 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
 
   LogicalResult matchAndRewrite(func::FuncOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    MLIRContext *ctx = op.getContext();
+    // Convert the function signature with the type converter.
+    Type convertedTy = getTypeConverter()->convertType(op.getFunctionType());
+    auto funcType = dyn_cast_or_null<FunctionType>(convertedTy);
+    if (!funcType)
+      return rewriter.notifyMatchFailure(op, "failed to convert function type");
+    if (funcType.getNumResults() > 1)
+      return rewriter.notifyMatchFailure(
+          op, "EmitC cannot return multiple values");
 
-    // 1. 准备函数参数类型 (使用具体类型替换泛型 T)
-    SmallVector<Type> newArgTypes;
-    newArgTypes.reserve(op.getNumArguments());
+    // Create the EmitC function with the converted signature.
+    auto emitcFunc = rewriter.create<emitc::FuncOp>(op.getLoc(), op.getName(),
+                                                    funcType);
+    emitcFunc.setSpecifiersAttr(
+        rewriter.getStrArrayAttr({"__global__ AICORE"}));
 
-    for (Type argType : op.getArgumentTypes()) {
-        Type newType;
-        if (auto memRefTy = dyn_cast<MemRefType>(argType)) {
-            std::string typeStr;
-            Type elemTy = memRefTy.getElementType();
-            if (elemTy.isF16()) typeStr = "half";
-            else if (elemTy.isF32()) typeStr = "float";
-            else if (elemTy.isInteger(8)) typeStr = cast<IntegerType>(elemTy).isUnsigned() ? "uint8_t" : "int8_t";
-            else if (elemTy.isInteger(16)) typeStr = cast<IntegerType>(elemTy).isUnsigned() ? "uint16_t" : "int16_t";
-            else if (elemTy.isInteger(32)) typeStr = cast<IntegerType>(elemTy).isUnsigned() ? "uint32_t" : "int32_t";
-            else if (elemTy.isInteger(64)) typeStr = cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
-            else typeStr = "void"; 
+    // Inline the original body, then convert region/block argument types to
+    // match the converted signature (also covers CFG blocks introduced by
+    // pre-lowering, e.g. scf.while -> cf.br/cf.cond_br).
+    rewriter.inlineRegionBefore(op.getBody(), emitcFunc.getBody(),
+                                emitcFunc.end());
 
-            std::string addrSpaceStr = "__gm__ ";
-            if (auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(
-                    memRefTy.getMemorySpace())) {
-                addrSpaceStr =
-                    std::string(addrSpaceQualifier(attr.getAddressSpace())) + " ";
-            }
+    TypeConverter::SignatureConversion entryConv(op.getNumArguments());
+    for (unsigned i = 0; i < op.getNumArguments(); ++i)
+      entryConv.addInputs(i, funcType.getInput(i));
 
-            newType = emitc::PointerType::get(
-                emitc::OpaqueType::get(ctx, addrSpaceStr + typeStr)
-            );
-        } else {
-            newType = getTypeConverter()->convertType(argType);
-        }
-        
-        if (!newType) return failure();
-        newArgTypes.push_back(newType);
-    }
+    if (failed(rewriter.convertRegionTypes(&emitcFunc.getBody(),
+                                          *getTypeConverter(), &entryConv)))
+      return failure();
 
-    // 2. 创建单一 EmitC 函数
-    auto funcType = FunctionType::get(ctx, newArgTypes, /*results=*/{});
-    auto emitcFunc = rewriter.create<emitc::FuncOp>(
-        op.getLoc(), 
-        op.getName(), 
-        funcType, 
-        ArrayRef<NamedAttribute>{},
-        ArrayRef<DictionaryAttr>{}
-    );
-
-    // 3. 设置 Specifiers
-    emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({
-        "__global__ AICORE"
-    }));
-
-    // 4. 迁移函数体
-    rewriter.inlineRegionBefore(op.getBody(), emitcFunc.getBody(), emitcFunc.end());
-
-    // =========================================================================
-    // 5. [修复] 修正 Block 参数类型，并插入 Cast 桥接
-    // =========================================================================
-    Block &entryBlock = emitcFunc.getBody().front();
-    
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToStart(&entryBlock);
-
-    for (unsigned i = 0; i < entryBlock.getNumArguments(); ++i) {
-        BlockArgument arg = entryBlock.getArgument(i);
-        Type oldType = arg.getType(); // MemRefType
-        Type newType = newArgTypes[i]; // EmitC Pointer Type
-
-        if (oldType != newType) {
-            // A. 修改参数类型为新的 EmitC 指针
-            arg.setType(newType);
-
-            // B. 创建一个 Cast: NewType -> OldType
-            // 这样函数体内的旧 Op (期望 MemRef) 就可以使用这个 Cast 的结果
-            auto cast = rewriter.create<UnrealizedConversionCastOp>(
-                op.getLoc(), oldType, arg);
-            
-            // C. 将 arg 的所有其他使用者替换为使用 cast 的结果
-            // (除了 cast 自己，否则会死循环)
-            arg.replaceAllUsesExcept(cast.getResult(0), cast);
-        }
-    }
-
-    // 6. [兼容性补丁] 注入 "using T = float;"
+    // [Compatibility patch] Preserve existing snippets that rely on `T`.
     {
-        rewriter.setInsertionPointToStart(&entryBlock); // 再次确保在最前面
-        rewriter.create<emitc::VerbatimOp>(op.getLoc(), "using T = float;");
+      Block &entryBlock = emitcFunc.getBody().front();
+      rewriter.setInsertionPointToStart(&entryBlock);
+      rewriter.create<emitc::VerbatimOp>(op.getLoc(), "using T = float;");
     }
 
-    // 7. 删除旧 Op
     rewriter.eraseOp(op);
     return success();
   }
@@ -2184,10 +2135,13 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // Part 2: 生成 GlobalTensor 类型 (Shape/Stride Template Generation)
     // -------------------------------------------------------------------------
     
-    std::string suffix = "_" + std::to_string(reinterpret_cast<uintptr_t>(op.getOperation()));
-    std::string shapeTypeName  = "GTShape"  + suffix;
-    std::string strideTypeName = "GTStride" + suffix;
-    std::string gtTypeName     = "GT"       + suffix;
+    // When emitting C++ with `declareVariablesAtTop`, value declarations are
+    // hoisted before body statements. Avoid introducing local `using` aliases
+    // for templated types (Shape/Stride/GlobalTensor) because those aliases
+    // would appear after the hoisted declarations and break compilation
+    // (`unknown type name`).
+    //
+    // Instead, use the fully spelled template types as EmitC opaque types.
 
     auto resTy = mlir::cast<MemRefType>(op.getResult().getType());
     
@@ -2296,9 +2250,9 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     std::string shapeParams = joinParams(finalShape);
     std::string strideParams = joinParams(finalStride);
 
-    // 4. 发射 typedef 语句
-    rewriter.create<emitc::VerbatimOp>(loc, "using " + shapeTypeName + " = pto::Shape<" + shapeParams + ">;");
-    rewriter.create<emitc::VerbatimOp>(loc, "using " + strideTypeName + " = pto::Stride<" + strideParams + ">;");
+    // Spelled-out C++ types.
+    std::string shapeCppType = "pto::Shape<" + shapeParams + ">";
+    std::string strideCppType = "pto::Stride<" + strideParams + ">";
 
     // 3.0 计算推导出的 Layout；若用户已指定 layout，保持一致性校验
     auto strToInt = [](const std::string &s, int64_t &out) -> bool {
@@ -2356,18 +2310,16 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
         layoutEnum = "pto::Layout::DN";
     else if (layoutTag == 2)
         layoutEnum = "pto::Layout::NZ";
-    std::string layoutConstName = gtTypeName + "_layout";
-    rewriter.create<emitc::VerbatimOp>(
-        loc, "constexpr pto::Layout " + layoutConstName + " = " + layoutEnum + ";");
+    // GlobalTensor takes a Layout non-type template parameter; directly use the
+    // enum constant.
 
 
     // -------------------------------------------------------------------------
     // Part 3: 显式对象实例化 (Explicit Object Instantiation)
     // -------------------------------------------------------------------------
 
-    // A. 实例化 Shape 对象
-    // C++: GTShape_... shape_inst(size_v0, size_v1...);
-    auto shapeTypeOpaque = emitc::OpaqueType::get(ctx, shapeTypeName);
+    // A. Instantiate Shape object.
+    auto shapeTypeOpaque = emitc::OpaqueType::get(ctx, shapeCppType);
     SmallVector<Value> shapeArgs;
     // 从 adaptor.getSizes() 获取 subview 的所有 dynamic sizes
     for (Value dynSize : adaptor.getSizes()) {
@@ -2377,33 +2329,27 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto shapeInstOp = rewriter.create<emitc::CallOpaqueOp>(
         loc, 
         shapeTypeOpaque, // 返回类型
-        shapeTypeName,   // 调用的“函数名”即类名构造函数
+        shapeCppType,    // 调用的“函数名”即类名构造函数
         /*args=*/ArrayAttr{}, 
         /*templateArgs=*/ArrayAttr{}, 
         /*operands=*/ValueRange(shapeArgs)
     );
     
-    // B. 实例化 Stride 对象
-    // C++: GTStride_... stride_inst(stride_v0...);
-    auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideTypeName);
+    // B. Instantiate Stride object.
+    auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideCppType);
     auto strideInstOp = rewriter.create<emitc::CallOpaqueOp>(
         loc, 
         strideTypeOpaque, 
-        strideTypeName, 
+        strideCppType, 
         /*args=*/ArrayAttr{}, 
         /*templateArgs=*/ArrayAttr{}, 
         /*operands=*/ValueRange(dynamicStrideValues) // 传入之前收集的动态stride
     );
 
-    // C. 实例化 GlobalTensor 对象 (传入 Shape 和 Stride 对象)
-    // C++: GT_... gt_inst(ptr, shape_inst, stride_inst);
-    
-    // 发射 GlobalTensor typedef
-    rewriter.create<emitc::VerbatimOp>(
-        loc, 
-        "using " + gtTypeName + " = GlobalTensor<" + elemTypeStr + ", " + shapeTypeName + ", " + strideTypeName + ", " + layoutConstName + ">;"
-    );
-    auto gtType = emitc::OpaqueType::get(ctx, gtTypeName);
+    // C. Instantiate GlobalTensor object (ptr + shape + stride).
+    std::string gtCppType = "GlobalTensor<" + elemTypeStr + ", " + shapeCppType +
+                            ", " + strideCppType + ", " + layoutEnum + ">";
+    auto gtType = emitc::OpaqueType::get(ctx, gtCppType);
 
     // 准备构造参数: [ptr, shape_instance, stride_instance]
     SmallVector<Value> gtConstructorArgs;
@@ -2414,7 +2360,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
         op, 
         gtType, 
-        gtTypeName,
+        gtCppType,
         /*args=*/ArrayAttr{}, 
         /*templateArgs=*/ArrayAttr{},
         /*operands=*/ValueRange(gtConstructorArgs)
@@ -3658,7 +3604,7 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     const bool isGm = (!asAttr || asAttr.getAddressSpace() == pto::AddressSpace::GM);
 
     bool emitAddPtrTrace = op->hasAttr("pto.addptr_trace");
-    Value source = adaptor.getSource();
+    Value source = peelUnrealized(adaptor.getSource());
     auto offsets = adaptor.getOffsets();
     Value offsetVal = offsets.empty() ? Value() : offsets[0];
 
@@ -3767,12 +3713,21 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     // We need the underlying address, but `__cce_get_tile_ptr()` is only valid
     // inside `__tf__` functions. Use `tile.data()` (via a post-processed marker)
     // and compute the adjusted address in bytes.
-    auto rawPtrTy = emitc::OpaqueType::get(ctx, "auto");
-    Value rawPtr = rewriter
-                       .create<emitc::CallOpaqueOp>(loc, rawPtrTy, "PTOAS__TILE_DATA",
-                                                    ArrayAttr{}, ArrayAttr{},
-                                                    ValueRange{source})
-                       .getResult(0);
+    Value rawPtr = source;
+    if (auto ot = dyn_cast<emitc::OpaqueType>(source.getType())) {
+      // Only Tiles have a `.data()` member. For plain address-space pointers
+      // (e.g. `__ubuf__ float*`), use the pointer value directly.
+      if (ot.getValue().starts_with("Tile<")) {
+        std::string rawPtrTok =
+            std::string(addrSpaceQualifier(as)) + " " + elemTok + "*";
+        auto rawPtrTy = emitc::OpaqueType::get(ctx, rawPtrTok);
+        rawPtr = rewriter
+                     .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
+                                                  "PTOAS__TILE_DATA", ArrayAttr{},
+                                                  ArrayAttr{}, ValueRange{source})
+                     .getResult(0);
+      }
+    }
 
     Value baseAddr = rewriter
                          .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
@@ -4015,7 +3970,7 @@ struct PTOCmpToEmitC : public OpConversionPattern<pto::CmpOp_DPS> {
     if (auto a = op.getCmpModeAttr())
       tok = cmpModeTok(a);
 
-     auto modeTy = emitc::OpaqueType::get(ctx, "auto");
+    auto modeTy = emitc::OpaqueType::get(ctx, "CmpMode");
     Value modeVal = rewriter.create<emitc::ConstantOp>(
         loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
 
@@ -4050,7 +4005,7 @@ struct PTOCmpSToEmitC : public OpConversionPattern<pto::CmpSOp_DPS> {
     auto cmpAttr = op.getCmpModeAttr();          // PTO_CmpModeAttr
     std::string tok = cmpModeTok(cmpAttr);
 
-    auto modeTy = emitc::OpaqueType::get(ctx, "auto");
+    auto modeTy = emitc::OpaqueType::get(ctx, "CmpMode");
     Value modeVal = rewriter.create<emitc::ConstantOp>(
         loc, modeTy, emitc::OpaqueAttr::get(ctx, tok));
 
@@ -4185,10 +4140,9 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::CvtOp_DPS> {
                                : std::string("RoundMode::CAST_RINT");
 
     // 生成: TCVT(dst, src, RoundMode::XXX)
-    auto boolTy = emitc::OpaqueType::get(ctx, "auto");
-    auto tok = rmTok; // 默认是 "RoundMode::CAST_RINT"
+    auto rmodeTy = emitc::OpaqueType::get(ctx, "RoundMode");
     Value rmodeVal = rewriter.create<emitc::ConstantOp>(
-        loc, boolTy, emitc::OpaqueAttr::get(ctx, tok));
+        loc, rmodeTy, emitc::OpaqueAttr::get(ctx, rmTok));
 
     // 这里 args 被清空，只保留 operands，包括 src, dst 和 rmode
     rewriter.create<emitc::CallOpaqueOp>(
@@ -6223,6 +6177,445 @@ struct SectionToEmitC : public OpConversionPattern<SectionOpTy> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// SCF Control-Flow Pre-Lowering
+//
+// EmitC translation supports `emitc.for`/`emitc.if` plus CFG-style
+// `cf.br`/`cf.cond_br`. Upstream SCFToEmitC patterns only cover `scf.for` and
+// `scf.if`, so we pre-lower some SCF ops into those supported forms.
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+static bool isTriviallyInlineableExecuteRegion(scf::ExecuteRegionOp op) {
+  Region &r = op.getRegion();
+  if (!r.hasOneBlock())
+    return false;
+  Block &b = r.front();
+  return isa_and_nonnull<scf::YieldOp>(b.getTerminator());
+}
+
+static bool needsWholeFunctionSCFToCF(func::FuncOp func) {
+  bool needs = false;
+  func.walk([&](Operation *op) {
+    if (!isa<scf::WhileOp, scf::IndexSwitchOp, scf::ExecuteRegionOp>(op))
+      return WalkResult::advance();
+    Operation *parentOp = op->getParentOp();
+
+    // `scf.execute_region` can legally appear in single-block parents. Only
+    // require whole-function SCFToCF if we need to lower it into CFG blocks
+    // (multi-block region / non-trivial terminators).
+    if (auto exec = dyn_cast<scf::ExecuteRegionOp>(op)) {
+      if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>() &&
+          !isTriviallyInlineableExecuteRegion(exec)) {
+        needs = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+
+    if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>()) {
+      needs = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return needs;
+}
+
+// scf.execute_region is semantically just an inlined region producing results
+// via scf.yield. Inline it to the parent block to avoid extra lowering needs.
+struct SCFExecuteRegionInline
+    : public OpRewritePattern<scf::ExecuteRegionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ExecuteRegionOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getRegion().empty())
+      return rewriter.notifyMatchFailure(op, "expected non-empty region");
+
+    Block &innerBlock = op.getRegion().front();
+    auto yield = dyn_cast<scf::YieldOp>(innerBlock.getTerminator());
+    if (!yield)
+      return rewriter.notifyMatchFailure(op, "expected scf.yield terminator");
+
+    // Move the body operations before the execute_region op.
+    rewriter.inlineBlockBefore(&innerBlock, op.getOperation(), ValueRange{});
+
+    // Replace execute_region results with yielded values, then erase the yield.
+    rewriter.replaceOp(op, yield.getOperands());
+    rewriter.eraseOp(yield);
+    return success();
+  }
+};
+
+// Lower scf.execute_region into CFG blocks with cf.br/cf.cond_br by inlining the
+// region blocks into the parent region and rewriting scf.yield to branch into a
+// continuation block carrying results.
+//
+// Note: This requires the parent region to allow multiple blocks (e.g. the
+// function body CFG region). For execute_region nested in single-block regions
+// (scf.for/scf.if), run SCFToCF first to eliminate the single-block constraint.
+struct SCFExecuteRegionToCF : public OpRewritePattern<scf::ExecuteRegionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ExecuteRegionOp op,
+                                PatternRewriter &rewriter) const override {
+    if (isTriviallyInlineableExecuteRegion(op))
+      return rewriter.notifyMatchFailure(op, "trivially inlineable");
+
+    Operation *parentOp = op->getParentOp();
+    if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>()) {
+      return rewriter.notifyMatchFailure(
+          op, "cannot lower scf.execute_region inside a single-block parent region");
+    }
+
+    if (op.getRegion().empty())
+      return rewriter.notifyMatchFailure(op, "expected non-empty region");
+
+    Location loc = op.getLoc();
+    Block *curBlock = op->getBlock();
+    Region *parentRegion = curBlock->getParent();
+
+    // Split the parent block so we can branch to a continuation block with phi
+    // arguments for the execute_region results.
+    auto execIt = Block::iterator(op.getOperation());
+    Block *continueBlock = rewriter.splitBlock(curBlock, std::next(execIt));
+
+    SmallVector<BlockArgument> contArgs;
+    contArgs.reserve(op.getNumResults());
+    for (Type t : op.getResultTypes())
+      contArgs.push_back(continueBlock->addArgument(t, loc));
+
+    for (auto it : llvm::enumerate(op.getResults()))
+      it.value().replaceAllUsesWith(contArgs[it.index()]);
+
+    // Capture blocks before moving the region.
+    SmallVector<Block *> movedBlocks;
+    movedBlocks.reserve(op.getRegion().getBlocks().size());
+    for (Block &b : op.getRegion())
+      movedBlocks.push_back(&b);
+    Block *entryBlock = &op.getRegion().front();
+
+    // Inline the execute_region blocks into the parent region right before the
+    // continuation block.
+    rewriter.inlineRegionBefore(op.getRegion(), *parentRegion,
+                                continueBlock->getIterator());
+
+    // Replace all scf.yield terminators with a branch to the continuation.
+    for (Block *b : movedBlocks) {
+      auto yield = dyn_cast<scf::YieldOp>(b->getTerminator());
+      if (!yield)
+        continue;
+      rewriter.setInsertionPoint(yield);
+      rewriter.create<cf::BranchOp>(loc, continueBlock, yield.getOperands());
+      rewriter.eraseOp(yield);
+    }
+
+    // Replace execute_region itself with a branch to the inlined entry block.
+    rewriter.setInsertionPoint(op);
+    rewriter.create<cf::BranchOp>(loc, entryBlock, ValueRange{});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+// Lower scf.index_switch into CFG blocks with cf.cond_br/cf.br so that we can
+// avoid `scf.if` result materialization quirks (and avoid relying on cf.switch,
+// which is not supported by EmitC C++ translation).
+struct SCFIndexSwitchToCF : public OpRewritePattern<scf::IndexSwitchOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  static LogicalResult cloneYieldingBlockAndBranchTo(
+      PatternRewriter &rewriter, Location loc, Block &srcBlock, Block *destBlock,
+      Block *continueBlock) {
+    rewriter.setInsertionPointToEnd(destBlock);
+
+    IRMapping mapping;
+    for (Operation &inner : srcBlock.without_terminator())
+      rewriter.clone(inner, mapping);
+
+    auto yield = dyn_cast<scf::YieldOp>(srcBlock.getTerminator());
+    if (!yield)
+      return failure();
+
+    SmallVector<Value> yieldOperands;
+    yieldOperands.reserve(yield.getNumOperands());
+    for (Value v : yield.getOperands())
+      yieldOperands.push_back(mapping.lookupOrDefault(v));
+
+    rewriter.create<cf::BranchOp>(loc, continueBlock, yieldOperands);
+    return success();
+  }
+
+  LogicalResult matchAndRewrite(scf::IndexSwitchOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Operation *parentOp = op->getParentOp();
+    if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>()) {
+      return rewriter.notifyMatchFailure(
+          op, "cannot lower scf.index_switch inside a single-block parent region");
+    }
+
+    Block *curBlock = op->getBlock();
+    Region *parentRegion = curBlock->getParent();
+
+    // Split the parent block so we can branch to a continuation block with phi
+    // arguments for the switch results.
+    auto switchIt = Block::iterator(op.getOperation());
+    Block *continueBlock = rewriter.splitBlock(curBlock, std::next(switchIt));
+
+    SmallVector<BlockArgument> contArgs;
+    contArgs.reserve(op.getNumResults());
+    for (Type t : op.getResultTypes())
+      contArgs.push_back(continueBlock->addArgument(t, loc));
+
+    for (auto it : llvm::enumerate(op.getResults()))
+      it.value().replaceAllUsesWith(contArgs[it.index()]);
+
+    unsigned numCases = op.getCases().size();
+    auto insertPt = continueBlock->getIterator();
+
+    SmallVector<Block *> checkBlocks;
+    SmallVector<Block *> caseBlocks;
+    checkBlocks.reserve(numCases);
+    caseBlocks.reserve(numCases);
+
+    // Create check blocks for each case: check_i compares selector to case_i.
+    for (unsigned i = 0; i < numCases; ++i)
+      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+
+    // Create one block for default and one block per case to execute the body.
+    Block *defaultBlock = rewriter.createBlock(parentRegion, insertPt);
+    for (unsigned i = 0; i < numCases; ++i)
+      caseBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+
+    Value selector = op.getArg();
+    auto cases = op.getCases();
+
+    // Fill check blocks with chained comparisons.
+    for (unsigned i = 0; i < numCases; ++i) {
+      rewriter.setInsertionPointToEnd(checkBlocks[i]);
+      Value caseVal = rewriter.create<arith::ConstantIndexOp>(loc, cases[i]);
+      Value cond = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, selector, caseVal);
+      Block *falseDest = (i + 1 < numCases) ? checkBlocks[i + 1] : defaultBlock;
+      rewriter.create<cf::CondBranchOp>(loc, cond, caseBlocks[i], ValueRange{},
+                                        falseDest, ValueRange{});
+    }
+
+    // Fill case blocks and default block with cloned bodies + branch to cont.
+    for (unsigned i = 0; i < numCases; ++i) {
+      if (failed(cloneYieldingBlockAndBranchTo(
+              rewriter, loc, op.getCaseBlock(i), caseBlocks[i], continueBlock)))
+        return rewriter.notifyMatchFailure(op, "expected scf.yield terminator");
+    }
+    if (failed(cloneYieldingBlockAndBranchTo(rewriter, loc, op.getDefaultBlock(),
+                                             defaultBlock, continueBlock)))
+      return rewriter.notifyMatchFailure(op, "expected scf.yield terminator");
+
+    // Replace the original switch op with a branch into the check chain.
+    Block *entryDest = numCases ? checkBlocks[0] : defaultBlock;
+    rewriter.setInsertionPointAfter(op);
+    rewriter.create<cf::BranchOp>(loc, entryDest, ValueRange{});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+// Lower scf.while into CFG blocks with cf.br/cf.cond_br.
+//
+// Note: This requires the parent region to allow multiple blocks. In
+// particular, scf.if/scf.for regions are single-block and cannot contain this
+// lowering.
+struct SCFWhileToCF : public OpRewritePattern<scf::WhileOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::WhileOp op,
+                                PatternRewriter &rewriter) const override {
+    Operation *parentOp = op->getParentOp();
+    if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>()) {
+      return rewriter.notifyMatchFailure(
+          op, "cannot lower scf.while inside a single-block parent region");
+    }
+
+    Block *curBlock = op->getBlock();
+
+    // Only support the common structured form where the while results are used
+    // in the same block after the op.
+    for (Value res : op.getResults()) {
+      for (auto &use : res.getUses()) {
+        if (use.getOwner()->getBlock() != curBlock)
+          return rewriter.notifyMatchFailure(
+              op, "unsupported: while results used outside the parent block");
+      }
+    }
+
+    auto loc = op.getLoc();
+    auto whileIt = Block::iterator(op.getOperation());
+    Block *afterWhileBlock = rewriter.splitBlock(curBlock, std::next(whileIt));
+
+    // Add block args to carry while results into the continuation block.
+    SmallVector<Value> exitArgs;
+    exitArgs.reserve(op.getNumResults());
+    for (Type t : op.getResultTypes())
+      exitArgs.push_back(afterWhileBlock->addArgument(t, loc));
+
+    for (auto it : llvm::enumerate(op.getResults()))
+      it.value().replaceAllUsesWith(exitArgs[it.index()]);
+
+    // Create the CFG blocks before the continuation block.
+    Region *parentRegion = curBlock->getParent();
+    auto insertPt = afterWhileBlock->getIterator();
+
+    // Header block arguments match the while init operands.
+    SmallVector<Type> headerArgTypes;
+    for (Value v : op.getInits())
+      headerArgTypes.push_back(v.getType());
+    SmallVector<Location> headerArgLocs(headerArgTypes.size(), loc);
+    Block *headerBlock =
+        rewriter.createBlock(parentRegion, insertPt, headerArgTypes,
+                             headerArgLocs);
+
+    // Body block arguments match the "after" region arguments.
+    Block &afterRegionBlock = op.getAfter().front();
+    SmallVector<Type> bodyArgTypes(afterRegionBlock.getArgumentTypes().begin(),
+                                  afterRegionBlock.getArgumentTypes().end());
+    SmallVector<Location> bodyArgLocs(bodyArgTypes.size(), loc);
+    insertPt = afterWhileBlock->getIterator();
+    Block *bodyBlock =
+        rewriter.createBlock(parentRegion, insertPt, bodyArgTypes, bodyArgLocs);
+
+    // Move the before/after region bodies into the new CFG blocks.
+    rewriter.mergeBlocks(&op.getBefore().front(), headerBlock,
+                         headerBlock->getArguments());
+    rewriter.mergeBlocks(&afterRegionBlock, bodyBlock, bodyBlock->getArguments());
+
+    // Replace scf.condition in the header with cf.cond_br.
+    {
+      auto condOp = cast<scf::ConditionOp>(headerBlock->getTerminator());
+      rewriter.setInsertionPoint(condOp);
+      rewriter.create<cf::CondBranchOp>(loc, condOp.getCondition(),
+                                        /*trueDest=*/bodyBlock,
+                                        /*trueOperands=*/condOp.getArgs(),
+                                        /*falseDest=*/afterWhileBlock,
+                                        /*falseOperands=*/condOp.getArgs());
+      rewriter.eraseOp(condOp);
+    }
+
+    // Replace scf.yield in the body with cf.br back to the header.
+    {
+      auto yieldOp = cast<scf::YieldOp>(bodyBlock->getTerminator());
+      rewriter.setInsertionPoint(yieldOp);
+      rewriter.create<cf::BranchOp>(loc, headerBlock, yieldOp.getOperands());
+      rewriter.eraseOp(yieldOp);
+    }
+
+    // Replace scf.while itself with a branch to the header.
+    rewriter.setInsertionPoint(op);
+    rewriter.create<cf::BranchOp>(loc, headerBlock, op.getInits());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+// Lower cf.switch into chained comparisons and cf.cond_br/cf.br.
+//
+// EmitC C++ translation currently supports cf.br/cf.cond_br, but not cf.switch.
+struct CFSwitchToCondBr : public OpRewritePattern<cf::SwitchOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(cf::SwitchOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Operation *parentOp = op->getParentOp();
+    if (parentOp && parentOp->hasTrait<OpTrait::SingleBlock>()) {
+      return rewriter.notifyMatchFailure(
+          op, "cannot lower cf.switch inside a single-block parent region");
+    }
+
+    Block *curBlock = op->getBlock();
+    Region *parentRegion = curBlock->getParent();
+
+    Value flag = op.getFlag();
+    auto flagTy = dyn_cast<IntegerType>(flag.getType());
+    if (!flagTy)
+      return rewriter.notifyMatchFailure(op, "expected integer switch flag");
+
+    SmallVector<Value> defaultOperands(op.getDefaultOperands().begin(),
+                                       op.getDefaultOperands().end());
+    Block *defaultDest = op.getDefaultDestination();
+
+    SmallVector<Block *> caseDests(op.getCaseDestinations().begin(),
+                                   op.getCaseDestinations().end());
+    SmallVector<SmallVector<Value>> caseOperands;
+    caseOperands.reserve(caseDests.size());
+    for (auto range : op.getCaseOperands())
+      caseOperands.emplace_back(range.begin(), range.end());
+
+    if (caseDests.empty()) {
+      rewriter.replaceOpWithNewOp<cf::BranchOp>(op, defaultDest, defaultOperands);
+      return success();
+    }
+
+    std::optional<DenseIntElementsAttr> caseValuesAttr = op.getCaseValues();
+    if (!caseValuesAttr)
+      return rewriter.notifyMatchFailure(op, "missing case_values");
+
+    SmallVector<APInt> caseValues;
+    for (APInt v : caseValuesAttr->getValues<APInt>())
+      caseValues.push_back(v);
+
+    if (caseValues.size() != caseDests.size())
+      return rewriter.notifyMatchFailure(op, "case_values/destinations mismatch");
+    if (caseOperands.size() != caseDests.size())
+      return rewriter.notifyMatchFailure(op, "case_operands/destinations mismatch");
+
+    // Insert check blocks right after the current block.
+    auto insertPt = std::next(curBlock->getIterator());
+    SmallVector<Block *> checkBlocks;
+    checkBlocks.reserve(caseDests.size());
+    for (size_t i = 0; i < caseDests.size(); ++i)
+      checkBlocks.push_back(rewriter.createBlock(parentRegion, insertPt));
+
+    // Fill each check block with:
+    //   if (flag == caseVal_i) goto caseDest_i else goto nextCheck/default.
+    for (size_t i = 0; i < caseDests.size(); ++i) {
+      rewriter.setInsertionPointToEnd(checkBlocks[i]);
+
+      APInt caseVal = caseValues[i];
+      if (caseVal.getBitWidth() != flagTy.getWidth()) {
+        return rewriter.notifyMatchFailure(
+            op, "case value bitwidth doesn't match flag type");
+      }
+
+      Value caseConst = rewriter.create<arith::ConstantOp>(
+          loc, flagTy, rewriter.getIntegerAttr(flagTy, caseVal));
+      Value cond = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, flag, caseConst);
+
+      Block *falseDest =
+          (i + 1 < checkBlocks.size()) ? checkBlocks[i + 1] : defaultDest;
+      ValueRange falseOperands =
+          (i + 1 < checkBlocks.size()) ? ValueRange{} : ValueRange(defaultOperands);
+
+      rewriter.create<cf::CondBranchOp>(loc, cond,
+                                        /*trueDest=*/caseDests[i],
+                                        /*trueOperands=*/caseOperands[i],
+                                        /*falseDest=*/falseDest,
+                                        /*falseOperands=*/falseOperands);
+    }
+
+    // Replace the switch terminator with a branch into the first check block.
+    rewriter.setInsertionPoint(op);
+    rewriter.replaceOpWithNewOp<cf::BranchOp>(op, checkBlocks.front(),
+                                              ValueRange{});
+    return success();
+  }
+};
+
+} // namespace
+
 static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
                                        TypeConverter &typeConverter,
                                        MLIRContext *ctx,
@@ -6402,6 +6795,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ReturnToEmitC>(typeConverter, ctx);
 
   populateSCFToEmitCConversionPatterns(patterns);
+  // Keep CFG-style branches type-consistent when block argument types are
+  // converted (e.g. after lowering scf.while to cf.br/cf.cond_br).
+  populateBranchOpInterfaceTypeConversionPattern(patterns, typeConverter);
   populateCallOpTypeConversionPattern(patterns, typeConverter);
 }
 
@@ -6417,7 +6813,7 @@ struct EmitPTOManualPass
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<emitc::EmitCDialect, func::FuncDialect, arith::ArithDialect,
                     memref::MemRefDialect, affine::AffineDialect,
-                    mlir::pto::PTODialect>();
+                    mlir::cf::ControlFlowDialect, mlir::pto::PTODialect>();
   }
 
   void runOnOperation() override {
@@ -6435,14 +6831,77 @@ struct EmitPTOManualPass
         loc, builder.getStringAttr("using namespace pto;"));
     builder.create<emitc::VerbatimOp>(
         loc, builder.getStringAttr(R"cpp(
-template <typename To, typename From>
-static inline To ptoas_bitcast(From from) {
-  static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
-  To to;
-  __builtin_memcpy(&to, &from, sizeof(To));
-  return to;
-}
-)cpp"));
+	template <typename To, typename From>
+	static inline To ptoas_bitcast(From from) {
+	  static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
+	  To to;
+	  __builtin_memcpy(&to, &from, sizeof(To));
+	  return to;
+	}
+	)cpp"));
+
+    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
+    {
+      // scf.while / scf.index_switch are lowered via CFG blocks. This is not
+      // possible inside ops that require single-block regions (e.g. scf.for /
+      // scf.if). If we see such nesting, lower the entire function to the
+      // ControlFlow dialect first.
+      bool needsAnySCFToCF = false;
+      for (auto func : mop.getOps<func::FuncOp>()) {
+        if (needsWholeFunctionSCFToCF(func)) {
+          needsAnySCFToCF = true;
+          break;
+        }
+      }
+      if (needsAnySCFToCF) {
+        RewritePatternSet scfToCfPatterns(ctx);
+        populateSCFToControlFlowConversionPatterns(scfToCfPatterns);
+        FrozenRewritePatternSet frozenSCFToCF(std::move(scfToCfPatterns));
+
+        ConversionTarget scfToCfTarget(*ctx);
+        // Only eliminate the single-block SCF constructs; we'll pre-lower
+        // scf.while/index_switch/execute_region ourselves afterwards.
+        scfToCfTarget.addIllegalOp<scf::ForallOp, scf::ForOp, scf::IfOp,
+                                   scf::ParallelOp>();
+        scfToCfTarget.markUnknownOpDynamicallyLegal(
+            [](Operation *) { return true; });
+
+        for (auto func : mop.getOps<func::FuncOp>()) {
+          if (!needsWholeFunctionSCFToCF(func))
+            continue;
+          if (failed(applyPartialConversion(func, scfToCfTarget,
+                                            frozenSCFToCF))) {
+            func.emitError()
+                << "failed to lower nested SCF to ControlFlow (SCFToCF)";
+            return signalPassFailure();
+          }
+        }
+      }
+
+      RewritePatternSet scfLoweringPatterns(ctx);
+      scfLoweringPatterns.add<SCFExecuteRegionInline, SCFExecuteRegionToCF,
+                              SCFIndexSwitchToCF,
+                              SCFWhileToCF, CFSwitchToCondBr>(ctx);
+      (void)applyPatternsAndFoldGreedily(mop, std::move(scfLoweringPatterns));
+
+      bool hasUnsupportedSCF = false;
+      mop.walk([&](Operation *op) {
+        if (isa<scf::ExecuteRegionOp, scf::IndexSwitchOp, scf::WhileOp>(op)) {
+          hasUnsupportedSCF = true;
+          op->emitError() << "Unsupported SCF op remained after pre-lowering";
+          return WalkResult::interrupt();
+        }
+        if (isa<cf::SwitchOp>(op)) {
+          hasUnsupportedSCF = true;
+          op->emitError()
+              << "Unsupported CF op remained after pre-lowering: cf.switch";
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+      if (hasUnsupportedSCF)
+        return signalPassFailure();
+    }
 
     // 2. 配置转换目标
     PTOToEmitCTypeConverter typeConverter(ctx);
@@ -6453,6 +6912,14 @@ static inline To ptoas_bitcast(From from) {
     target.addIllegalDialect<arith::ArithDialect>();
     target.addIllegalDialect<mlir::scf::SCFDialect>(); 
     
+    // If we introduced CFG branches (e.g. from scf.while), make sure they are
+    // updated to use legalized operand types.
+    target.addDynamicallyLegalOp<cf::BranchOp, cf::CondBranchOp>(
+        [&](Operation *op) {
+          return isLegalForBranchOpInterfaceTypeConversionPattern(op,
+                                                                  typeConverter);
+        });
+
     // [关键] 允许 Cast 存在，最后统一清理
     target.addLegalOp<UnrealizedConversionCastOp>(); 
 
@@ -6486,22 +6953,89 @@ static inline To ptoas_bitcast(From from) {
     // Step B: 再根据新的 Operand 类型，修复 Loop IV 的类型
     // =========================================================================
     
-    // --- Step A: 移除 Cast ---
+    // --- Step A: 清理 UnrealizedConversionCastOp ---
+    // Prefer dropping redundant/unused casts; otherwise lower to emitc.cast
+    // so the C++ emitter can print it.
     llvm::SmallVector<UnrealizedConversionCastOp> castsToErase;
+    bool castCleanupFailed = false;
     mop.walk([&](UnrealizedConversionCastOp cast) {
-      if (cast->getNumOperands() != 1 || cast->getNumResults() != 1) return;
-      
+      if (castCleanupFailed)
+        return;
+
+      if (cast->getNumOperands() != 1 || cast->getNumResults() != 1) {
+        cast.emitError() << "unsupported unrealized_conversion_cast shape";
+        castCleanupFailed = true;
+        return;
+      }
+
       Value input = cast.getOperand(0);
       Value output = cast.getResult(0);
-      
-      // 暴力替换：无论类型是否匹配，直接用 Input 替换 Output
-      // 这会让 emitc.for 的 operand 从 cast(index) 变为 const(int32)
-      output.replaceAllUsesWith(input);
-      castsToErase.push_back(cast);
+      Type inTy = input.getType();
+      Type outTy = output.getType();
+
+      if (output.use_empty()) {
+        castsToErase.push_back(cast);
+        return;
+      }
+
+      if (inTy == outTy) {
+        output.replaceAllUsesWith(input);
+        castsToErase.push_back(cast);
+        return;
+      }
+
+      if (emitc::isSupportedEmitCType(inTy) && emitc::isSupportedEmitCType(outTy)) {
+        OpBuilder builder(cast);
+        auto c = builder.create<emitc::CastOp>(cast.getLoc(), outTy, input);
+        output.replaceAllUsesWith(c.getResult());
+        castsToErase.push_back(cast);
+        return;
+      }
+
+      cast.emitError() << "cannot lower unrealized_conversion_cast(" << inTy
+                       << " -> " << outTy << ") to emitc.cast";
+      castCleanupFailed = true;
     });
 
-    for (auto cast : castsToErase) {
+    for (auto cast : castsToErase)
       cast.erase();
+
+    if (castCleanupFailed)
+      return signalPassFailure();
+
+    // --- Step A2: Sink casts of emitc.variable "reads" to their use sites ---
+    //
+    // SCFToEmitC lowers scf.if/scf.for results via mutable `emitc.variable` and
+    // `emitc.assign`. During type conversion, casts from the variable handle to
+    // the converted type may be materialized right after the variable
+    // declaration, effectively snapshotting the value *before* assignments. That
+    // produces wrong C++ (use-before-init / stale reads).
+    //
+    // Fix by re-materializing the cast at each use site so it reads the variable
+    // at the point of use.
+    {
+      SmallVector<emitc::CastOp> castOpsToSink;
+      mop.walk([&](emitc::CastOp castOp) {
+        if (castOp.getSource().getDefiningOp<emitc::VariableOp>())
+          castOpsToSink.push_back(castOp);
+      });
+
+      for (emitc::CastOp castOp : castOpsToSink) {
+        Value src = castOp.getSource();
+        Type dstTy = castOp.getResult().getType();
+        Value oldRes = castOp.getResult();
+
+        // Replace each use with a freshly inserted cast right before the user.
+        for (OpOperand &use : llvm::make_early_inc_range(oldRes.getUses())) {
+          Operation *user = use.getOwner();
+          OpBuilder b(user);
+          b.setInsertionPoint(user);
+          auto newCast = b.create<emitc::CastOp>(castOp.getLoc(), dstTy, src);
+          use.set(newCast.getResult());
+        }
+
+        castOp.erase();
+      }
     }
 
     // --- Step B: 修复 Loop 归纳变量 (IV) ---

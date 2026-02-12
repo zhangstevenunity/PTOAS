@@ -139,9 +139,10 @@ if [[ "${STAGE}" == "run" ]]; then
   log "=== NPU Device Check ==="
   id || true
   ls -l /dev/davinci* 2>/dev/null || true
-  [[ -e /dev/davinci0 ]] || { log "ERROR: /dev/davinci0 not found"; exit 1; }
-  [[ -r /dev/davinci0 && -w /dev/davinci0 ]] || {
-    log "ERROR: no access to /dev/davinci0 (need HwHiAiUser group)";
+  devnode="/dev/davinci${DEVICE_ID}"
+  [[ -e "${devnode}" ]] || { log "ERROR: ${devnode} not found"; exit 1; }
+  [[ -r "${devnode}" && -w "${devnode}" ]] || {
+    log "ERROR: no access to ${devnode} (need HwHiAiUser group)";
     exit 1;
   }
   python3 -c "import numpy as np; print('numpy', np.__version__)" >/dev/null

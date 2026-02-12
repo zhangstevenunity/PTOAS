@@ -499,11 +499,29 @@ def _infer_int_var_maxima(kernel_text: str) -> dict:
     This is used to size GM buffers conservatively for CPU/NPU runs.
     """
     assigns = []
+
+    int_vars = set()
     for m in re.finditer(
-        r"\b(?:unsigned|int|long|size_t|int(?:8|16|32|64)_t|uint(?:8|16|32|64)_t)\s+(\w+)\s*=\s*([^;]+);",
+        r"\b(?:bool|unsigned|int|long|size_t|int(?:8|16|32|64)_t|uint(?:8|16|32|64)_t)\s+(\w+)\s*(?:=\s*[^;]+)?;",
+        kernel_text,
+    ):
+        int_vars.add(m.group(1))
+
+    # Typed initialization (non-hoisted case).
+    for m in re.finditer(
+        r"\b(?:bool|unsigned|int|long|size_t|int(?:8|16|32|64)_t|uint(?:8|16|32|64)_t)\s+(\w+)\s*=\s*([^;]+);",
         kernel_text,
     ):
         name = m.group(1)
+        expr = m.group(2).strip()
+        assigns.append((name, expr))
+
+    # declareVariablesAtTop hoists declarations, leaving untyped assignments like:
+    #   v34 = v29 + v33;
+    for m in re.finditer(r"\b(\w+)\s*=\s*([^;]+);", kernel_text):
+        name = m.group(1)
+        if name not in int_vars:
+            continue
         expr = m.group(2).strip()
         assigns.append((name, expr))
 
@@ -579,6 +597,10 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
 
     int_max = _infer_int_var_maxima(kernel_text)
 
+    pointer_like = set(pointer_param_names)
+    for m in re.finditer(r"__gm__\s+[\w:<>]+\s*\*\s*(\w+)\s*(?:=[^;]+)?;", kernel_text):
+        pointer_like.add(m.group(1))
+
     ptr_to_base_offset = {}
     for m in re.finditer(
         r"__gm__\s+[\w:<>]+\s*\*\s*(\w+)\s*=\s*(\w+)\s*\+\s*([^;]+);",
@@ -586,12 +608,33 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
     ):
         ptr_to_base_offset[m.group(1)] = (m.group(2), m.group(3).strip())
 
+    # declareVariablesAtTop form:
+    #   __gm__ float* v35;
+    #   v35 = v1 + v34;
+    for m in re.finditer(r"\b(\w+)\s*=\s*(\w+)\s*\+\s*([^;]+);", kernel_text):
+        lhs = m.group(1)
+        base = m.group(2)
+        if lhs not in pointer_like:
+            continue
+        if base not in pointer_like and base not in pointer_params:
+            continue
+        ptr_to_base_offset[lhs] = (base, m.group(3).strip())
+
     ptr_to_param = {}
     for m in re.finditer(
         r"__gm__\s+[\w:<>]+\s*\*\s*(\w+)\s*=\s*\(__gm__\s+[\w:<>]+\s*\*\)\s*(\w+)\b",
         kernel_text,
     ):
         ptr_to_param[m.group(1)] = m.group(2)
+
+    for m in re.finditer(r"\b(\w+)\s*=\s*\(__gm__\s+[\w:<>]+\s*\*\)\s*(\w+)\b", kernel_text):
+        lhs = m.group(1)
+        rhs = m.group(2)
+        if lhs not in pointer_like:
+            continue
+        if rhs not in pointer_like and rhs not in pointer_params:
+            continue
+        ptr_to_param[lhs] = rhs
 
     def resolve_param_and_offset(ptr: str):
         cur = ptr
@@ -659,6 +702,24 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
         req = _required_elements_for_shape_stride(shape_dims, stride_dims)
         if not req:
             continue
+        param, off = resolve_param_and_offset(base_ptr)
+        if not param or off is None:
+            continue
+        param_elem_counts[param] = max(param_elem_counts.get(param, 0), req + max(off, 0))
+
+    # Newer PTOAS EmitC output (especially with declareVariablesAtTop) may avoid
+    # `using GTShape = ...; using GTStride = ...;` aliases and instead embeds
+    # pto::Shape/pto::Stride directly in the GlobalTensor template.
+    for m in re.finditer(
+        r"\b(?:pto::)?GlobalTensor<[^;\n]*(?:pto::)?Shape<([^>]*)>[^;\n]*(?:pto::)?Stride<([^>]*)>[^;\n]*>\s*\(\s*(\w+)\s*,",
+        kernel_text,
+    ):
+        shape_dims = _parse_int_list(m.group(1))
+        stride_dims = _parse_int_list(m.group(2))
+        req = _required_elements_for_shape_stride(shape_dims, stride_dims)
+        if not req:
+            continue
+        base_ptr = m.group(3)
         param, off = resolve_param_and_offset(base_ptr)
         if not param or off is None:
             continue
@@ -1179,6 +1240,21 @@ endif()
 
     compare_template = (templates_root / "compare_template.py").read_text(encoding="utf-8")
     compare_lines = ["    ok = True"]
+    compare_prefix_counts = {}
+    for p in output_ptrs:
+        name = p["name"]
+        req = inferred_counts.get(name)
+        if req is None:
+            continue
+        try:
+            req = int(req)
+        except Exception:
+            continue
+        if req <= 0:
+            continue
+        file_cnt = ptr_elem_counts.get(name, logical_elem_count)
+        if file_cnt and req < int(file_cnt):
+            compare_prefix_counts[name] = req
     for p in output_ptrs:
         np_dtype = _np_dtype_for_cpp(p["cpp_type"])
         name = p["name"]
@@ -1188,9 +1264,15 @@ endif()
                 f"    ok = compare_packed_pred_mask(\"golden_{name}.bin\", \"{name}.bin\", {rows}, {cols}) and ok"
             )
         else:
-            compare_lines.append(
-                f"    ok = compare_bin(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}) and ok"
-            )
+            prefix_cnt = compare_prefix_counts.get(name)
+            if prefix_cnt is not None:
+                compare_lines.append(
+                    f"    ok = compare_bin_prefix(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}, {prefix_cnt}) and ok"
+                )
+            else:
+                compare_lines.append(
+                    f"    ok = compare_bin(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}) and ok"
+                )
     compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
     (output_dir / "compare.py").write_text(compare_py, encoding="utf-8")
 

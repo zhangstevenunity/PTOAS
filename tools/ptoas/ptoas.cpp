@@ -297,6 +297,69 @@ static bool rewriteAddPtrTraceMarkers(std::string &cpp, bool showTrace) {
   return changed;
 }
 
+static void rewriteHoistedGlobalTensorDecls(std::string &cpp) {
+  // When `declareVariablesAtTop` is enabled, the C++ emitter hoists SSA value
+  // declarations to the top of the function and emits assignments later. This
+  // requires the C++ type to be default-constructible.
+  //
+  // `GlobalTensor<...>` from pto-isa does NOT have a default constructor, so a
+  // hoisted declaration like:
+  //   GlobalTensor<...> v42;
+  // fails to compile. Initialize those hoisted temporaries with a null pointer
+  // so they are constructible:
+  //   GlobalTensor<...> v42(nullptr);
+  //
+  // We keep the assignment later; the null-initialized value is never used.
+  std::string out;
+  out.reserve(cpp.size() + 64);
+
+  llvm::StringRef ref(cpp);
+  while (!ref.empty()) {
+    auto split = ref.split('\n');
+    llvm::StringRef line = split.first;
+    llvm::StringRef rest = split.second;
+
+    llvm::StringRef trimmed = line.trim();
+    bool rewritten = false;
+    if (trimmed.starts_with("GlobalTensor<") && trimmed.ends_with(";") &&
+        !trimmed.contains('=') && !trimmed.contains('(')) {
+      llvm::StringRef decl = trimmed.drop_back().rtrim();
+      size_t lastWs = decl.find_last_of(" \t");
+      if (lastWs != llvm::StringRef::npos) {
+        llvm::StringRef varName = decl.drop_front(lastWs + 1);
+        if (varName.starts_with("v") && varName.size() > 1) {
+          bool allDigits = true;
+          for (char c : varName.drop_front(1)) {
+            if (c < '0' || c > '9') {
+              allDigits = false;
+              break;
+            }
+          }
+          if (allDigits) {
+            size_t indentLen = line.find_first_not_of(" \t");
+            if (indentLen == std::string::npos)
+              indentLen = 0;
+            llvm::StringRef indent = line.take_front(indentLen);
+
+            out.append(indent.str());
+            out.append(decl.str());
+            out.append("(nullptr);");
+            rewritten = true;
+          }
+        }
+      }
+    }
+
+    if (!rewritten)
+      out.append(line.str());
+    if (!rest.empty())
+      out.push_back('\n');
+    ref = rest;
+  }
+
+  cpp.swap(out);
+}
+
 int main(int argc, char **argv) {
   DialectRegistry registry;
   registry.insert<mlir::func::FuncDialect>();
@@ -385,7 +448,6 @@ int main(int argc, char **argv) {
   
   pm.addPass(createCSEPass());
   pm.addPass(pto::createEmitPTOManualPass());
-  pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(mlir::createCSEPass());
   
   if (failed(pm.run(*module))) {
@@ -400,13 +462,18 @@ int main(int argc, char **argv) {
   // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;
   llvm::raw_string_ostream cppOS(cppOutput);
-  if (failed(emitc::translateToCpp(*module, cppOS))) {
+  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
+  // multiple blocks, requiring variables to be declared at the top for valid
+  // C++ emission.
+  if (failed(emitc::translateToCpp(*module, cppOS,
+                                  /*declareVariablesAtTop=*/true))) {
     llvm::errs() << "Error: Failed to emit C++.\n";
     return 1;
   }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
+  rewriteHoistedGlobalTensorDecls(cppOutput);
   outputFile.os() << cppOutput;
 
   outputFile.keep(); // Success, keep the file
