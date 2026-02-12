@@ -4,7 +4,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOConvertToDPS.cpp
   PTOInsertSync.cpp
   PTOViewToMemref.cpp
-  PTOConvert.cpp
+  PTOToEmitC.cpp
   Utils.cpp
   OptMemPlanForPipeline.cpp
   AllocToPointerCast.cpp
