@@ -1505,159 +1505,26 @@ def TMScatterOp : PTO_TOp<"mscatter", [
 // intrinsic: TCOLSUM(dst, src, tmp, isBinary)
 //===----------------------------------------------------------------------===//
 
-def PTO_ColSumOp_DPS : PTO_DpsOp<"colsum_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Reduce each column by summing across rows (tilebuf-based, explicit tmp)";
-
-  let arguments = (ins
-    PTODpsType:$src,
-    Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst,
-    DefaultValuedOptionalAttr<BoolAttr, "false">:$isBinary
-  );
-
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let hasCustomAssemblyFormat = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
 //===----------------------------------------------------------------------===//
 // TCVT (tilebuf, DPS)
 //   dst = cast_rmode(src)
 //===----------------------------------------------------------------------===//
-
-def PTO_CvtOp_DPS : PTO_DpsOp<"cvt_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Elementwise type conversion with rounding mode (tilebuf, DPS)";
-
-  let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst,
-    DefaultValuedAttr<PTO_RoundModeAttr, "::mlir::pto::RoundMode::CAST_RINT">:$rmode
-  );
-
-  let results = (outs);
-  let hasVerifier = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-}
 
 //===----------------------------------------------------------------------===//
 // TDIV (sync, tilebuf-based tile div)  DPS style
 // dst = src0 / src1 elementwise
 //===----------------------------------------------------------------------===//
 
-def PTO_DivOp_DPS : PTO_DpsOp<"div_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Elementwise division of two tiles (tilebuf, DPS)";
-  let description = [{
-    For each element (i, j): dst[i,j] = src0[i,j] / src1[i,j].
-    Division-by-zero behavior is target-defined.
-  }];
-
-  let arguments = (ins
-    PTODpsType:$src0,
-    PTODpsType:$src1,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
 //===----------------------------------------------------------------------===//
 // TDIVS (tilebuf, DPS)
 // pto.tdivs ins(%src, %scalar) outs(%dst) [scalar_lhs = true|false]
 //===----------------------------------------------------------------------===//
-
-def PTO_DivSOp_DPS : PTO_DpsOp<"divs_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Elementwise division with a scalar (tilebuf, DPS)";
-
-  let arguments = (ins
-    AnyType:$src,
-    AnyType:$scalar,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let hasCustomAssemblyFormat = 1;
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
 
 //===----------------------------------------------------------------------===//
 // TEXP (tilebuf, DPS)
 // pto.texp ins(%src) outs(%dst)
 //===----------------------------------------------------------------------===//
 
-def PTO_ExpOp_DPS : PTO_DpsOp<"exp_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "Elementwise exponential (tilebuf, DPS)";
-
-  let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
 //===----------------------------------------------------------------------===//
 // TEXPANDS (tilebuf, DPS)
 // pto.texpands ins(%scalar) outs(%dst)

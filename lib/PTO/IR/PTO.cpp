@@ -396,116 +396,6 @@ void mlir::pto::TDivSOp::print(OpAsmPrinter &p) {
   p.printOptionalAttrDict((*this)->getAttrs());
 }
 
-// DivSOp_DPS custom asm to support both:
-//   pto.divs_dps ins(%src, %scalar : memref<...>, f32) outs(%dst : memref<...>)
-//   pto.divs_dps ins(%scalar, %src : f32, memref<...>) outs(%dst : memref<...>)
-// The operand order in the op remains (src, scalar, dst); order is determined
-// by the type of the first operand in the textual format.
-//===----------------------------------------------------------------------===//
-
-ParseResult mlir::pto::DivSOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand op0, op1, dst;
-  Type ty0, ty1, dstTy;
-
-  if (parser.parseKeyword("ins") || parser.parseLParen() ||
-      parser.parseOperand(op0) || parser.parseComma() ||
-      parser.parseOperand(op1) || parser.parseColonType(ty0) ||
-      parser.parseComma() || parser.parseType(ty1) || parser.parseRParen())
-    return failure();
-
-  if (parser.parseKeyword("outs") || parser.parseLParen() ||
-      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
-      parser.parseRParen())
-    return failure();
-
-  NamedAttrList attrs;
-  if (parser.parseOptionalAttrDict(attrs))
-    return failure();
-
-  // Check types: exactly one must be memref/tensor, the other must be scalar
-  auto memref0 = dyn_cast<mlir::MemRefType>(ty0);
-  auto tensor0 = dyn_cast<mlir::RankedTensorType>(ty0);
-  auto memref1 = dyn_cast<mlir::MemRefType>(ty1);
-  auto tensor1 = dyn_cast<mlir::RankedTensorType>(ty1);
-  
-  bool isMemref0 = (memref0 != nullptr || tensor0 != nullptr);
-  bool isMemref1 = (memref1 != nullptr || tensor1 != nullptr);
-  
-  if ((isMemref0 && isMemref1) || (!isMemref0 && !isMemref1))
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected exactly one memref/tensor operand and one scalar operand");
-
-  // Check if scalar type is valid (integer, float, or index)
-  Type scalarTy = isMemref0 ? ty1 : ty0;
-  if (!scalarTy.isIntOrIndexOrFloat())
-    return parser.emitError(parser.getCurrentLocation(),
-                            "scalar operand must be integer, float, or index type");
-  // Check dst type
-  auto dstMemref = dyn_cast<mlir::MemRefType>(dstTy);
-  auto dstTensor = dyn_cast<mlir::RankedTensorType>(dstTy);
-  if (!dstMemref && !dstTensor)
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected outs type to be memref or tensor");
-
-  // Determine order based on types: if first operand is memref/tensor, order is (memref, scalar)
-  // Otherwise, order is (scalar, memref) - need to swap
-  const bool scalarFirst = !isMemref0;
-
-  if (!scalarFirst) {
-    // ins(%src, %scalar : memref, scalar_ty)
-    // Operands in op: (src, scalar, dst)
-    if (parser.resolveOperand(op0, ty0, result.operands) ||
-        parser.resolveOperand(op1, ty1, result.operands))
-      return failure();
-  } else {
-    // ins(%scalar, %src : scalar_ty, memref)
-    // Operands in op: (src, scalar, dst) - need to swap
-    if (parser.resolveOperand(op1, ty1, result.operands) ||
-        parser.resolveOperand(op0, ty0, result.operands))
-      return failure();
-  }
-
-  if (parser.resolveOperand(dst, dstTy, result.operands))
-    return failure();
-
-  result.addAttributes(attrs);
-  return success();
-}
-
-
-void mlir::pto::DivSOp_DPS::print(OpAsmPrinter &p) {
-  // Determine order based on operand types
-  // If src is memref/tensor and scalar is not, print (src, scalar)
-  // If src is scalar and scalar is memref/tensor, print (scalar, src)
-  auto srcType = getSrc().getType();
-  auto scalarType = getScalar().getType();
-  
-  auto srcMemref = dyn_cast<mlir::MemRefType>(srcType);
-  auto srcTensor = dyn_cast<mlir::RankedTensorType>(srcType);
-  auto scalarMemref = dyn_cast<mlir::MemRefType>(scalarType);
-  auto scalarTensor = dyn_cast<mlir::RankedTensorType>(scalarType);
-  
-  bool srcIsMemref = (srcMemref != nullptr || srcTensor != nullptr);
-  bool scalarIsMemref = (scalarMemref != nullptr || scalarTensor != nullptr);
-  
-  p << " ins(";
-  if (srcIsMemref && !scalarIsMemref) {
-    // Print: (memref, scalar) - operands are already in correct order
-    p << getSrc() << ", " << getScalar() << " : "
-      << getSrc().getType() << ", " << getScalar().getType();
-  } else if (!srcIsMemref && scalarIsMemref) {
-    // Print: (scalar, memref) - need to swap operands in output
-    p << getScalar() << ", " << getSrc() << " : "
-      << getScalar().getType() << ", " << getSrc().getType();
-  } else {
-    // Default: assume src is memref (should not happen if types are correct)
-    p << getSrc() << ", " << getScalar() << " : "
-      << getSrc().getType() << ", " << getScalar().getType();
-  }
-  p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
-
-  p.printOptionalAttrDict((*this)->getAttrs());
-}
 
 //===----------------------------------------------------------------------===//
 // pto.tgather custom asm to support both:
@@ -1201,334 +1091,9 @@ LogicalResult mlir::pto::TransOp::verify() {
 
 
 //===----------------------------------------------------------------------===//
-// ColSumOp_DPS custom assembly format
-//===----------------------------------------------------------------------===//
-
-ParseResult mlir::pto::ColSumOp_DPS::parse(OpAsmParser &parser, OperationState &result) {
-  OpAsmParser::UnresolvedOperand src;
-  OpAsmParser::UnresolvedOperand tmp;
-  OpAsmParser::UnresolvedOperand dst;
-  Type srcTy, tmpTy, dstTy;
-  bool hasTmp = false;
-
-  // Parse: ins(%src : type) or ins(%src, %tmp {isBinary = ...}: type, type)
-  if (parser.parseKeyword("ins") || parser.parseLParen() || parser.parseOperand(src))
-    return failure();
-
-  // Check for optional tmp operand (format 2)
-  if (succeeded(parser.parseOptionalComma())) {
-    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type)
-    if (parser.parseOperand(tmp))
-      return failure();
-    hasTmp = true;
-
-    // Parse attributes (isBinary)
-    if (parser.parseOptionalAttrDict(result.attributes))
-      return failure();
-
-    // Parse types: : type, type
-    if (parser.parseColonType(srcTy) || parser.parseComma() || parser.parseType(tmpTy))
-      return failure();
-  } else {
-    // Format 1: ins(%src : type)
-    if (parser.parseColonType(srcTy))
-      return failure();
-  }
-
-  if (parser.parseRParen())
-    return failure();
-
-  // Parse: outs(%dst : type)
-  if (parser.parseKeyword("outs") || parser.parseLParen() ||
-      parser.parseOperand(dst) || parser.parseColonType(dstTy) ||
-      parser.parseRParen())
-    return failure();
-
-  // Parse any remaining attributes (for format 1)
-  if (!hasTmp) {
-    if (parser.parseOptionalAttrDict(result.attributes))
-      return failure();
-  }
-
-  // Resolve operands
-  if (parser.resolveOperand(src, srcTy, result.operands))
-    return failure();
-
-  int32_t tmpSize = hasTmp ? 1 : 0;
-
-  if (hasTmp) {
-    if (parser.resolveOperand(tmp, tmpTy, result.operands))
-      return failure();
-  }
-
-  if (parser.resolveOperand(dst, dstTy, result.operands))
-    return failure();
-
-  return success();
-}
-
-void mlir::pto::ColSumOp_DPS::print(OpAsmPrinter &p) {
-  if (getTmp()) {
-    // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
-    p << " ins(" << getSrc() << ", " << getTmp();
-    // Print isBinary attribute if present
-    SmallVector<StringRef, 1> elidedAttrs;
-    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
-      elidedAttrs.push_back("isBinary");
-    }
-    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
-    p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
-  } else {
-    // Format 1: ins(%src : type) outs(%dst : type)
-    p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
-  }
-
-  p << " outs(" << getDst() << " : " << getDst().getType() << ")";
-
-  // Print remaining attributes for format 1 (excluding isBinary)
-  if (!getTmp()) {
-    SmallVector<StringRef, 1> elidedAttrs = {"isBinary"};
-    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
-  }
-}
-
-LogicalResult pto::ColSumOp_DPS::verify() {
-  auto srcTy = dyn_cast<mlir::MemRefType>(getSrc().getType());
-  if (!srcTy)
-    return emitOpError("expects src to be memref");
-
-  auto dstTy = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!dstTy)
-    return emitOpError("expects dst to be memref");
-
-  // Verify tmp and isBinary consistency: they must appear together or not at all
-  bool hasTmp = (bool)getTmp();
-  bool hasIsBinary = (bool)getIsBinaryAttr();
-  
-  if (hasTmp != hasIsBinary) {
-    if (hasTmp)
-      return emitOpError("tmp operand requires isBinary attribute");
-    else
-      return emitOpError("isBinary attribute requires tmp operand");
-  }
-
-  // If tmp is present, verify its type
-  if (getTmp()) {
-    auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
-    if (!tmpTy)
-      return emitOpError("expects tmp to be memref");
-
-    // Verify type relationships
-    if (srcTy.getElementType() != dstTy.getElementType() ||
-        srcTy.getElementType() != tmpTy.getElementType())
-      return emitOpError("expects src/tmp/dst element types to match");
-
-    if (srcTy.getRank() != tmpTy.getRank())
-      return emitOpError("expects src/tmp to have same rank");
-  }
-
-  // Verify src/dst relationships
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError("expects src/dst element types to match");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects dst to have same rank as src");
-
-  if (srcTy.getRank() >= 2) {
-    int64_t srcC = srcTy.getShape()[1];
-    int64_t dstC = dstTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
-      return emitOpError("expects src/dst to have same number of columns (dim1)");
-
-    if (getTmp()) {
-      auto tmpTy = dyn_cast<mlir::MemRefType>(getTmp().getType());
-      int64_t tmpC = tmpTy.getShape()[1];
-      if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
-        return emitOpError("expects src/tmp to have same number of columns (dim1)");
-    }
-  }
-
-  if (dstTy.getRank() >= 1) {
-    int64_t dstR = dstTy.getShape()[0];
-    if (dstR != ShapedType::kDynamic && dstR != 1)
-      return emitOpError("expects dst dim0 to be 1 (column-reduction result)");
-  }
-
-  return success();
-}
-//===----------------------------------------------------------------------===//
 // PTO_TCvtOp_DPS verification
 //===----------------------------------------------------------------------===//
 
-llvm::LogicalResult mlir::pto::CvtOp_DPS::verify() {
-  auto srcTy = llvm::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = llvm::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy) return emitOpError("expects memref src/dst");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("src/dst rank mismatch");
-
-  return mlir::success();
-}
-
-LogicalResult mlir::pto::DivOp_DPS::verify() {
-  auto src0Ty = dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto src1Ty = dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto dstTy  = dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError("expects memref operands");
-
-  // 只支持 half/float（按你给的约束）
-  auto elem0 = src0Ty.getElementType();
-  auto elem1 = src1Ty.getElementType();
-  auto elemd = dstTy.getElementType();
-  if (elem0 != elem1 || elem0 != elemd)
-    return emitOpError("src0/src1/dst element type must match");
-
-  if (!elem0.isF16() && !elem0.isF32())
-    return emitOpError("only supports f16/f32 element type");
-
-  if (src0Ty.getRank() != src1Ty.getRank() || src0Ty.getRank() != dstTy.getRank())
-    return emitOpError("src0/src1/dst rank mismatch");
-
-  return success();
-}
-//===----------------------------------------------------------------------===//
-// TDivSOp_DPS verifier
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::DivSOp_DPS::verify() {
-  // DivSOp_DPS supports both (memref, scalar) and (scalar, memref) operand orders
-  // The parse/print logic handles the reordering, but internally operands are always (src, scalar, dst)
-  // where src is the memref/tensor and scalar is the scalar value
-  
-  auto srcType = getSrc().getType();
-  auto scalarType = getScalar().getType();
-  auto dstType = getDst().getType();
-  
-  // Determine which operand is the memref/tensor (could be src or scalar depending on parse order)
-  mlir::MemRefType memrefTy = nullptr;
-  mlir::RankedTensorType tensorTy = nullptr;
-  mlir::pto::PartitionTensorViewType partitionTy = nullptr;
-  Type scalarTy = nullptr;
-  
-  // Check if src is memref/tensor/partition_tensor_view (not scalar)
-  bool srcIsDps = (isa<mlir::MemRefType>(srcType) || 
-                    isa<mlir::RankedTensorType>(srcType) ||
-                    isa<mlir::pto::PartitionTensorViewType>(srcType) ||
-                    isa<mlir::pto::TileBufType>(srcType));
-  // Check if scalar is memref/tensor/partition_tensor_view (not scalar)
-  bool scalarIsDps = (isa<mlir::MemRefType>(scalarType) || 
-                       isa<mlir::RankedTensorType>(scalarType) ||
-                       isa<mlir::pto::PartitionTensorViewType>(scalarType) ||
-                       isa<mlir::pto::TileBufType>(scalarType));
-  
-  if (srcIsDps && !scalarIsDps) {
-    // Case 1: (memref/tensor/partition, scalar) - normal order
-    if (auto srcMemref = dyn_cast<mlir::MemRefType>(srcType)) {
-      memrefTy = srcMemref;
-    } else if (auto srcTensor = dyn_cast<mlir::RankedTensorType>(srcType)) {
-      tensorTy = srcTensor;
-    } else if (auto srcPartition = dyn_cast<mlir::pto::PartitionTensorViewType>(srcType)) {
-      partitionTy = srcPartition;
-    }
-    scalarTy = scalarType;
-  } else if (!srcIsDps && scalarIsDps) {
-    // Case 2: (scalar, memref/tensor/partition) - swapped order
-    if (auto scalarMemref = dyn_cast<mlir::MemRefType>(scalarType)) {
-      memrefTy = scalarMemref;
-    } else if (auto scalarTensor = dyn_cast<mlir::RankedTensorType>(scalarType)) {
-      tensorTy = scalarTensor;
-    } else if (auto scalarPartition = dyn_cast<mlir::pto::PartitionTensorViewType>(scalarType)) {
-      partitionTy = scalarPartition;
-    }
-    scalarTy = srcType;
-  } else {
-    return emitOpError("expects exactly one memref/tensor/partition_tensor_view operand and one scalar operand");
-  }
- 
-  // Check scalar type is valid
-  if (!scalarTy.isIntOrIndexOrFloat())
-    return emitOpError("scalar operand must be integer, float, or index type");
-  
-  auto dstMemref = dyn_cast<mlir::MemRefType>(dstType);
-  auto dstTensor = dyn_cast<mlir::RankedTensorType>(dstType);
-  if (!dstMemref && !dstTensor)
-    return emitOpError("expects memref or tensor type for dst");
-
-  // Get element type from memref, tensor, or partition_tensor_view
-  Type elemTy;
-  if (memrefTy) {
-    elemTy = memrefTy.getElementType();
-  } else if (tensorTy) {
-    elemTy = tensorTy.getElementType();
-  } else if (partitionTy) {
-    elemTy = partitionTy.getElementType();
-  } else {
-    return emitOpError("internal error: no memref/tensor/partition_tensor_view type found");
-  }
-  
-  Type dstElemTy;
-  if (dstMemref) {
-    dstElemTy = dstMemref.getElementType();
-  } else {
-    dstElemTy = dstTensor.getElementType();
-  }
-
-
-
-  // element type must match
-  if (elemTy != dstElemTy)
-    return emitOpError("expects memref/tensor and dst element type to match");
-
-  // scalar type must match element type
-  if (scalarTy != elemTy)
-    return emitOpError("expects scalar type to match memref/tensor element type");
-
-  // shape/rank must match (only check if both are memref or tensor, skip partition_tensor_view)
-  if (memrefTy || tensorTy) {
-    int64_t rank = memrefTy ? memrefTy.getRank() : tensorTy.getRank();
-    int64_t dstRank = dstMemref ? dstMemref.getRank() : dstTensor.getRank();
-    if (rank != dstRank)
-      return emitOpError("expects same rank for memref/tensor and dst");
-    
-    ArrayRef<int64_t> shape = memrefTy ? memrefTy.getShape() : tensorTy.getShape();
-    ArrayRef<int64_t> dstShape = dstMemref ? dstMemref.getShape() : dstTensor.getShape();
-    
-    if (shape != dstShape)
-      return emitOpError("expects same shape for memref/tensor and dst");
-  }
-  // For partition_tensor_view, shape/rank validation is handled elsewhere
-
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// TExpOp_DPS verifier
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::ExpOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects memref types for src/dst");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects same rank for src and dst");
-  if (srcTy.getShape() != dstTy.getShape())
-    return emitOpError("expects same shape for src and dst");
-
-  Type srcElem = srcTy.getElementType();
-  Type dstElem = dstTy.getElementType();
-  if (srcElem != dstElem)
-    return emitOpError("expects src/dst element type to match");
-
-  // spec: float or half
-  if (!srcElem.isF16() && !srcElem.isF32())
-    return emitOpError("expects element type to be f16 or f32");
-
-  return mlir::success();
-}
 //===----------------------------------------------------------------------===//
 // TExpandsOp_DPS verifier
 //===----------------------------------------------------------------------===//
@@ -3607,13 +3172,10 @@ void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult pto::TColSumOp::verify() {
-  auto srcTy = dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  if (!srcTy)
-    return emitOpError("expects src to be tilebuf");
-
-  auto dstTy = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!dstTy)
-    return emitOpError("expects dst to be tilebuf");
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError("expects src/dst to be PTO shaped-like types");
 
   // Verify tmp and isBinary consistency: they must appear together or not at all
   bool hasTmp = (bool)getTmp();
@@ -3628,42 +3190,37 @@ LogicalResult pto::TColSumOp::verify() {
 
   // If tmp is present, verify its type
   if (getTmp()) {
-    auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
-    if (!tmpTy)
-      return emitOpError("expects tmp to be tilebuf");
-
-    // Verify type relationships
-    if (srcTy.getElementType() != dstTy.getElementType() ||
-        srcTy.getElementType() != tmpTy.getElementType())
+    Type tmpTy = getTmp().getType();
+    if (!isPTOShapedLike(tmpTy))
+      return emitOpError("expects tmp to be PTO shaped-like type");
+    if (getElemTy(srcTy) != getElemTy(dstTy) || getElemTy(srcTy) != getElemTy(tmpTy))
       return emitOpError("expects src/tmp/dst element types to match");
-
-    if (srcTy.getRank() != tmpTy.getRank())
+    auto srcShape = getShapeVec(srcTy);
+    auto tmpShape = getShapeVec(tmpTy);
+    if (srcShape.size() != tmpShape.size())
       return emitOpError("expects src/tmp to have same rank");
-  }
-
-  // Verify src/dst relationships
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError("expects src/dst element types to match");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects dst to have same rank as src");
-
-  if (srcTy.getRank() >= 2) {
-    int64_t srcC = srcTy.getShape()[1];
-    int64_t dstC = dstTy.getShape()[1];
-    if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
-      return emitOpError("expects src/dst to have same number of columns (dim1)");
-
-    if (getTmp()) {
-      auto tmpTy = dyn_cast<mlir::pto::TileBufType>(getTmp().getType());
-      int64_t tmpC = tmpTy.getShape()[1];
+    if (srcShape.size() >= 2) {
+      int64_t srcC = srcShape[1];
+      int64_t tmpC = tmpShape[1];
       if (srcC != ShapedType::kDynamic && tmpC != ShapedType::kDynamic && srcC != tmpC)
         return emitOpError("expects src/tmp to have same number of columns (dim1)");
     }
   }
 
-  if (dstTy.getRank() >= 1) {
-    int64_t dstR = dstTy.getShape()[0];
+  if (getElemTy(srcTy) != getElemTy(dstTy))
+    return emitOpError("expects src/dst element types to match");
+  auto srcShape = getShapeVec(srcTy);
+  auto dstShape = getShapeVec(dstTy);
+  if (srcShape.size() != dstShape.size())
+    return emitOpError("expects dst to have same rank as src");
+  if (srcShape.size() >= 2) {
+    int64_t srcC = srcShape[1];
+    int64_t dstC = dstShape[1];
+    if (srcC != ShapedType::kDynamic && dstC != ShapedType::kDynamic && srcC != dstC)
+      return emitOpError("expects src/dst to have same number of columns (dim1)");
+  }
+  if (!dstShape.empty()) {
+    int64_t dstR = dstShape[0];
     if (dstR != ShapedType::kDynamic && dstR != 1)
       return emitOpError("expects dst dim0 to be 1 (column-reduction result)");
   }
@@ -3675,43 +3232,31 @@ LogicalResult pto::TColSumOp::verify() {
 //===----------------------------------------------------------------------===//
 
 llvm::LogicalResult mlir::pto::TCvtOp::verify() {
-  auto srcTy = llvm::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = llvm::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy) return emitOpError("expects tilebuf src/dst");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("src/dst rank mismatch");
-
-  if (srcTy.getShape() != dstTy.getShape())
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError("expects src/dst to be PTO shaped-like types");
+  if (getShapeVec(srcTy) != getShapeVec(dstTy))
     return emitOpError("src/dst shape mismatch");
 
   return mlir::success();
 }
 
 LogicalResult mlir::pto::TDivOp::verify() {
-  auto src0Ty = dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto src1Ty = dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto dstTy  = dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError("expects tilebuf operands");
-
-  // 只支持 half/float（按你给的约束）
-  auto elem0 = src0Ty.getElementType();
-  auto elem1 = src1Ty.getElementType();
-  auto elemd = dstTy.getElementType();
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) || !isPTOShapedLike(dstTy))
+    return emitOpError("expects src0/src1/dst to be PTO shaped-like types");
+  auto elem0 = getElemTy(src0Ty);
+  auto elem1 = getElemTy(src1Ty);
+  auto elemd = getElemTy(dstTy);
   if (elem0 != elem1 || elem0 != elemd)
     return emitOpError("src0/src1/dst element type must match");
 
   if (!elem0.isF16() && !elem0.isF32())
     return emitOpError("only supports f16/f32 element type");
-
-  if (src0Ty.getRank() != src1Ty.getRank() || src0Ty.getRank() != dstTy.getRank())
-    return emitOpError("src0/src1/dst rank mismatch");
-
-  if (src0Ty.getShape() != src1Ty.getShape())
-    return emitOpError("src0/src1 shape mismatch");
-
-  if (src0Ty.getShape() != dstTy.getShape())
+  if (getShapeVec(src0Ty) != getShapeVec(src1Ty) || getShapeVec(src0Ty) != getShapeVec(dstTy))
     return emitOpError("src0/dst shape mismatch");
 
   return success();
@@ -3726,38 +3271,31 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
   auto dstType = getDst().getType();
   
   // Determine which operand is the tile_buf (could be src or scalar depending on parse order)
-  mlir::pto::TileBufType tileTy = nullptr;
+  Type tileTy = nullptr;
   Type scalarTy = nullptr;
   
-  if (auto srcTile = dyn_cast<mlir::pto::TileBufType>(srcType)) {
-    // Case 1: (tile, scalar) - normal order
-    tileTy = srcTile;
+  if (isPTOShapedLike(srcType) && !isPTOShapedLike(scalarType)) {
+    tileTy = srcType;
     scalarTy = scalarType;
-  } else if (auto scalarTile = dyn_cast<mlir::pto::TileBufType>(scalarType)) {
-    // Case 2: (scalar, tile) - swapped order
-    tileTy = scalarTile;
+  } else if (!isPTOShapedLike(srcType) && isPTOShapedLike(scalarType)) {
+    tileTy = scalarType;
     scalarTy = srcType;
   } else {
-    return emitOpError("expects exactly one tile_buf operand and one scalar operand");
+    return emitOpError("expects exactly one PTO shaped-like operand and one scalar operand");
   }
   
   // Check scalar type is valid (integer, float, or index)
   if (!scalarTy.isIntOrIndexOrFloat())
     return emitOpError("scalar operand must be integer, float, or index type");
   
-  auto dstTy = dyn_cast<mlir::pto::TileBufType>(dstType);
-  if (!dstTy)
-    return emitOpError("expects tilebuf type for dst");
-
-  // shape/rank must match
-  if (tileTy.getRank() != dstTy.getRank())
-    return emitOpError("expects same rank for tile and dst");
-  if (tileTy.getShape() != dstTy.getShape())
+  if (!isPTOShapedLike(dstType))
+    return emitOpError("expects PTO shaped-like type for dst");
+  if (getShapeVec(tileTy) != getShapeVec(dstType))
     return emitOpError("expects same shape for tile and dst");
 
   // element type must match
-  Type elemTy = tileTy.getElementType();
-  if (dstTy.getElementType() != elemTy)
+  Type elemTy = getElemTy(tileTy);
+  if (getElemTy(dstType) != elemTy)
     return emitOpError("expects tile/dst element type to match");
 
   // scalar type must match element type
@@ -3772,18 +3310,15 @@ mlir::LogicalResult mlir::pto::TDivSOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TExpOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects tilebuf types for src/dst");
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError("expects same rank for src and dst");
-  if (srcTy.getShape() != dstTy.getShape())
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError("expects PTO shaped-like types for src/dst");
+  if (getShapeVec(srcTy) != getShapeVec(dstTy))
     return emitOpError("expects same shape for src and dst");
 
-  Type srcElem = srcTy.getElementType();
-  Type dstElem = dstTy.getElementType();
+  Type srcElem = getElemTy(srcTy);
+  Type dstElem = getElemTy(dstTy);
   if (srcElem != dstElem)
     return emitOpError("expects src/dst element type to match");
 
@@ -6657,28 +6192,6 @@ void StoreScalarOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getPtrMutable());
 }
-
-void ColSumOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrcMutable());
-  auto tmp = getTmpMutable();
-  if (!tmp.empty()) {
-    PTO_ADD_WRITE(tmp[0]);
-  }
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-PTO_DEFINE_UNARY_EFFECTS(CvtOp_DPS, getSrcMutable(), getDstMutable())
-PTO_DEFINE_BINARY_EFFECTS(DivOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
-
-void DivSOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrcMutable());
-  PTO_ADD_READ(getScalarMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-PTO_DEFINE_UNARY_EFFECTS(ExpOp_DPS, getSrcMutable(), getDstMutable())
 
 void ExpandsOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

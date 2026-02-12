@@ -4340,10 +4340,10 @@ struct PTOColMinToEmitC : public OpConversionPattern<pto::TColMinOp> {
     return success();
   }
 };
-struct PTOColSumToEmitC : public OpConversionPattern<pto::ColSumOp_DPS> {
-  using OpConversionPattern<pto::ColSumOp_DPS>::OpConversionPattern;
+struct PTOColSumToEmitC : public OpConversionPattern<pto::TColSumOp> {
+  using OpConversionPattern<pto::TColSumOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::ColSumOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TColSumOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
@@ -4396,10 +4396,10 @@ static std::string roundModeTok(mlir::pto::RoundModeAttr attr) {
   }
   return "RoundMode::CAST_RINT";
 }
-struct PTOCvtToEmitC : public OpConversionPattern<pto::CvtOp_DPS> {
-  using OpConversionPattern<pto::CvtOp_DPS>::OpConversionPattern;
+struct PTOCvtToEmitC : public OpConversionPattern<pto::TCvtOp> {
+  using OpConversionPattern<pto::TCvtOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::CvtOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TCvtOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
@@ -4432,10 +4432,10 @@ struct PTOCvtToEmitC : public OpConversionPattern<pto::CvtOp_DPS> {
 // pto.tdiv lowering -> TDIV(dst, src0, src1)
 //===----------------------------------------------------------------------===//
 
-struct PTODivToTDIV : public OpConversionPattern<pto::DivOp_DPS> {
-  using OpConversionPattern<pto::DivOp_DPS>::OpConversionPattern;
+struct PTODivToTDIV : public OpConversionPattern<pto::TDivOp> {
+  using OpConversionPattern<pto::TDivOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::DivOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TDivOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
@@ -4456,10 +4456,10 @@ struct PTODivToTDIV : public OpConversionPattern<pto::DivOp_DPS> {
 // Otherwise, order is (scalar, tile)
 //===----------------------------------------------------------------------===//
 
-struct PTODivSToEmitC : public OpConversionPattern<pto::DivSOp_DPS> {
-  using OpConversionPattern<pto::DivSOp_DPS>::OpConversionPattern;
+struct PTODivSToEmitC : public OpConversionPattern<pto::TDivSOp> {
+  using OpConversionPattern<pto::TDivSOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::DivSOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TDivSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -4498,7 +4498,7 @@ struct PTODivSToEmitC : public OpConversionPattern<pto::DivSOp_DPS> {
           ValueRange{dst, scalar, src});
     } else {
       // This should not happen if verifier is correct, but provide a fallback
-      return op.emitError("DivSOp_DPS: expected exactly one memref/tensor operand and one scalar operand");
+      return op.emitError("TDivSOp: expected exactly one memref/tensor operand and one scalar operand");
     }
 
     rewriter.eraseOp(op);
@@ -4555,10 +4555,10 @@ struct PTOTDivSToEmitC : public OpConversionPattern<pto::TDivSOp> {
 // pto.texp lowering -> TEXP(dst, src)
 //===----------------------------------------------------------------------===//
 
-struct PTOExpToEmitC : public OpConversionPattern<pto::ExpOp_DPS> {
-  using OpConversionPattern<pto::ExpOp_DPS>::OpConversionPattern;
+struct PTOExpToEmitC : public OpConversionPattern<pto::TExpOp> {
+  using OpConversionPattern<pto::TExpOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::ExpOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TExpOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 

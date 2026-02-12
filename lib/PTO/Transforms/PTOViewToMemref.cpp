@@ -1034,7 +1034,7 @@ struct PTOViewToMemrefPass
       for (auto op : exp) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::ExpOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExpOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1));
       }
 
@@ -1662,7 +1662,7 @@ struct PTOViewToMemrefPass
             isBinaryAttr = BoolAttr::get(ctx, false);
           }
 
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               src,
@@ -1680,7 +1680,7 @@ struct PTOViewToMemrefPass
               attrs.push_back(attr);
             }
           }
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               operands,
@@ -1708,7 +1708,7 @@ struct PTOViewToMemrefPass
 
         auto rmodeAttr = op.getRmodeAttr(); // PTO_RoundModeAttr
 
-        auto newOp = rewriter.create<pto::CvtOp_DPS>(
+        auto newOp = rewriter.create<pto::TCvtOp>(
             op.getLoc(),
             TypeRange{},
             src,
@@ -1740,7 +1740,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivOp>(
             op,
             TypeRange{},
             src0,
@@ -1768,7 +1768,7 @@ struct PTOViewToMemrefPass
         auto dstTileTy = dyn_cast<mlir::pto::TileBufType>(dst.getType());
         
         // Determine which operand is the tile/memref and which is the scalar
-        // DivSOp_DPS expects (memref, scalar, dst) internally, so we need to ensure correct order
+        // TDivSOp expects (memref, scalar, dst) internally, so we need to ensure correct order
         // Check if src is memref/tensor/tile (not scalar)
         bool srcIsMemref = (srcTy != nullptr || srcTileTy != nullptr || 
                             isa<RankedTensorType>(src.getType()) ||
@@ -1803,12 +1803,12 @@ struct PTOViewToMemrefPass
           scalarOperand = scale;
         } else {
           // Swapped order: (src=scalar, scale=tile/memref, dst)
-          // Need to swap to (memref, scalar, dst) for DivSOp_DPS
+          // Need to swap to (memref, scalar, dst) for TDivSOp
           memrefOperand = scale;
           scalarOperand = src;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivSOp>(
             op,
             TypeRange{},
             memrefOperand,
