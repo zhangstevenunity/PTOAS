@@ -28,15 +28,15 @@ def build(M=32, N=32, K=32, TM=32, TN=32, TK=32):
 
             pd = pto.PadValueAttr.get(pto.PadValue.Zero, ctx)
             ub_nd_cfg = pto.TileBufConfigAttr.get(pto.BLayoutAttr.get(
-                pto.BLayout.RowMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx), 512, pd, ctx)
+                pto.BLayout.RowMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx), pto.TileConfig.fractalABSize, pd, ctx)
             ub_dn_cfg = pto.TileBufConfigAttr.get(pto.BLayoutAttr.get(
-                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx), 512, pd, ctx)
+                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx), pto.TileConfig.fractalABSize, pd, ctx)
             cfg_mat = pto.TileBufConfigAttr.get(pto.BLayoutAttr.get(
-                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx), 512, pd, ctx)
+                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx), pto.TileConfig.fractalABSize, pd, ctx)
             cfg_right = pto.TileBufConfigAttr.get(pto.BLayoutAttr.get(
-                pto.BLayout.RowMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.ColMajor, ctx), 512, pd, ctx)
+                pto.BLayout.RowMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.ColMajor, ctx), pto.TileConfig.fractalABSize, pd, ctx)
             cfg_acc = pto.TileBufConfigAttr.get(pto.BLayoutAttr.get(
-                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx), 1024, pd, ctx)
+                pto.BLayout.ColMajor, ctx), pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx), pto.TileConfig.fractalCSize, pd, ctx)
 
             # ub type and layout
             ub_tile = pto.TileBufType.get([TM, TN], f32, vec, [TM, TN], ub_nd_cfg, ctx)

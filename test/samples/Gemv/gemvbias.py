@@ -39,42 +39,42 @@ def build():
             cfg_a_mat = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx),
-                512,
+                pto.TileConfig.fractalABSize,
                 pd,
                 ctx,
             )
             cfg_b_mat = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
-                512,
+                pto.TileConfig.fractalABSize,
                 pd,
                 ctx,
             )
             cfg_left = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
-                512,
+                pto.TileConfig.fractalABSize,
                 pd,
                 ctx,
             )
             cfg_right = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.ColMajor, ctx),
-                512,
+                pto.TileConfig.fractalABSize,
                 pd,
                 ctx,
             )
             cfg_acc = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx),
-                1024,
+                pto.TileConfig.fractalCSize,
                 pd,
                 ctx,
             )
             cfg_bias = pto.TileBufConfigAttr.get(
                 pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx),
                 pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx),
-                512,
+                pto.TileConfig.fractalABSize,
                 pd,
                 ctx,
             )

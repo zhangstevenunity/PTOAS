@@ -21,7 +21,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
             # TCOLMAX reduces rows -> (1 x C). Keep a 32x32 physical tile for alignment,
             # but set valid shape to (1 x 32) so only the meaningful row is stored.

@@ -39,7 +39,8 @@ def build():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_1x128 = pto.TileBufType.get([1, 128], f32, vec, [1, 128], cfg, ctx)
             tile_buf_1x512 = pto.TileBufType.get([1, 512], f32, vec, [1, 512], cfg, ctx)
 

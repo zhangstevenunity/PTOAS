@@ -21,7 +21,8 @@ def build_mixed_shape():
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
 
             # [核心定义 1] 混合类型的 TileBufType
             # valid_shape=[-1, 32] 表示: Row 是动态的(?), Col 是静态的(32)

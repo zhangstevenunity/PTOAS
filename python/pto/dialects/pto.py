@@ -50,7 +50,9 @@ __all__ = [
     "CmpMode", "CmpModeAttr",
     "SyncOpType", "SyncOpTypeAttr",
     "EVENT", "EventAttr",
-    "get_gm_type", "TileBufConfigAttr",
+    "MaskPattern", "MaskPatternAttr",
+    "TileBufConfigAttr",
+    "TileConfig",
     # High-level sync helpers
     "record_event", "wait_event", "barrier"
 
@@ -139,3 +141,13 @@ EVENT_ID4 = EVENT.EVENT_ID4
 EVENT_ID5 = EVENT.EVENT_ID5
 EVENT_ID6 = EVENT.EVENT_ID6
 EVENT_ID7 = EVENT.EVENT_ID7
+
+class TileConfig:
+    alignedSize = 32
+    fixedRowSize = 16
+    fixedColSize = 16
+    fixedMxRowSize = 16
+    fixedMxColSize = 2
+    fractalABSize = 512
+    fractalCSize = 1024
+    fractalMxSize = 32

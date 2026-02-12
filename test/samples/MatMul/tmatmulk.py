@@ -110,7 +110,7 @@ def build(
         cfg_bias = pto.TileBufConfigAttr.get(
             pto.BLayoutAttr.get(pto.BLayout.RowMajor),
             pto.SLayoutAttr.get(pto.SLayout.NoneBox), 
-            512,
+            pto.TileConfig.fractalABSize,
             pto.PadValueAttr.get(pto.PadValue.Null)
         )
 

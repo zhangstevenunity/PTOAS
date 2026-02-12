@@ -20,7 +20,8 @@ def build():
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            cfg = pto.TileBufConfigAttr.get(bl, sl, 512, pd, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             # TCI only initializes a 1xC row (see pto-isa: TCI loops `i < validCol`).
             tile_buf_1x32 = pto.TileBufType.get([1, 32], i32, vec, [1, 32], cfg, ctx)
 
