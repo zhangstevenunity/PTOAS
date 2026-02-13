@@ -53,9 +53,9 @@ private:
  
   // --- 辅助函数 ---
   
-  // 生成用于多缓冲 ID 选择的 Value (e.g., select(cond, id0, id1))
-  Value GetBufferSelected(IRRewriter &rewriter, Operation *op,
-                          SyncOperation *sync);
+  // 生成用于多缓冲 ID 选择的条件 (e.g., iv % 2 == 0)
+  Value GetBufferSelectCond(IRRewriter &rewriter, Operation *op,
+                            SyncOperation *sync);
  
   // 生成嵌套循环的计数器 (用于多缓冲切换)
   Value createNestedIndexModular(IRRewriter &rewriter, Operation *defineOp);
@@ -71,8 +71,8 @@ private:
   // 记录 Loop -> Counter 的映射 (缓存)
   DenseMap<Operation *, Value> loop2BufferCounter;
  
-  // 记录 SyncIndex -> EventID Value 的映射 (缓存)
-  DenseMap<unsigned, Value> SyncIndex2SelectBuffer;
+  // 记录 SyncIndex -> Condition Value 的映射 (缓存)
+  DenseMap<unsigned, Value> SyncIndex2SelectCond;
 };
  
 } // namespace pto

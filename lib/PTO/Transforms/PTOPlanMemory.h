@@ -350,7 +350,7 @@ private:
   bool isSkippableOp(Operation *op) const;
 
   /// Update multi buffer information.
-  //void UpdateMultiBufferInfo(annotation::MarkOp markOp);
+  void UpdateMultiBufferInfo(pto::MarkMultiBufferOp markOp);
 
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
