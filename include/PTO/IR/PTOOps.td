@@ -1612,39 +1612,6 @@ def TMScatterOp : PTO_TOp<"mscatter", [
 // PTOOps.td  (add TPARTADD DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// PTOOps.td  (add TXORS DPS/tilebuf op)
-//===----------------------------------------------------------------------===//
-
-def PTO_XORSOp_DPS : PTO_DpsOp<"xors_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "TXORS: elementwise bitwise XOR of a tile and a scalar (tilebuf, DPS)";
-
-  let arguments = (ins
-    PTODpsType:$src0,
-    AnyInteger:$scalar,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $src0 `,` $scalar `:` qualified(type($src0)) `,` type($scalar) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-
-}
-
 def PTO_PrintOp_DPS: PTO_TOp<"print_dps", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
@@ -1662,69 +1629,6 @@ def PTO_PrintOp_DPS: PTO_TOp<"print_dps", [
     attr-dict
   }];
 }
-//===----------------------------------------------------------------------===//
-// PTOOps.td  (add TSYNC DPS/tilebuf op)
-//===----------------------------------------------------------------------===//
-
-def PTO_SYNCOp_DPS : PTO_DpsOp<"sync_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "TSYNC: Synchronize PTO execution with event tokens or single-op barrier.";
-
-  let arguments = (ins
-    PTODpsType:$events,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $events `:` type($events) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_ALL; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
-//===----------------------------------------------------------------------===//
-// PTOOps.td  (add TXOR DPS/tilebuf op)
-//===----------------------------------------------------------------------===//
-
-def PTO_XOROp_DPS : PTO_DpsOp<"xor_dps", [
-  OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
-]> {
-  let summary = "TXOR: elementwise bitwise XOR of two tiles (tilebuf, DPS)";
-
-  let arguments = (ins
-    PTODpsType:$src0,
-    PTODpsType:$src1,
-    PTODpsType:$dst
-  );
-
-  let results = (outs);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    `ins` `(` $src0 `,` $src1 `:` qualified(type($src0)) `,` qualified(type($src1)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
-  }];
-}
-
 
 //===----------------------------------------------------------------------===//
 // PTO_TOPs(Tilebuffer, DPS)

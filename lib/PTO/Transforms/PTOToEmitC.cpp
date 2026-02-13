@@ -6088,10 +6088,10 @@ struct PTOSubSCToEmitC : public OpConversionPattern<pto::TSubSCOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TXOR DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOXORToEmitC : public OpConversionPattern<pto::XOROp_DPS> {
-  using OpConversionPattern<pto::XOROp_DPS>::OpConversionPattern;
+struct PTOXORToEmitC : public OpConversionPattern<pto::TXOROp> {
+  using OpConversionPattern<pto::TXOROp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::XOROp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TXOROp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -6136,20 +6136,20 @@ struct PTOTTransToEmitC : public OpConversionPattern<pto::TTransOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TXORS DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOXORSToEmitC : public OpConversionPattern<pto::XORSOp_DPS> {
-  using OpConversionPattern<pto::XORSOp_DPS>::OpConversionPattern;
+struct PTOXORSToEmitC : public OpConversionPattern<pto::TXORSOp> {
+  using OpConversionPattern<pto::TXORSOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::XORSOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TXORSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
-    Value src0 = peelUnrealized(adaptor.getSrc0());
+    Value src = peelUnrealized(adaptor.getSrc());
     Value scalar = peelUnrealized(adaptor.getScalar());
     Value dst = peelUnrealized(adaptor.getDst());
 
     // pto-isa TXORS requires a tmp tile argument. Current NPU implementation
     // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src0, scalar, dst};
+    SmallVector<Value, 4> operands{dst, src, scalar, dst};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXORS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -6183,10 +6183,10 @@ struct PTOXORSToEmitC : public OpConversionPattern<pto::XORSOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TSYNC DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOSYNCToEmitC : public OpConversionPattern<pto::SYNCOp_DPS> {
-  using OpConversionPattern<pto::SYNCOp_DPS>::OpConversionPattern;
+struct PTOSYNCToEmitC : public OpConversionPattern<pto::TSYNCOp> {
+  using OpConversionPattern<pto::TSYNCOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::SYNCOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TSYNCOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 

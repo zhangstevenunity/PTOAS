@@ -22,7 +22,7 @@ module {
                                    memref<16x16x16xf16, #pto.address_space<vec>>)
                    outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
     } else {
-      pto.sub_dps ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
+      pto.tsub ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
                                   memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
     }

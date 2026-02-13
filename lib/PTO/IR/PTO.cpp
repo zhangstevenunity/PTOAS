@@ -1148,65 +1148,12 @@ LogicalResult mlir::pto::TransOp::verify() {
 // PTO.cpp  (add TSTORE DPS/memref implementation)
 //===----------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TXOR DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::XOROp_DPS::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects memref types for src0, src1, and dst";
-
-  if (src0Ty.getElementType() != src1Ty.getElementType() ||
-      src0Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0, src1, and dst to have the same element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TXORS DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::XORSOp_DPS::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!src0Ty || !dstTy)
-    return emitOpError() << "expects memref types for src0 and dst";
-
-  if (src0Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0 and dst to have the same element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSYNC DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::SYNCOp_DPS::verify() {
-  auto eventsTy = mlir::dyn_cast<mlir::MemRefType>(getEvents().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!eventsTy || !dstTy)
-    return emitOpError() << "expects memref types for events and dst";
-
-  if (eventsTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects events and dst to have the same element type";
-
-  return mlir::success();
-}
-
 mlir::LogicalResult mlir::pto::PrintOp_DPS::verify() {
   auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-
   if (!srcTy)
     return emitOpError() << "expects memref types for src";
-    return mlir::success();
-  }
-  
+  return mlir::success();
+}
 
 LogicalResult pto::TAbsOp::verify() {
   Type srcTy = getSrc().getType();
@@ -3430,15 +3377,14 @@ mlir::LogicalResult mlir::pto::TTransOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TXOROp::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src0, src1, and dst";
 
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects tilebuf types for src0, src1, and dst";
-
-  if (src0Ty.getElementType() != src1Ty.getElementType() ||
-      src0Ty.getElementType() != dstTy.getElementType())
+  auto elem = getElemTy(src0Ty);
+  if (elem != getElemTy(src1Ty) || elem != getElemTy(dstTy))
     return emitOpError() << "expects src0, src1, and dst to have the same element type";
 
   return mlir::success();
@@ -3448,14 +3394,13 @@ mlir::LogicalResult mlir::pto::TXOROp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TXORSOp::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src and dst";
 
-  if (!src0Ty || !dstTy)
-    return emitOpError() << "expects tilebuf types for src0 and dst";
-
-  if (src0Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0 and dst to have the same element type";
+  if (getElemTy(srcTy) != getElemTy(dstTy))
+    return emitOpError() << "expects src and dst to have the same element type";
 
   return mlir::success();
 }
@@ -3464,13 +3409,12 @@ mlir::LogicalResult mlir::pto::TXORSOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TSYNCOp::verify() {
-  auto eventsTy = mlir::dyn_cast<mlir::pto::TileBufType>(getEvents().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type eventsTy = getEvents().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(eventsTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like events and dst";
 
-  if (!eventsTy || !dstTy)
-    return emitOpError() << "expects tilebuf types for events and dst";
-
-  if (eventsTy.getElementType() != dstTy.getElementType())
+  if (getElemTy(eventsTy) != getElemTy(dstTy))
     return emitOpError() << "expects events and dst to have the same element type";
 
   return mlir::success();
@@ -4556,22 +4500,6 @@ void StoreScalarOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getPtrMutable());
 }
-
-
-void XORSOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrc0Mutable());
-  PTO_ADD_READ(getScalarMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void SYNCOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getEventsMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-PTO_DEFINE_BINARY_EFFECTS(XOROp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 
 // === Tile/Device ops added for InsertSync ===
 
