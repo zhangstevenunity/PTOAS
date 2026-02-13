@@ -5092,10 +5092,10 @@ struct PTOMulsToEmitC : public OpConversionPattern<pto::TMulsOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TNEG DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTONegToEmitC : public OpConversionPattern<pto::NegOp_DPS> {
-  using OpConversionPattern<pto::NegOp_DPS>::OpConversionPattern;
+struct PTONegToEmitC : public OpConversionPattern<pto::TNegOp> {
+  using OpConversionPattern<pto::TNegOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::NegOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TNegOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5117,10 +5117,10 @@ struct PTONegToEmitC : public OpConversionPattern<pto::NegOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TNOT DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTONotToEmitC : public OpConversionPattern<pto::NotOp_DPS> {
-  using OpConversionPattern<pto::NotOp_DPS>::OpConversionPattern;
+struct PTONotToEmitC : public OpConversionPattern<pto::TNotOp> {
+  using OpConversionPattern<pto::TNotOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::NotOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TNotOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5141,10 +5141,10 @@ struct PTONotToEmitC : public OpConversionPattern<pto::NotOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TOR DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOOrToEmitC : public OpConversionPattern<pto::OrOp_DPS> {
-  using OpConversionPattern<pto::OrOp_DPS>::OpConversionPattern;
+struct PTOOrToEmitC : public OpConversionPattern<pto::TOrOp> {
+  using OpConversionPattern<pto::TOrOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::OrOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TOrOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5166,14 +5166,14 @@ struct PTOOrToEmitC : public OpConversionPattern<pto::OrOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TORS DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOOrsToEmitC : public OpConversionPattern<pto::OrsOp_DPS> {
-  using OpConversionPattern<pto::OrsOp_DPS>::OpConversionPattern;
+struct PTOOrsToEmitC : public OpConversionPattern<pto::TOrsOp> {
+  using OpConversionPattern<pto::TOrsOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::OrsOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TOrsOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
-    Value src0 = peelUnrealized(adaptor.getSrc0());
+    Value src0 = peelUnrealized(adaptor.getSrc());
     Value dst  = peelUnrealized(adaptor.getDst());
     // NOTE: The conversion type system may materialize integers as emitc.opaque
     // (e.g. "int32_t"). For EmitC call emission we can pass the scalar through
@@ -5194,10 +5194,10 @@ struct PTOOrsToEmitC : public OpConversionPattern<pto::OrsOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TPARTADD DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOPartAddToEmitC : public OpConversionPattern<pto::PartAddOp_DPS> {
-  using OpConversionPattern<pto::PartAddOp_DPS>::OpConversionPattern;
+struct PTOPartAddToEmitC : public OpConversionPattern<pto::TPartAddOp> {
+  using OpConversionPattern<pto::TPartAddOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::PartAddOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TPartAddOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
