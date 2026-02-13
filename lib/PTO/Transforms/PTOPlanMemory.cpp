@@ -321,6 +321,26 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       (void)trowexpanddivOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto trowexpandmulOp = dyn_cast<pto::TRowExpandMulOp>(op)) {
+      (void)trowexpandmulOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto trowexpandsubOp = dyn_cast<pto::TRowExpandSubOp>(op)) {
+      (void)trowexpandsubOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto trowmaxOp = dyn_cast<pto::TRowMaxOp>(op)) {
+      (void)trowmaxOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto trowminOp = dyn_cast<pto::TRowMinOp>(op)) {
+      (void)trowminOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto trowsumOp = dyn_cast<pto::TRowSumOp>(op)) {
+      (void)trowsumOp;
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto tgemvOp = dyn_cast<pto::TGemvOp>(op)) {
       (void)tgemvOp;
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));

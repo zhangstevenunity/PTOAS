@@ -5575,10 +5575,10 @@ struct PTORowExpandDivToEmitC : public OpConversionPattern<pto::TRowExpandDivOp>
 // PTOConvert.cpp  (add lowering + patterns.add for TROWEXPANDMUL DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTORowExpandMulToEmitC : public OpConversionPattern<pto::RowExpandMulOp_DPS> {
-  using OpConversionPattern<pto::RowExpandMulOp_DPS>::OpConversionPattern;
+struct PTORowExpandMulToEmitC : public OpConversionPattern<pto::TRowExpandMulOp> {
+  using OpConversionPattern<pto::TRowExpandMulOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::RowExpandMulOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TRowExpandMulOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5601,10 +5601,10 @@ struct PTORowExpandMulToEmitC : public OpConversionPattern<pto::RowExpandMulOp_D
 // PTOConvert.cpp  (add lowering + patterns.add for TROWEXPANDSUB DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTORowExpandSubToEmitC : public OpConversionPattern<pto::RowExpandSubOp_DPS> {
-  using OpConversionPattern<pto::RowExpandSubOp_DPS>::OpConversionPattern;
+struct PTORowExpandSubToEmitC : public OpConversionPattern<pto::TRowExpandSubOp> {
+  using OpConversionPattern<pto::TRowExpandSubOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::RowExpandSubOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TRowExpandSubOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5627,10 +5627,10 @@ struct PTORowExpandSubToEmitC : public OpConversionPattern<pto::RowExpandSubOp_D
 // PTOConvert.cpp  (add lowering + patterns.add for TROWMAX DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTORowMaxToEmitC : public OpConversionPattern<pto::RowMaxOp_DPS> {
-  using OpConversionPattern<pto::RowMaxOp_DPS>::OpConversionPattern;
+struct PTORowMaxToEmitC : public OpConversionPattern<pto::TRowMaxOp> {
+  using OpConversionPattern<pto::TRowMaxOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::RowMaxOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TRowMaxOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5652,10 +5652,10 @@ struct PTORowMaxToEmitC : public OpConversionPattern<pto::RowMaxOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TROWMIN DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTORowMinToEmitC : public OpConversionPattern<pto::RowMinOp_DPS> {
-  using OpConversionPattern<pto::RowMinOp_DPS>::OpConversionPattern;
+struct PTORowMinToEmitC : public OpConversionPattern<pto::TRowMinOp> {
+  using OpConversionPattern<pto::TRowMinOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::RowMinOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TRowMinOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5678,10 +5678,10 @@ struct PTORowMinToEmitC : public OpConversionPattern<pto::RowMinOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TROWSUM DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTORowSumToEmitC : public OpConversionPattern<pto::RowSumOp_DPS> {
-  using OpConversionPattern<pto::RowSumOp_DPS>::OpConversionPattern;
+struct PTORowSumToEmitC : public OpConversionPattern<pto::TRowSumOp> {
+  using OpConversionPattern<pto::TRowSumOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::RowSumOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TRowSumOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
