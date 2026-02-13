@@ -1122,104 +1122,6 @@ LogicalResult mlir::pto::TransOp::verify() {
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSTORE_FP DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::StoreFPOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto fpTy = mlir::dyn_cast<mlir::MemRefType>(getFp().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!srcTy || !fpTy || !dstTy)
-    return emitOpError() << "expects memref types for src, fp, and dst";
-
-  if (srcTy.getRank() != dstTy.getRank() || srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src and dst to have the same rank and element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSUB DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::SubOp_DPS::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects memref types for src0, src1, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank())
-    return emitOpError() << "expects all tensors to have the same rank";
-
-  if (src0Ty.getElementType() != src1Ty.getElementType() || src0Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0, src1, and dst to have the same element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSUBC DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::SubCOp_DPS::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto src2Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc2().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!src0Ty || !src1Ty || !src2Ty || !dstTy)
-    return emitOpError() << "expects memref types for src0, src1, src2, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank() || src2Ty.getRank() != dstTy.getRank())
-    return emitOpError() << "expects all tensors to have the same rank";
-
-  if (src0Ty.getElementType() != src1Ty.getElementType() || src0Ty.getElementType() != src2Ty.getElementType() || src0Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0, src1, src2, and dst to have the same element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSUBS DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::SubSOp_DPS::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::MemRefType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects memref types for src and dst";
-
-  if (srcTy.getRank() != dstTy.getRank())
-    return emitOpError() << "expects src and dst to have the same rank";
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src and dst to have the same element type";
-
-  return mlir::success();
-}
-//===----------------------------------------------------------------------===//
-// PTO.cpp  (add TSUBSC DPS/memref implementation)
-//===----------------------------------------------------------------------===//
-
-mlir::LogicalResult mlir::pto::SubSCOp_DPS::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::MemRefType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::MemRefType>(getDst().getType());
-
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects memref types for src0, src1, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank())
-    return emitOpError() << "expects src0, src1, and dst to have the same rank";
-
-  if (src0Ty.getElementType() != dstTy.getElementType() || src1Ty.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src0, src1, and dst to have the same element type";
-
-  return mlir::success();
-}
-
-//===----------------------------------------------------------------------===//
 // PTO.cpp  (add TXOR DPS/memref implementation)
 //===----------------------------------------------------------------------===//
 
@@ -3337,15 +3239,18 @@ mlir::LogicalResult mlir::pto::TSqrtOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TStoreFPOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto fpTy = mlir::dyn_cast<mlir::pto::TileBufType>(getFp().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type srcTy = getSrc().getType();
+  Type fpTy = getFp().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(fpTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src, fp, and dst";
 
-  if (!srcTy || !fpTy || !dstTy)
-    return emitOpError() << "expects tilebuf types for src, fp, and dst";
-
-  if (srcTy.getRank() != dstTy.getRank() || srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError() << "expects src and dst to have the same rank and element type";
+  auto s = getShapeVec(srcTy);
+  auto d = getShapeVec(dstTy);
+  if (s.size() != d.size())
+    return emitOpError() << "expects src and dst to have the same rank";
+  if (getElemTy(srcTy) != getElemTy(dstTy))
+    return emitOpError() << "expects src and dst to have the same element type";
 
   return mlir::success();
 }
@@ -3354,17 +3259,19 @@ mlir::LogicalResult mlir::pto::TStoreFPOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TSubOp::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src0, src1, and dst";
 
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects tilebuf types for src0, src1, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank())
+  auto s0 = getShapeVec(src0Ty);
+  auto d = getShapeVec(dstTy);
+  if (s0.size() != d.size() || getShapeVec(src1Ty).size() != d.size())
     return emitOpError() << "expects all tensors to have the same rank";
 
-  if (src0Ty.getElementType() != src1Ty.getElementType() || src0Ty.getElementType() != dstTy.getElementType())
+  auto elem = getElemTy(src0Ty);
+  if (elem != getElemTy(src1Ty) || elem != getElemTy(dstTy))
     return emitOpError() << "expects src0, src1, and dst to have the same element type";
 
   return mlir::success();
@@ -3374,18 +3281,19 @@ mlir::LogicalResult mlir::pto::TSubOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TSubCOp::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto src2Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc2().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type src2Ty = getSrc2().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) || !isPTOShapedLike(src2Ty) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src0, src1, src2, and dst";
 
-  if (!src0Ty || !src1Ty || !src2Ty || !dstTy)
-    return emitOpError() << "expects tilebuf types for src0, src1, src2, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank() || src2Ty.getRank() != dstTy.getRank())
+  auto d = getShapeVec(dstTy);
+  if (getShapeVec(src0Ty).size() != d.size() || getShapeVec(src1Ty).size() != d.size() || getShapeVec(src2Ty).size() != d.size())
     return emitOpError() << "expects all tensors to have the same rank";
 
-  if (src0Ty.getElementType() != src1Ty.getElementType() || src0Ty.getElementType() != src2Ty.getElementType() || src0Ty.getElementType() != dstTy.getElementType())
+  auto elem = getElemTy(src0Ty);
+  if (elem != getElemTy(src1Ty) || elem != getElemTy(src2Ty) || elem != getElemTy(dstTy))
     return emitOpError() << "expects src0, src1, src2, and dst to have the same element type";
 
   return mlir::success();
@@ -3395,16 +3303,15 @@ mlir::LogicalResult mlir::pto::TSubCOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TSubSOp::verify() {
-  auto srcTy = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src and dst";
 
-  if (!srcTy || !dstTy)
-    return emitOpError() << "expects tilebuf types for src and dst";
-
-  if (srcTy.getRank() != dstTy.getRank())
+  if (getShapeVec(srcTy).size() != getShapeVec(dstTy).size())
     return emitOpError() << "expects src and dst to have the same rank";
 
-  if (srcTy.getElementType() != dstTy.getElementType())
+  if (getElemTy(srcTy) != getElemTy(dstTy))
     return emitOpError() << "expects src and dst to have the same element type";
 
   return mlir::success();
@@ -3414,17 +3321,17 @@ mlir::LogicalResult mlir::pto::TSubSOp::verify() {
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult mlir::pto::TSubSCOp::verify() {
-  auto src0Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc0().getType());
-  auto src1Ty = mlir::dyn_cast<mlir::pto::TileBufType>(getSrc1().getType());
-  auto dstTy = mlir::dyn_cast<mlir::pto::TileBufType>(getDst().getType());
+  Type src0Ty = getSrc0().getType();
+  Type src1Ty = getSrc1().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(src0Ty) || !isPTOShapedLike(src1Ty) || !isPTOShapedLike(dstTy))
+    return emitOpError() << "expects PTO shaped-like src0, src1, and dst";
 
-  if (!src0Ty || !src1Ty || !dstTy)
-    return emitOpError() << "expects tilebuf types for src0, src1, and dst";
-
-  if (src0Ty.getRank() != dstTy.getRank() || src1Ty.getRank() != dstTy.getRank())
+  auto d = getShapeVec(dstTy);
+  if (getShapeVec(src0Ty).size() != d.size() || getShapeVec(src1Ty).size() != d.size())
     return emitOpError() << "expects src0, src1, and dst to have the same rank";
 
-  if (src0Ty.getElementType() != dstTy.getElementType() || src1Ty.getElementType() != dstTy.getElementType())
+  if (getElemTy(src0Ty) != getElemTy(dstTy) || getElemTy(src1Ty) != getElemTy(dstTy))
     return emitOpError() << "expects src0, src1, and dst to have the same element type";
 
   return mlir::success();
@@ -4346,31 +4253,6 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
 
 // === DPS ops added for InsertSync (post-lowering *_dps) ===
 
-
-void StoreFPOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrcMutable());
-  PTO_ADD_READ(getFpMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-PTO_DEFINE_BINARY_EFFECTS(SubOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
-PTO_DEFINE_TERNARY_EFFECTS(SubCOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getSrc2Mutable(), getDstMutable())
-
-void SubSOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrcMutable());
-  PTO_ADD_READ(getScalarMutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
-
-void SubSCOp_DPS::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(getSrc0Mutable());
-  PTO_ADD_READ(getScalarMutable());
-  PTO_ADD_READ(getSrc1Mutable());
-  PTO_ADD_WRITE(getDstMutable());
-}
 
 void XORSOp_DPS::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
