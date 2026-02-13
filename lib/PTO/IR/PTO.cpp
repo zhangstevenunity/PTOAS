@@ -6661,21 +6661,22 @@ LogicalResult SubsetOp::inferReturnTypes(
       if (pv == ShapedType::kDynamic) {
         vdim = ShapedType::kDynamic;
       } else {
+        // Only refine when offset is a compile-time constant.
+        // If offset is dynamic, keep static valid dims equal to size to
+        // avoid type instability across uses.
         int64_t off = 0;
-        // operands: [source, offsets...]
         if (operands.size() > 1 + i) {
           auto offOpt = getConstIndexValue(operands[1 + i]);
-          if (!offOpt) {
-            vdim = ShapedType::kDynamic;
-            validShape.push_back(vdim);
-            continue;
+          if (offOpt) {
+            off = *offOpt;
+            int64_t diff = pv - off;
+            if (diff < 0) diff = 0;
+            vdim = std::min<int64_t>(sizeDim, diff);
+          } else {
+            vdim = sizeDim;
           }
-          off = *offOpt;
-          int64_t diff = pv - off;
-          if (diff < 0) diff = 0;
-          vdim = std::min<int64_t>(sizeDim, diff);
         } else {
-          vdim = ShapedType::kDynamic;
+          vdim = sizeDim;
         }
       }
     }

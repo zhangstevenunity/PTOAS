@@ -733,7 +733,12 @@ struct PTOViewToMemrefPass
 
         // 1. Source must be memref already
         Value src = op->getOperand(0);
-        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+        // If the source is a bound tile, subview the underlying memref to avoid
+        // materializing a tile->pointer cast in later lowering.
+        Value subviewSrc = src;
+        if (auto bind = src.getDefiningOp<pto::BindTileOp>())
+          subviewSrc = bind.getSource();
+        auto srcMrTy = dyn_cast<MemRefType>(subviewSrc.getType());
         if (!srcMrTy) {
           op.emitError("pto.subset source must be lowered to memref first");
           signalPassFailure();
@@ -754,6 +759,8 @@ struct PTOViewToMemrefPass
 
         // 3. Offsets (mixed)
         SmallVector<OpFoldResult> mixedOffsets;
+        SmallVector<int64_t> staticOffsets;
+        staticOffsets.reserve(op.getOffsets().size());
         for (Value o : op.getOffsets()) {
           IntegerAttr constAttr;
           bool isStatic = false;
@@ -764,10 +771,13 @@ struct PTOViewToMemrefPass
             constAttr = rewriter.getIndexAttr(cInt.value());
             isStatic = true;
           }
-          if (isStatic)
+          if (isStatic) {
             mixedOffsets.push_back(constAttr);
-          else
+            staticOffsets.push_back(constAttr.getInt());
+          } else {
             mixedOffsets.push_back(ensureIndex(rewriter, loc, o, op));
+            staticOffsets.push_back(ShapedType::kDynamic);
+          }
         }
 
         // 3.1 Layout-aware checks for boxed tiles (SLayout != NoneBox)
@@ -869,7 +879,26 @@ struct PTOViewToMemrefPass
         }
         (void)srcOffset;
 
-        auto resultLayout = StridedLayoutAttr::get(ctx, ShapedType::kDynamic, srcStrides);
+        // If source offset/strides and subset offsets are all static, preserve
+        // a static offset in the result type to satisfy memref.subview verifier.
+        int64_t resultOffset = ShapedType::kDynamic;
+        bool allOffsetsStatic = (srcOffset != ShapedType::kDynamic);
+        if (allOffsetsStatic) {
+          int64_t totalOffset = srcOffset;
+          for (size_t i = 0; i < staticSizes.size(); ++i) {
+            if (i >= static_cast<size_t>(srcStrides.size()) ||
+                srcStrides[i] == ShapedType::kDynamic ||
+                staticOffsets[i] == ShapedType::kDynamic) {
+              allOffsetsStatic = false;
+              break;
+            }
+            totalOffset += staticOffsets[i] * srcStrides[i];
+          }
+          if (allOffsetsStatic)
+            resultOffset = totalOffset;
+        }
+
+        auto resultLayout = StridedLayoutAttr::get(ctx, resultOffset, srcStrides);
         auto resultMemRefType =
             MemRefType::get(staticSizes, srcMrTy.getElementType(), resultLayout,
                             srcMrTy.getMemorySpace());
@@ -881,7 +910,7 @@ struct PTOViewToMemrefPass
           mixedStrides.push_back(rewriter.getIndexAttr(1));
 
         auto sv = rewriter.create<memref::SubViewOp>(
-            loc, resultMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
+            loc, resultMemRefType, subviewSrc, mixedOffsets, mixedSizes, mixedStrides);
 
         // 6. Re-bind tile metadata (config + valid dims)
         Value parentVRow;
