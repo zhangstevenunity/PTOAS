@@ -26,7 +26,7 @@ func.func @tcolexpand_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<
   // ==========================================
   // 4. DMA Load GM -> UB
   // ==========================================
-  pto.load_dps ins(%in_gm
+  pto.tload ins(%in_gm
       : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
     outs(%ub_src : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================

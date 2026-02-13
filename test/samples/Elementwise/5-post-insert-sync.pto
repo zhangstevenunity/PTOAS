@@ -28,16 +28,16 @@ func.func @vec_and_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm>
   // ==========================================
   // 4. DMA Load
   // ==========================================
-  pto.load_dps ins(%subview : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
            outs(%2 : memref<1024xi32, #pto.address_space<ub>>)
-  pto.load_dps ins(%subview_0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview_0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
            outs(%3 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 5. Compute: elementwise bitwise AND
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.tand_dps ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
+  pto.tand ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
           outs(%4 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 6. DMA Store
@@ -77,7 +77,7 @@ func.func @vec_abs_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm>
   // ==========================================
   // 4. DMA Load
   // ==========================================
-  pto.load_dps ins(%subview_in
+  pto.tload ins(%subview_in
       : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
     outs(%ub_in : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
@@ -128,16 +128,16 @@ func.func @vec_add_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm>
   // ==========================================
   // 4. DMA Load
   // ==========================================
-  pto.load_dps ins(%subview : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
                outs(%2 : memref<1024xi32, #pto.address_space<ub>>)
-  pto.load_dps ins(%subview_0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview_0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
                outs(%3 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 5. Compute: elementwise ADD (pto.tadd)
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.tadd_dps ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
+  pto.tadd ins(%2, %3 : memref<1024xi32, #pto.address_space<ub>>, memref<1024xi32, #pto.address_space<ub>>)
           outs(%4 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 6. DMA Store
@@ -189,18 +189,18 @@ func.func @vec_addc_kernel_2d(%arg0: memref<1024x1024xi32, #pto.address_space<gm
   // ==========================================
   // 4. DMA Load
   // ==========================================
-  pto.load_dps ins(%subview0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview0 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
                outs(%ub0 : memref<1024xi32, #pto.address_space<ub>>)
-  pto.load_dps ins(%subview1 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview1 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
                outs(%ub1 : memref<1024xi32, #pto.address_space<ub>>)
-  pto.load_dps ins(%subview2 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
+  pto.tload ins(%subview2 : memref<32x32xi32, strided<[1024, 1], offset: ?>, #pto.address_space<gm>>)
                outs(%ub2 : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 5. Compute: elementwise ternary add (src0 + src1 + src2)
   // ==========================================
   pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-  pto.taddc_dps ins(%ub0, %ub1, %ub2
+  pto.taddc ins(%ub0, %ub1, %ub2
         : memref<1024xi32, #pto.address_space<ub>>,
           memref<1024xi32, #pto.address_space<ub>>,
           memref<1024xi32, #pto.address_space<ub>>)

@@ -19,9 +19,9 @@ namespace {
 // Wait 和 Set 不算作实质性操作。
 // 只有真正消耗计算或带宽的指令才算"活跃"。
 bool isResourceOp(Operation *op, Attribute targetPipe) {
-    if (auto loadOp = dyn_cast<pto::LoadDpsOp>(op)) 
+    if (auto loadOp = dyn_cast<pto::TLoadOp>(op)) 
         return pto::PipeAttr::get(op->getContext(), pto::PIPE::PIPE_MTE2) == targetPipe;
-    if (auto storeOp = dyn_cast<pto::StoreDpsOp>(op)) 
+    if (auto storeOp = dyn_cast<pto::TStoreOp>(op)) 
         return pto::PipeAttr::get(op->getContext(), pto::PIPE::PIPE_MTE3) == targetPipe;
     if (auto addfOp = dyn_cast<pto::AddFOp>(op)) 
         return pto::PipeAttr::get(op->getContext(), pto::PIPE::PIPE_V) == targetPipe;
@@ -106,8 +106,8 @@ struct PTORemoveRedundantBarrierPass : public PassWrapper<PTORemoveRedundantBarr
     Attribute attrVec  = pto::PipeAttr::get(ctx, pto::PIPE::PIPE_V);
  
     auto getOpPipe = [&](Operation *op) -> Attribute {
-      if (isa<pto::LoadDpsOp>(op)) return attrMTE2;
-      if (isa<pto::StoreDpsOp>(op)) return attrMTE3;
+      if (isa<pto::TLoadOp>(op)) return attrMTE2;
+      if (isa<pto::TStoreOp>(op)) return attrMTE3;
       if (isa<pto::AddFOp>(op)) return attrVec;
       return {};
     };

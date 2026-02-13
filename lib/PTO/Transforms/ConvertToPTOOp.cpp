@@ -77,7 +77,7 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
 }
 
 std::pair<std::optional<Operation *>, std::optional<Value>>
-getInitInfo(Operation *op, pto::LoadDpsOp loadOp) {
+getInitInfo(Operation *op, pto::TLoadOp loadOp) {
 //   if (!llvm::isa<pto::VBrcOp>(op))
 //     return {std::nullopt, std::nullopt};
 //   if (!op->getOperand(0).getType().isIntOrFloat())
@@ -97,14 +97,14 @@ getInitInfo(Operation *op, pto::LoadDpsOp loadOp) {
 std::pair<std::optional<Operation *>, std::optional<Value>>
 getUniqueInitInfo(PatternRewriter &rewriter,
                   std::optional<memref::AllocOp> maybeAlloc,
-                  pto::LoadDpsOp loadOp) {
+                  pto::TLoadOp loadOp) {
   if (!maybeAlloc.has_value())
     return {std::nullopt, std::nullopt};
 
   std::optional<Operation *> initOp = std::nullopt;
   std::optional<Value> initCondition = std::nullopt;
   for (auto *user : (*maybeAlloc)->getUsers()) {
-    if (llvm::isa<pto::LoadDpsOp>(user))
+    if (llvm::isa<pto::TLoadOp>(user))
       continue;
     auto maybeInitOp = getInitInfo(user, loadOp).first;
     if (maybeInitOp.has_value() && !initOp.has_value()) {
@@ -127,7 +127,7 @@ LogicalResult replaceMemCopyByPTOLoadOp(memref::CopyOp copyOp,
   auto maybePadValue = getPadValue(maybeAlloc);
   auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc);
 
-  auto loadOp = rewriter.create<pto::LoadDpsOp>(copyOp->getLoc(), TypeRange(),
+  auto loadOp = rewriter.create<pto::TLoadOp>(copyOp->getLoc(), TypeRange(),
                                               copyOp.getSource(), dst, nullptr, nullptr, nullptr, nullptr, false, nullptr);
   if (maybeLeftPadNum.has_value()) {
     loadOp.getLeftPaddingNumMutable().assign(maybeLeftPadNum.value());
@@ -171,11 +171,11 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     Value dst = copyOp.getTarget();
     bool convertToStore = isFromFunctionArg(dst);
     if (convertToStore) {
-      rewriter.replaceOpWithNewOp<pto::StoreDpsOp>(copyOp, TypeRange(), src, dst);
+      rewriter.replaceOpWithNewOp<pto::TStoreOp>(copyOp, TypeRange(), src, dst);
       return success();
     }
 
-    rewriter.replaceOpWithNewOp<pto::CopyOp>(copyOp, TypeRange(), src, dst, nullptr, nullptr);
+    rewriter.replaceOpWithNewOp<pto::TMovOp>(copyOp, TypeRange(), src, dst);
     return success();
   }
 };
@@ -191,7 +191,7 @@ struct BufferizeMaterializeOpLowering
     Value dst = bufMIDOp.getDest();
     bool convertToStore = isFromFunctionArg(dst);
     if (convertToStore) {
-      rewriter.replaceOpWithNewOp<pto::StoreDpsOp>(bufMIDOp, TypeRange(),
+      rewriter.replaceOpWithNewOp<pto::TStoreOp>(bufMIDOp, TypeRange(),
                                                  bufMIDOp.getSource(), dst);
       return success();
     }
