@@ -5618,10 +5618,10 @@ struct PTOShlSToEmitC : public OpConversionPattern<pto::TShlOp> {
 // PTOConvert.cpp  (add lowering + patterns.add for TSHR DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOShrSToEmitC : public OpConversionPattern<pto::ShrOp_DPS> {
-  using OpConversionPattern<pto::ShrOp_DPS>::OpConversionPattern;
+struct PTOShrSToEmitC : public OpConversionPattern<pto::TShrOp> {
+  using OpConversionPattern<pto::TShrOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::ShrOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TShrOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5644,10 +5644,10 @@ struct PTOShrSToEmitC : public OpConversionPattern<pto::ShrOp_DPS> {
 // PTOConvert.cpp  (add lowering for TSHLS/TSHRS DPS: shift by scalar)
 //===----------------------------------------------------------------------===//
 
-struct PTOShlSConstToEmitC : public OpConversionPattern<pto::ShlSOp_DPS> {
-  using OpConversionPattern<pto::ShlSOp_DPS>::OpConversionPattern;
+struct PTOShlSConstToEmitC : public OpConversionPattern<pto::TShlSOp> {
+  using OpConversionPattern<pto::TShlSOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::ShlSOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TShlSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     Value dst    = peelUnrealized(adaptor.getDst());
@@ -5663,10 +5663,10 @@ struct PTOShlSConstToEmitC : public OpConversionPattern<pto::ShlSOp_DPS> {
   }
 };
 
-struct PTOShrSConstToEmitC : public OpConversionPattern<pto::ShrSOp_DPS> {
-  using OpConversionPattern<pto::ShrSOp_DPS>::OpConversionPattern;
+struct PTOShrSConstToEmitC : public OpConversionPattern<pto::TShrSOp> {
+  using OpConversionPattern<pto::TShrSOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::ShrSOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TShrSOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     Value dst    = peelUnrealized(adaptor.getDst());
@@ -5686,10 +5686,10 @@ struct PTOShrSConstToEmitC : public OpConversionPattern<pto::ShrSOp_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TSORT32 DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOSORT32SToEmitC : public OpConversionPattern<pto::Sort32Op_DPS> {
-  using OpConversionPattern<pto::Sort32Op_DPS>::OpConversionPattern;
+struct PTOSORT32SToEmitC : public OpConversionPattern<pto::TSort32Op> {
+  using OpConversionPattern<pto::TSort32Op>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::Sort32Op_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TSort32Op op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
@@ -5711,10 +5711,10 @@ struct PTOSORT32SToEmitC : public OpConversionPattern<pto::Sort32Op_DPS> {
 // PTOConvert.cpp  (add lowering + patterns.add for TSQRT DPS/memref op)
 //===----------------------------------------------------------------------===//
 
-struct PTOSqrtSToEmitC : public OpConversionPattern<pto::SqrtOp_DPS> {
-  using OpConversionPattern<pto::SqrtOp_DPS>::OpConversionPattern;
+struct PTOSqrtSToEmitC : public OpConversionPattern<pto::TSqrtOp> {
+  using OpConversionPattern<pto::TSqrtOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::SqrtOp_DPS op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TSqrtOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
 
