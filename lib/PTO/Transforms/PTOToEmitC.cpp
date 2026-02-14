@@ -152,6 +152,31 @@ public:
     addConversion([Ctx](emitc::PointerType type) { return type; });
 
     // ---------------------------------------------------------
+    // 2.5 PtrType 转换 (指针类型)
+    // ---------------------------------------------------------
+    addConversion([this, Ctx](pto::PtrType type) -> std::optional<Type> {
+      Type elemType = type.getElementType();
+      Type newElemType = convertType(elemType);
+      if (!newElemType)
+        return std::nullopt;
+
+      std::string elemTypeStr;
+      if (auto opq = dyn_cast<emitc::OpaqueType>(newElemType)) {
+        elemTypeStr = opq.getValue().str();
+      } else {
+        llvm::errs() << "  [Error] PtrType elem type is not OpaqueType: "
+                     << newElemType << "\n";
+        return std::nullopt;
+      }
+
+      std::string qualifier = "__gm__";
+
+      std::string finalTypeStr = qualifier + " " + elemTypeStr;
+      return emitc::PointerType::get(
+          emitc::OpaqueType::get(Ctx, finalTypeStr));
+    });
+
+    // ---------------------------------------------------------
     // 3. MemRef 转换 (Debug 重点)
     // ---------------------------------------------------------
     addConversion([this, Ctx](MemRefType type) -> std::optional<Type> {
@@ -2088,6 +2113,34 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto srcType = mlir::cast<MemRefType>(op.getSource().getType());
     int64_t rank = srcType.getRank();
 
+    auto elemTypeToString = [&](Type elemTy) -> std::string {
+      if (elemTy.isF16())
+        return "half";
+      if (elemTy.isF32())
+        return "float";
+      if (elemTy.isF64())
+        return "double";
+      if (elemTy.isInteger(8)) {
+        if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
+          return "int8_t";
+        return "uint8_t";
+      }
+      if (elemTy.isInteger(16)) {
+        if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+          return "int16_t";
+        return "uint16_t";
+      }
+      if (elemTy.isInteger(32)) {
+        if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+          return "int32_t";
+        return "uint32_t";
+      }
+      if (elemTy.isInteger(64)) {
+        return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
+      }
+      return "float";
+    };
+
     // -------------------------------------------------------------------------
     // Part 1: 指针偏移计算 (Runtime Pointer Arithmetic)
     // -------------------------------------------------------------------------
@@ -2124,13 +2177,31 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     if (auto rc = op.getSource().getDefiningOp<memref::ReinterpretCastOp>()) {
         sourceStrides = rc.getMixedStrides();
     } else {
-        // Fallback: Compact Layout
-        auto shape = srcType.getShape();
-        int64_t current = 1;
-        sourceStrides.resize(rank);
-        for (int i = rank - 1; i >= 0; --i) {
-            sourceStrides[i] = rewriter.getIndexAttr(current);
-            if (shape[i] != ShapedType::kDynamic) current *= shape[i];
+        SmallVector<int64_t> strideInts;
+        int64_t offset = ShapedType::kDynamic;
+        bool useTypeStrides = succeeded(getStridesAndOffset(srcType, strideInts, offset));
+        (void)offset;
+        if (useTypeStrides) {
+            for (int64_t s : strideInts) {
+                if (s == ShapedType::kDynamic) {
+                    useTypeStrides = false;
+                    break;
+                }
+            }
+        }
+        if (useTypeStrides) {
+            for (int64_t s : strideInts) {
+                sourceStrides.push_back(rewriter.getIndexAttr(s));
+            }
+        } else {
+            // Fallback: Compact Layout
+            auto shape = srcType.getShape();
+            int64_t current = 1;
+            sourceStrides.resize(rank);
+            for (int i = rank - 1; i >= 0; --i) {
+                sourceStrides[i] = rewriter.getIndexAttr(current);
+                if (shape[i] != ShapedType::kDynamic) current *= shape[i];
+            }
         }
     }
 
@@ -2167,6 +2238,32 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // when the underlying element type is i16. Pointer arithmetic on `void*`
     // is ill-formed in C++, so we explicitly cast to a typed pointer for i16.
     Value sourcePtr = adaptor.getSource();
+    Value tileCandidate = sourcePtr;
+    if (auto castOp = sourcePtr.getDefiningOp<emitc::CastOp>()) {
+      tileCandidate = castOp.getOperand();
+    } else if (auto uc =
+                   sourcePtr.getDefiningOp<UnrealizedConversionCastOp>()) {
+      tileCandidate = uc.getOperand(0);
+    }
+    if (auto ot = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
+      auto tyStr = ot.getValue();
+      if (tyStr.find("Tile<") != std::string::npos ||
+          tyStr.find("ConvTile<") != std::string::npos) {
+        std::string elemTok = elemTypeToString(srcType.getElementType());
+        std::string qualifier = "__gm__";
+        if (auto asAttr =
+                dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
+          qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
+        auto rawPtrTy =
+            emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
+        sourcePtr =
+            rewriter
+                .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
+                                             "PTOAS__TILE_DATA", ArrayAttr{},
+                                             ArrayAttr{}, ValueRange{tileCandidate})
+                .getResult(0);
+      }
+    }
     Value newPtr;
     {
       auto resTy = mlir::cast<MemRefType>(op.getResult().getType());
@@ -2193,7 +2290,25 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
 
     // -------------------------------------------------------------------------
-    // Part 2: 生成 GlobalTensor 类型 (Shape/Stride Template Generation)
+    // Part 2: For non-GM memrefs, keep pointer (no GlobalTensor).
+    // -------------------------------------------------------------------------
+    bool isGlobal = true;
+    if (auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace())) {
+      auto as = asAttr.getAddressSpace();
+      isGlobal = (as == pto::AddressSpace::GM || as == pto::AddressSpace::Zero);
+    }
+    if (!isGlobal) {
+      Type dstTy = getTypeConverter()->convertType(op.getType());
+      if (!dstTy)
+        return failure();
+      if (newPtr.getType() != dstTy)
+        newPtr = rewriter.create<emitc::CastOp>(loc, dstTy, newPtr);
+      rewriter.replaceOp(op, newPtr);
+      return success();
+    }
+
+    // -------------------------------------------------------------------------
+    // Part 3: 生成 GlobalTensor 类型 (Shape/Stride Template Generation)
     // -------------------------------------------------------------------------
     
     // When emitting C++ with `declareVariablesAtTop`, value declarations are
@@ -2855,11 +2970,24 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         resultValue = varOp.getResult();
     }
 
-    // TASSIGN
+    // TASSIGN: pto-isa expects an integral address.
+    Value addr = adaptor.getAddrs()[0];
+    if (isa<emitc::PointerType>(addr.getType()) ||
+        (isa<emitc::OpaqueType>(addr.getType()) &&
+         cast<emitc::OpaqueType>(addr.getType()).getValue().ends_with("*"))) {
+      auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+      auto rcU64 = rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+      addr = rewriter.create<emitc::CallOpaqueOp>(
+                 loc, u64Ty, "reinterpret_cast",
+                 /*args=*/ArrayAttr{}, /*templateArgs=*/rcU64,
+                 /*operands=*/ValueRange{addr})
+                 .getResult(0);
+    }
+
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TASSIGN",
         ArrayAttr{}, ArrayAttr{},
-        ValueRange{resultValue, adaptor.getAddrs()[0]});
+        ValueRange{resultValue, addr});
 
     rewriter.replaceOp(op, resultValue);
     return success();
@@ -3597,6 +3725,49 @@ struct PTOGetValToGETVAL : public OpConversionPattern<pto::GetValDpsOp> {
         ValueRange{src, offset});
 
     rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// pto.load_scalar / pto.store_scalar lowering -> ptr[offset]
+//===----------------------------------------------------------------------===//
+
+struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
+  using OpConversionPattern<pto::LoadScalarOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value ptr = peelUnrealized(adaptor.getPtr());
+    Value offset = peelUnrealized(adaptor.getOffset());
+
+    Type dstTy = getTypeConverter()->convertType(op.getValue().getType());
+    if (!dstTy)
+      return failure();
+
+    auto call = rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{dstTy}, "PTOAS__PTR_LOAD",
+        ArrayAttr{}, ArrayAttr{}, ValueRange{ptr, offset});
+
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
+struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
+  using OpConversionPattern<pto::StoreScalarOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value ptr = peelUnrealized(adaptor.getPtr());
+    Value offset = peelUnrealized(adaptor.getOffset());
+    Value val = peelUnrealized(adaptor.getValue());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "PTOAS__PTR_STORE",
+        ArrayAttr{}, ArrayAttr{}, ValueRange{ptr, offset, val});
+
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -6758,7 +6929,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
   patterns.add<PointerCastConversion>(typeConverter, ctx);
-  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL>(typeConverter, ctx);
+  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL,
+               PTOLoadScalarToEmitC, PTOStoreScalarToEmitC>(typeConverter, ctx);
   patterns.add<PTOAndToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulToEmitC>(typeConverter, ctx);
   patterns.add<PTOAndSToEmitC>(typeConverter, ctx);

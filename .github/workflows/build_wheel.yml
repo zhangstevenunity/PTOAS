@@ -62,9 +62,9 @@ jobs:
           echo "PTO_SOURCE_DIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
           echo "PTO_INSTALL_DIR=$GITHUB_WORKSPACE/install" >> $GITHUB_ENV
 
-      - name: Cache LLVM build
+      - name: Restore LLVM build cache (exact key)
         id: cache-llvm
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /llvm-workspace/llvm-project/build-shared
           key: llvm-${{ env.LLVM_TAG }}-manylinux_2_34-${{ matrix.arch }}-${{ matrix.python }}-v1
@@ -79,6 +79,14 @@ jobs:
           fi
           git fetch --depth 1 origin tag ${{ env.LLVM_TAG }}
           git checkout ${{ env.LLVM_TAG }}
+
+      - name: Warn when default-branch cache is missing for PR/release runs
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && (github.event_name == 'pull_request' || github.event_name == 'release')
+        run: |
+          echo "LLVM cache miss while running on PR/release."
+          echo "PR/release runs are cache-consumers only and should reuse cache generated on the default branch."
+          echo "Please run this workflow on the default branch first to populate cache key:"
+          echo "llvm-${{ env.LLVM_TAG }}-manylinux_2_34-${{ matrix.arch }}-${{ matrix.python }}-v1"
 
       - name: Build LLVM/MLIR
         if: steps.cache-llvm.outputs.cache-hit != 'true'
@@ -96,7 +104,8 @@ jobs:
 
       # Upload cache immediately after the build step , to avoid `build-shared` directory get polluted by later steps.
       - name: Save LLVM cache
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        # Allow cache writes except for PR/release runs to avoid duplicated tag/merge caches.
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.event_name != 'release'
         uses: actions/cache/save@v4
         with:
           path: /llvm-workspace/llvm-project/build-shared

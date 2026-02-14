@@ -73,6 +73,8 @@ namespace pto {
 /// Get PTO Address Space Attr from input type.
 AddressSpaceAttr getPTOAddressSpaceAttr(Type type);
 
+/// Return true if type is a ptr/memref in GM address space (or default).
+bool isScalarPtrOrMemRef(Type type);
 
 } // namespace pto
 } // namespace mlir

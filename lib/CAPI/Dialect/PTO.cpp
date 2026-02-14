@@ -13,6 +13,7 @@
 #include "mlir/CAPI/IR.h"
 
 #include "mlir/CAPI/Registration.h"
+#include "llvm/ADT/SmallVector.h"
 
 // IMPORTANT: include the C++ dialect header that declares PtrType/TensorViewType.
 // This header should itself include the generated PTOTypeDefs.h.inc.
@@ -254,6 +255,36 @@ int32_t mlirPTORoundModeAttrGetValue(MlirAttribute attr) {
   return static_cast<int32_t>(a.getValue());
 }
 
+MlirAttribute mlirPTOPipeAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::PIPE>(value);
+  return wrap(mlir::pto::PipeAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsAPipeAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::PipeAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOPipeAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::PipeAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getPipe());
+}
+
+MlirAttribute mlirPTOLayoutAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::Layout>(value);
+  return wrap(mlir::pto::LayoutAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsALayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::LayoutAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOLayoutAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::LayoutAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getLayout());
+}
+
 MlirAttribute mlirPTOSyncOpTypeAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
   auto mode = static_cast<mlir::pto::SyncOpType>(value);
@@ -282,6 +313,21 @@ bool mlirPTOAttrIsAEventAttr(MlirAttribute attr) {
 int32_t mlirPTOEventAttrGetValue(MlirAttribute attr) {
   auto a = mlir::cast<mlir::pto::EventAttr>(unwrap(attr));
   return static_cast<int32_t>(a.getEvent());
+}
+
+MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value) {
+  auto *c = unwrap(ctx);
+  auto v = static_cast<mlir::pto::MaskPattern>(value);
+  return wrap(mlir::pto::MaskPatternAttr::get(c, v));
+}
+
+bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::MaskPatternAttr>(unwrap(attr));
+}
+
+int32_t mlirPTOMaskPatternAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::MaskPatternAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
 }
 
 bool mlirAttributeIsAPTOCmpModeAttr(MlirAttribute attr) {
@@ -333,4 +379,21 @@ MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
   mlir::Attribute pvA = pv;
 
   return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA));
+}
+
+MlirType mlirPTOGMTypeGet(MlirContext ctx, intptr_t rank, const int64_t *shape,
+                          MlirType elementType) {
+  auto *c = unwrap(ctx);
+  auto elemTy = unwrap(elementType);
+  llvm::ArrayRef<int64_t> shp(shape, static_cast<size_t>(rank));
+
+  llvm::SmallVector<int64_t, 8> strides(static_cast<size_t>(rank),
+                                        ShapedType::kDynamic);
+  if (rank > 0)
+    strides[static_cast<size_t>(rank) - 1] = 1;
+  auto layout =
+      StridedLayoutAttr::get(c, ShapedType::kDynamic, llvm::ArrayRef<int64_t>(strides));
+  auto memSpace = mlir::pto::AddressSpaceAttr::get(c, mlir::pto::AddressSpace::GM);
+
+  return wrap(MemRefType::get(shp, elemTy, layout, memSpace));
 }

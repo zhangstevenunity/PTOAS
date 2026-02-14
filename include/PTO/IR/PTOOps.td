@@ -37,6 +37,14 @@ def TensorOrMemref :
 def PTODpsType :
   AnyTypeOf<[AnyRankedTensor, AnyMemRef, PartitionTensorViewType, TileBufType]>;
 
+def PtrOrMemRef :
+  AnyTypeOf<[PtrType, AnyMemRef], "Ptr or MemRef">;
+
+def ScalarPtrOrMemRef :
+  TypeConstraint<
+    CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
+    "Ptr or MemRef in GM">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -81,6 +89,52 @@ def AddPtrOp : PTO_Op<"addptr", [
 
   let assemblyFormat = [{
     $ptr `,` $offset attr-dict `:` type($ptr) `->` type($result)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Scalar pointer load/store
+//===----------------------------------------------------------------------===//
+
+def LoadScalarOp : PTO_Op<"load_scalar", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Load a single scalar element from a pointer at offset.";
+
+  let arguments = (ins
+    ScalarPtrOrMemRef:$ptr,
+    Index:$offset
+  );
+
+  let results = (outs AnyType:$value);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $ptr `,` $offset `:` type($ptr) `,` type($offset) `)`
+    `outs` `:` type($value)
+    attr-dict
+  }];
+}
+
+def StoreScalarOp : PTO_Op<"store_scalar", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Store a single scalar element to a pointer at offset.";
+
+  let arguments = (ins
+    ScalarPtrOrMemRef:$ptr,
+    Index:$offset,
+    AnyType:$value
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $ptr `,` $offset `,` $value `:` type($ptr) `,` type($offset) `,` type($value) `)`
+    attr-dict
   }];
 }
 
@@ -201,6 +255,7 @@ def PTO_SubsetOp : PTO_Op<"subset", [
   );
 
   let results = (outs TileBufType:$result);
+  let hasVerifier = 1;
 
   // 语法示例: %sub = pto.subset %src[%i, %j] sizes [32, 32] : !type
   // 注意：没有 -> qualified(type($result))

@@ -67,6 +67,14 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOPadValueAttrGet(MlirContext ctx, int32_t
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTORoundModeAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsARoundModeAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTORoundModeAttrGetValue(MlirAttribute attr);
+// ---- Pipe attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOPipeAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAPipeAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOPipeAttrGetValue(MlirAttribute attr);
+// ---- Layout attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOLayoutAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsALayoutAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOLayoutAttrGetValue(MlirAttribute attr);
 // ---- SyncOpType attr ----
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOSyncOpTypeAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsASyncOpTypeAttr(MlirAttribute attr);
@@ -75,6 +83,10 @@ MLIR_CAPI_EXPORTED int32_t mlirPTOSyncOpTypeAttrGetValue(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOEventAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAEventAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED int32_t mlirPTOEventAttrGetValue(MlirAttribute attr);
+// ---- MaskPattern attr ----
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOMaskPatternAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAMaskPatternAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED int32_t mlirPTOMaskPatternAttrGetValue(MlirAttribute attr);
 
 // ---- CmpMode (compare mode for cmp/cvt) ----
 typedef enum MlirPTOCmpMode {
@@ -105,6 +117,10 @@ MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufTypeGetWithValidShapeAndConfig(
     MlirContext ctx, intptr_t rank, const int64_t *shape, MlirType elementType,
     MlirAttribute memorySpace, intptr_t validRank, const int64_t *validShape,
     MlirAttribute config);
+
+// ---- MemRef helpers ----
+MLIR_CAPI_EXPORTED MlirType mlirPTOGMTypeGet(
+    MlirContext ctx, intptr_t rank, const int64_t *shape, MlirType elementType);
 
 #ifdef __cplusplus
 }

@@ -128,10 +128,18 @@ process_one_dir() {
   for f in "$dir"/*.py; do
     [[ -f "$f" ]] || continue
     base="$(basename "$f" .py)"
+    local expect_fail=0
+    case "$base" in
+      *_invalid|*_xfail) expect_fail=1 ;;
+    esac
     mlir="${out_subdir}/${base}-pto-ir.pto"
     cpp="${out_subdir}/${base}-pto.cpp"
 
     if ! "$python" "$f" > "$mlir"; then
+      if [[ $expect_fail -eq 1 ]]; then
+        echo -e "${A}(${base}.py)\tXFAIL\tpython failed as expected"
+        continue
+      fi
       echo -e "${A}(${base}.py)\tFAIL\tpython failed: ${base}.py"
       overall=1
       continue
@@ -140,11 +148,20 @@ process_one_dir() {
     # Write output via -o to avoid mixing debug prints with generated C++.
     local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$mlir" -o "$cpp")
     if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
+      if [[ $expect_fail -eq 1 ]]; then
+        echo -e "${A}(${base}.py)\tXFAIL\tptoas failed as expected"
+        continue
+      fi
       echo -e "${A}(${base}.py)\tFAIL\tptoas failed: $(basename "$mlir")"
       overall=1
       continue
     fi
 
+    if [[ $expect_fail -eq 1 ]]; then
+      echo -e "${A}(${base}.py)\tFAIL\texpected failure but succeeded"
+      overall=1
+      continue
+    fi
     echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 

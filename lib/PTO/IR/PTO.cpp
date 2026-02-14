@@ -31,6 +31,7 @@
 #include "mlir/IR/AffineMap.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 
+#include <algorithm>
 #include <numeric>
 #include <optional>
 
@@ -130,6 +131,16 @@ static int64_t getPTOTypeRank(Type type) {
   return -1;
 }
 
+static bool isGmAddressSpaceAttr(Attribute memorySpace) {
+  if (!memorySpace)
+    return true;
+  if (auto addr = mlir::dyn_cast<pto::AddressSpaceAttr>(memorySpace))
+    return addr.getAddressSpace() == pto::AddressSpace::GM;
+  if (auto intAttr = mlir::dyn_cast<IntegerAttr>(memorySpace))
+    return intAttr.getInt() == 0;
+  return false;
+}
+
 static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
   mlir::Type ty;
 
@@ -181,7 +192,17 @@ static mlir::Type parsePTOTypeAllowNoBang(mlir::OpAsmParser &parser) {
     if (failed(parser.parseLess()))
       return mlir::Type();
     mlir::Type elem;
-    if (failed(parser.parseType(elem)) || failed(parser.parseGreater()))
+    if (failed(parser.parseType(elem)))
+      return mlir::Type();
+    if (succeeded(parser.parseOptionalComma())) {
+      // ptr no longer accepts an address space; consume the attr for recovery.
+      mlir::Attribute memorySpace;
+      (void)parser.parseAttribute(memorySpace);
+      parser.emitError(parser.getCurrentLocation(),
+                       "!pto.ptr no longer accepts address space; use !pto.ptr<elem>");
+      return mlir::Type();
+    }
+    if (failed(parser.parseGreater()))
       return mlir::Type();
     return mlir::pto::PtrType::get(ctx, elem);
   }
@@ -836,6 +857,14 @@ AddressSpaceAttr mlir::pto::getPTOAddressSpaceAttr(Type type) {
   auto scopeAttr = dyn_cast<AddressSpaceAttr>(memRefType.getMemorySpace());
   assert(scopeAttr && "memory scope should be a pto address scope");
   return scopeAttr;
+}
+
+bool mlir::pto::isScalarPtrOrMemRef(Type type) {
+  if (auto pty = dyn_cast<mlir::pto::PtrType>(type))
+    return true;
+  if (auto memTy = dyn_cast<MemRefType>(type))
+    return isGmAddressSpaceAttr(memTy.getMemorySpace());
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -4577,6 +4606,44 @@ LogicalResult SetValDpsOp::verify() {
 
   return success();
 }
+// ---- LoadScalarOp ----
+LogicalResult LoadScalarOp::verify() {
+  Type ptrTy = getPtr().getType();
+  Type elemTy;
+  if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
+    elemTy = pty.getElementType();
+  } else if (auto memTy = dyn_cast<MemRefType>(ptrTy)) {
+    elemTy = memTy.getElementType();
+    if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
+      return emitOpError() << "scalar load only supports GM address space pointers";
+  } else {
+    return emitOpError("expects ptr to be !pto.ptr or memref type");
+  }
+
+  if (getValue().getType() != elemTy)
+    return emitOpError("expects result type to match ptr element type");
+
+  return success();
+}
+// ---- StoreScalarOp ----
+LogicalResult StoreScalarOp::verify() {
+  Type ptrTy = getPtr().getType();
+  Type elemTy;
+  if (auto pty = dyn_cast<mlir::pto::PtrType>(ptrTy)) {
+    elemTy = pty.getElementType();
+  } else if (auto memTy = dyn_cast<MemRefType>(ptrTy)) {
+    elemTy = memTy.getElementType();
+    if (!isGmAddressSpaceAttr(memTy.getMemorySpace()))
+      return emitOpError() << "scalar store only supports GM address space pointers";
+  } else {
+    return emitOpError("expects ptr to be !pto.ptr or memref type");
+  }
+
+  if (getValue().getType() != elemTy)
+    return emitOpError("expects value type to match ptr element type");
+
+  return success();
+}
 // ---- DPS ----
 LogicalResult MatmulBiasDpsOp::verify() {
   return verifyMatmulLike(*this, getA().getType(), getB().getType(), getDst().getType());
@@ -6643,11 +6710,43 @@ LogicalResult SubsetOp::inferReturnTypes(
   if (!sizeAttr) return failure();
 
   SmallVector<int64_t> resultShape;
-  SmallVector<int64_t> validShape;
   for (auto attr : sizeAttr) {
     int64_t dim = llvm::cast<IntegerAttr>(attr).getInt();
     resultShape.push_back(dim);
-    validShape.push_back(dim);
+  }
+
+  // Derive valid shape from parent valid dims when possible.
+  SmallVector<int64_t> validShape;
+  ArrayRef<int64_t> parentValid = sourceType.getValidShape();
+  for (size_t i = 0, e = resultShape.size(); i < e; ++i) {
+    int64_t sizeDim = resultShape[i];
+    int64_t vdim = sizeDim;
+
+    if (parentValid.size() == resultShape.size()) {
+      int64_t pv = parentValid[i];
+      if (pv == ShapedType::kDynamic) {
+        vdim = ShapedType::kDynamic;
+      } else {
+        int64_t off = 0;
+        // operands: [source, offsets...]
+        if (operands.size() > 1 + i) {
+          auto offOpt = getConstIndexValue(operands[1 + i]);
+          if (!offOpt) {
+            vdim = ShapedType::kDynamic;
+            validShape.push_back(vdim);
+            continue;
+          }
+          off = *offOpt;
+          int64_t diff = pv - off;
+          if (diff < 0) diff = 0;
+          vdim = std::min<int64_t>(sizeDim, diff);
+        } else {
+          vdim = ShapedType::kDynamic;
+        }
+      }
+    }
+
+    validShape.push_back(vdim);
   }
 
   // 3. 继承 Config (若为空使用默认)
@@ -6660,6 +6759,187 @@ LogicalResult SubsetOp::inferReturnTypes(
       sourceType.getMemorySpace(), validShape, cfg);
 
   inferredReturnTypes.push_back(resultType);
+  return success();
+}
+
+// =============================================================================
+// SubsetOp verifier
+// =============================================================================
+static bool getConstIndex(Value v, int64_t &out) {
+  if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>()) {
+    out = cOp.value();
+    return true;
+  }
+  if (auto cInt = v.getDefiningOp<arith::ConstantIntOp>()) {
+    out = cInt.value();
+    return true;
+  }
+  if (auto cOp = v.getDefiningOp<arith::ConstantOp>()) {
+    if (auto ia = dyn_cast<IntegerAttr>(cOp.getValue())) {
+      out = ia.getInt();
+      return true;
+    }
+  }
+  if (auto castOp = v.getDefiningOp<arith::IndexCastOp>())
+    return getConstIndex(castOp.getIn(), out);
+  if (auto extOp = v.getDefiningOp<arith::ExtSIOp>())
+    return getConstIndex(extOp.getIn(), out);
+  if (auto extOp = v.getDefiningOp<arith::ExtUIOp>())
+    return getConstIndex(extOp.getIn(), out);
+  if (auto truncOp = v.getDefiningOp<arith::TruncIOp>())
+    return getConstIndex(truncOp.getIn(), out);
+  return false;
+}
+
+static LogicalResult computeInnerShape(TileBufConfigAttr cfg, Type elemTy,
+                                       int64_t &innerRows, int64_t &innerCols,
+                                       bool &boxed, int32_t &bl, int32_t &sl) {
+  auto readBLayoutI32 = [](Attribute attr, int32_t &out) -> bool {
+    if (auto a = dyn_cast<BLayoutAttr>(attr)) {
+      out = (int32_t)a.getValue();
+      return true;
+    }
+    if (auto a = dyn_cast<IntegerAttr>(attr)) {
+      out = (int32_t)a.getInt();
+      return true;
+    }
+    return false;
+  };
+  auto readSLayoutI32 = [](Attribute attr, int32_t &out) -> bool {
+    if (auto a = dyn_cast<SLayoutAttr>(attr)) {
+      out = (int32_t)a.getValue();
+      return true;
+    }
+    if (auto a = dyn_cast<IntegerAttr>(attr)) {
+      out = (int32_t)a.getInt();
+      return true;
+    }
+    return false;
+  };
+  bl = 0;
+  sl = 0;
+  int32_t fr = 512;
+  (void)readBLayoutI32(cfg.getBLayout(), bl);
+  (void)readSLayoutI32(cfg.getSLayout(), sl);
+  if (auto attr = dyn_cast<IntegerAttr>(cfg.getSFractalSize())) fr = (int32_t)attr.getInt();
+
+  boxed = (sl != 0);
+  if (!boxed) {
+    innerRows = 1;
+    innerCols = 1;
+    return success();
+  }
+
+  int64_t elemBytes = -1;
+  if (auto ft = elemTy.dyn_cast<FloatType>()) {
+    if (ft.isF16() || ft.isBF16()) elemBytes = 2;
+    else if (ft.isF32()) elemBytes = 4;
+    else if (ft.isF64()) elemBytes = 8;
+  } else if (auto it = elemTy.dyn_cast<IntegerType>()) {
+    int64_t bytes = it.getWidth() / 8;
+    elemBytes = bytes > 0 ? bytes : 1;
+  }
+  if (elemBytes <= 0) return failure();
+
+  if (fr == 1024) {
+    innerRows = 16;
+    innerCols = 16;
+    return success();
+  }
+  if (fr == 32) {
+    innerRows = 16;
+    innerCols = 2;
+    return success();
+  }
+  if (fr == 512) {
+    if (sl == 1) {
+      innerRows = 16;
+      innerCols = 32 / elemBytes;
+      return success();
+    }
+    if (sl == 2) {
+      innerRows = 32 / elemBytes;
+      innerCols = 16;
+      return success();
+    }
+  }
+  return failure();
+}
+
+mlir::LogicalResult mlir::pto::SubsetOp::verify() {
+  auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType());
+  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError("expects tile_buf src and tile_buf result");
+  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
+    return emitOpError("expects rank-2 tilebuf for src/dst");
+
+  auto cfg = srcTy.getConfigAttr();
+  if (!cfg) cfg = TileBufConfigAttr::getDefault(getContext());
+
+  int64_t innerRows = 1, innerCols = 1;
+  bool boxed = false;
+  int32_t bl = 0, sl = 0;
+  if (failed(computeInnerShape(cfg, srcTy.getElementType(), innerRows, innerCols,
+                               boxed, bl, sl)))
+    return emitOpError("unsupported tile layout for subset");
+
+  if (!boxed)
+    return success();
+
+  // Boxed layout: require static 2D sizes with inner alignment. Offsets may be
+  // dynamic, but static offsets must be aligned.
+  auto sizesAttr = getSizes();
+  if (!sizesAttr || sizesAttr.size() != 2)
+    return emitOpError("boxed layout subset expects 2D sizes");
+
+  int64_t sizeR = cast<IntegerAttr>(sizesAttr[0]).getInt();
+  int64_t sizeC = cast<IntegerAttr>(sizesAttr[1]).getInt();
+  if (sizeR <= 0 || sizeC <= 0)
+    return emitOpError("subset sizes must be positive");
+
+  if (sizeR % innerRows != 0 || sizeC % innerCols != 0)
+    return emitOpError("boxed layout subset sizes must be multiples of inner shape");
+
+  if (getOffsets().size() != 2)
+    return emitOpError("boxed layout subset expects 2D offsets");
+
+  int64_t offR = 0, offC = 0;
+  bool offRConst = getConstIndex(getOffsets()[0], offR);
+  bool offCConst = getConstIndex(getOffsets()[1], offC);
+
+  if (offRConst) {
+    if (offR < 0)
+      return emitOpError("subset offsets must be non-negative");
+    if (offR % innerRows != 0)
+      return emitOpError("boxed layout subset offsets must be multiples of inner shape");
+  }
+  if (offCConst) {
+    if (offC < 0)
+      return emitOpError("subset offsets must be non-negative");
+    if (offC % innerCols != 0)
+      return emitOpError("boxed layout subset offsets must be multiples of inner shape");
+  }
+
+  auto srcShape = srcTy.getShape();
+  if (srcShape.size() == 2 &&
+      srcShape[0] != ShapedType::kDynamic &&
+      srcShape[1] != ShapedType::kDynamic) {
+    if (bl == 0) {
+      if (sizeC != srcShape[1])
+        return emitOpError("boxed RowMajor subset must keep full cols");
+      if (!offCConst || offC != 0)
+        return emitOpError("boxed RowMajor subset requires static col offset = 0");
+    } else if (bl == 1) {
+      if (sizeR != srcShape[0])
+        return emitOpError("boxed ColMajor subset must keep full rows");
+      if (!offRConst || offR != 0)
+        return emitOpError("boxed ColMajor subset requires static row offset = 0");
+    }
+  } else {
+    return emitOpError("boxed layout subset requires static source shape");
+  }
+
   return success();
 }
 
@@ -7017,6 +7297,16 @@ void MScatterDpsOp::getEffects(
 void SetValDpsOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getDstMutable());
+}
+
+void LoadScalarOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getPtrMutable());
+}
+
+void StoreScalarOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getPtrMutable());
 }
 
 PTO_DEFINE_BINARY_EFFECTS(AddOp_DPS, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
