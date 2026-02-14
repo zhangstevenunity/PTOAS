@@ -152,6 +152,31 @@ public:
     addConversion([Ctx](emitc::PointerType type) { return type; });
 
     // ---------------------------------------------------------
+    // 2.5 PtrType 转换 (指针类型)
+    // ---------------------------------------------------------
+    addConversion([this, Ctx](pto::PtrType type) -> std::optional<Type> {
+      Type elemType = type.getElementType();
+      Type newElemType = convertType(elemType);
+      if (!newElemType)
+        return std::nullopt;
+
+      std::string elemTypeStr;
+      if (auto opq = dyn_cast<emitc::OpaqueType>(newElemType)) {
+        elemTypeStr = opq.getValue().str();
+      } else {
+        llvm::errs() << "  [Error] PtrType elem type is not OpaqueType: "
+                     << newElemType << "\n";
+        return std::nullopt;
+      }
+
+      std::string qualifier = "__gm__";
+
+      std::string finalTypeStr = qualifier + " " + elemTypeStr;
+      return emitc::PointerType::get(
+          emitc::OpaqueType::get(Ctx, finalTypeStr));
+    });
+
+    // ---------------------------------------------------------
     // 3. MemRef 转换 (Debug 重点)
     // ---------------------------------------------------------
     addConversion([this, Ctx](MemRefType type) -> std::optional<Type> {
@@ -2087,10 +2112,34 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // 获取源 MemRef 类型信息
     auto srcType = mlir::cast<MemRefType>(op.getSource().getType());
     int64_t rank = srcType.getRank();
-    auto asAttr =
-        dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace());
-    const bool isGm = (!asAttr || asAttr.getAddressSpace() == pto::AddressSpace::GM ||
-                       asAttr.getAddressSpace() == pto::AddressSpace::Zero);
+
+    auto elemTypeToString = [&](Type elemTy) -> std::string {
+      if (elemTy.isF16())
+        return "half";
+      if (elemTy.isF32())
+        return "float";
+      if (elemTy.isF64())
+        return "double";
+      if (elemTy.isInteger(8)) {
+        if (elemTy.isSignlessInteger(8) || elemTy.isSignedInteger(8))
+          return "int8_t";
+        return "uint8_t";
+      }
+      if (elemTy.isInteger(16)) {
+        if (elemTy.isSignlessInteger(16) || elemTy.isSignedInteger(16))
+          return "int16_t";
+        return "uint16_t";
+      }
+      if (elemTy.isInteger(32)) {
+        if (elemTy.isSignlessInteger(32) || elemTy.isSignedInteger(32))
+          return "int32_t";
+        return "uint32_t";
+      }
+      if (elemTy.isInteger(64)) {
+        return cast<IntegerType>(elemTy).isUnsigned() ? "uint64_t" : "int64_t";
+      }
+      return "float";
+    };
 
     // -------------------------------------------------------------------------
     // Part 1: 指针偏移计算 (Runtime Pointer Arithmetic)
@@ -2128,13 +2177,31 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     if (auto rc = op.getSource().getDefiningOp<memref::ReinterpretCastOp>()) {
         sourceStrides = rc.getMixedStrides();
     } else {
-        // Fallback: Compact Layout
-        auto shape = srcType.getShape();
-        int64_t current = 1;
-        sourceStrides.resize(rank);
-        for (int i = rank - 1; i >= 0; --i) {
-            sourceStrides[i] = rewriter.getIndexAttr(current);
-            if (shape[i] != ShapedType::kDynamic) current *= shape[i];
+        SmallVector<int64_t> strideInts;
+        int64_t offset = ShapedType::kDynamic;
+        bool useTypeStrides = succeeded(getStridesAndOffset(srcType, strideInts, offset));
+        (void)offset;
+        if (useTypeStrides) {
+            for (int64_t s : strideInts) {
+                if (s == ShapedType::kDynamic) {
+                    useTypeStrides = false;
+                    break;
+                }
+            }
+        }
+        if (useTypeStrides) {
+            for (int64_t s : strideInts) {
+                sourceStrides.push_back(rewriter.getIndexAttr(s));
+            }
+        } else {
+            // Fallback: Compact Layout
+            auto shape = srcType.getShape();
+            int64_t current = 1;
+            sourceStrides.resize(rank);
+            for (int i = rank - 1; i >= 0; --i) {
+                sourceStrides[i] = rewriter.getIndexAttr(current);
+                if (shape[i] != ShapedType::kDynamic) current *= shape[i];
+            }
         }
     }
 
@@ -2166,38 +2233,85 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     }
 
     // 3. 生成新指针
-    Value sourceVal = adaptor.getSource();
-    Type resultPtrTy = getTypeConverter()->convertType(op.getType());
-    if (!resultPtrTy)
-      return failure();
-
-    Value sourcePtr = sourceVal;
-    if (auto ot = dyn_cast<emitc::OpaqueType>(sourceVal.getType())) {
-      if (ot.getValue().starts_with("Tile<")) {
-        sourcePtr = rewriter
-                        .create<emitc::CallOpaqueOp>(
-                            loc, resultPtrTy, "PTOAS__TILE_DATA", ArrayAttr{},
-                            ArrayAttr{}, ValueRange{sourceVal})
-                        .getResult(0);
+    //
+    // NOTE: Some toolchains may materialize kernel pointer params as `void*` even
+    // when the underlying element type is i16. Pointer arithmetic on `void*`
+    // is ill-formed in C++, so we explicitly cast to a typed pointer for i16.
+    Value sourcePtr = adaptor.getSource();
+    Value tileCandidate = sourcePtr;
+    if (auto castOp = sourcePtr.getDefiningOp<emitc::CastOp>()) {
+      tileCandidate = castOp.getOperand();
+    } else if (auto uc =
+                   sourcePtr.getDefiningOp<UnrealizedConversionCastOp>()) {
+      tileCandidate = uc.getOperand(0);
+    }
+    if (auto ot = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
+      auto tyStr = ot.getValue();
+      if (tyStr.find("Tile<") != std::string::npos ||
+          tyStr.find("ConvTile<") != std::string::npos) {
+        std::string elemTok = elemTypeToString(srcType.getElementType());
+        std::string qualifier = "__gm__";
+        if (auto asAttr =
+                dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace()))
+          qualifier = addrSpaceQualifier(asAttr.getAddressSpace());
+        auto rawPtrTy =
+            emitc::OpaqueType::get(ctx, qualifier + " " + elemTok + "*");
+        sourcePtr =
+            rewriter
+                .create<emitc::CallOpaqueOp>(loc, rawPtrTy,
+                                             "PTOAS__TILE_DATA", ArrayAttr{},
+                                             ArrayAttr{}, ValueRange{tileCandidate})
+                .getResult(0);
       }
     }
-    if (sourcePtr.getType() != resultPtrTy)
-      sourcePtr =
-          rewriter.create<emitc::CastOp>(loc, resultPtrTy, sourcePtr).getResult();
+    Value newPtr;
+    {
+      auto resTy = mlir::cast<MemRefType>(op.getResult().getType());
+      Type elemTy = resTy.getElementType();
+      if (elemTy.isInteger(16)) {
+        std::string castElemTypeStr = "int16_t";
+        if (cast<IntegerType>(elemTy).isUnsigned())
+          castElemTypeStr = "uint16_t";
 
-    Value newPtr =
-        rewriter.create<emitc::AddOp>(loc, resultPtrTy, sourcePtr, totalOffset);
+        std::string qualifier = "__gm__";
+        if (Attribute ms = srcType.getMemorySpace()) {
+          if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(ms)) {
+            qualifier = addrSpaceQualifier(ptoAttr.getAddressSpace());
+          }
+        }
 
-    // UB/L1/L0 tiles: keep the view as a pointer (BindTile/PointerCast will
-    // materialize the proper Tile type later). GlobalTensor is GM-only.
-    if (!isGm) {
+        auto typedPtrTy =
+            emitc::OpaqueType::get(ctx, qualifier + " " + castElemTypeStr + "*");
+        Value typedSourcePtr =
+            rewriter.create<emitc::CastOp>(loc, typedPtrTy, sourcePtr);
+        newPtr = rewriter.create<emitc::AddOp>(loc, typedPtrTy, typedSourcePtr,
+                                               totalOffset);
+      } else {
+        newPtr = rewriter.create<emitc::AddOp>(loc, sourcePtr.getType(), sourcePtr,
+                                               totalOffset);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Part 2: For non-GM memrefs, keep pointer (no GlobalTensor).
+    // -------------------------------------------------------------------------
+    bool isGlobal = true;
+    if (auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(srcType.getMemorySpace())) {
+      auto as = asAttr.getAddressSpace();
+      isGlobal = (as == pto::AddressSpace::GM || as == pto::AddressSpace::Zero);
+    }
+    if (!isGlobal) {
+      Type dstTy = getTypeConverter()->convertType(op.getType());
+      if (!dstTy)
+        return failure();
+      if (newPtr.getType() != dstTy)
+        newPtr = rewriter.create<emitc::CastOp>(loc, dstTy, newPtr);
       rewriter.replaceOp(op, newPtr);
       return success();
     }
 
-
     // -------------------------------------------------------------------------
-    // Part 2: 生成 GlobalTensor 类型 (Shape/Stride Template Generation)
+    // Part 3: 生成 GlobalTensor 类型 (Shape/Stride Template Generation)
     // -------------------------------------------------------------------------
     
     // When emitting C++ with `declareVariablesAtTop`, value declarations are
@@ -2889,7 +3003,8 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     if (!isIntegralAddrTy(addr.getType())) {
       Value ptrVal = addr;
       if (auto ot = dyn_cast<emitc::OpaqueType>(ptrVal.getType())) {
-        if (ot.getValue().starts_with("Tile<")) {
+        StringRef tyStr = ot.getValue();
+        if (tyStr.starts_with("Tile<") || tyStr.starts_with("ConvTile<")) {
           // Get the underlying element pointer via tile.data().
           std::string qualifier = "__gm__";
           if (auto ms = dyn_cast_or_null<pto::AddressSpaceAttr>(
@@ -3660,6 +3775,49 @@ struct PTOGetValToGETVAL : public OpConversionPattern<pto::GetValDpsOp> {
         ValueRange{src, offset});
 
     rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// pto.load_scalar / pto.store_scalar lowering -> ptr[offset]
+//===----------------------------------------------------------------------===//
+
+struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
+  using OpConversionPattern<pto::LoadScalarOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value ptr = peelUnrealized(adaptor.getPtr());
+    Value offset = peelUnrealized(adaptor.getOffset());
+
+    Type dstTy = getTypeConverter()->convertType(op.getValue().getType());
+    if (!dstTy)
+      return failure();
+
+    auto call = rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{dstTy}, "PTOAS__PTR_LOAD",
+        ArrayAttr{}, ArrayAttr{}, ValueRange{ptr, offset});
+
+    rewriter.replaceOp(op, call.getResults());
+    return success();
+  }
+};
+
+struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
+  using OpConversionPattern<pto::StoreScalarOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value ptr = peelUnrealized(adaptor.getPtr());
+    Value offset = peelUnrealized(adaptor.getOffset());
+    Value val = peelUnrealized(adaptor.getValue());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "PTOAS__PTR_STORE",
+        ArrayAttr{}, ArrayAttr{}, ValueRange{ptr, offset, val});
+
+    rewriter.eraseOp(op);
     return success();
   }
 };
@@ -6821,7 +6979,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
   patterns.add<PointerCastConversion>(typeConverter, ctx);
-  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL>(typeConverter, ctx);
+  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL,
+               PTOLoadScalarToEmitC, PTOStoreScalarToEmitC>(typeConverter, ctx);
   patterns.add<PTOAndToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulToEmitC>(typeConverter, ctx);
   patterns.add<PTOAndSToEmitC>(typeConverter, ctx);
@@ -6946,33 +7105,46 @@ struct EmitPTOManualPass
                     mlir::cf::ControlFlowDialect, mlir::pto::PTODialect>();
   }
 
-  void runOnOperation() override {
-    llvm::errs() << "DEBUG: Start PTOToEmitC Pass\n";
-    MLIRContext *ctx = &getContext();
-    ModuleOp mop = getOperation();
+	  void runOnOperation() override {
+	    llvm::errs() << "DEBUG: Start PTOToEmitC Pass\n";
+	    MLIRContext *ctx = &getContext();
+	    ModuleOp mop = getOperation();
 
-    // 1. 插入头文件
-    auto loc = mop->getLoc();
-    OpBuilder builder(ctx);
-    builder.setInsertionPointToStart(mop.getBody());
-    builder.create<emitc::IncludeOp>(
-        loc, builder.getStringAttr("pto/pto-inst.hpp"), /*isAngled=*/nullptr);
-    builder.create<emitc::VerbatimOp>(
-        loc, builder.getStringAttr("using namespace pto;"));
-    builder.create<emitc::VerbatimOp>(
-        loc, builder.getStringAttr(R"cpp(
-	template <typename To, typename From>
-	static inline To ptoas_bitcast(From from) {
-	  static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
-	  To to;
-	  __builtin_memcpy(&to, &from, sizeof(To));
-	  return to;
-	}
-	)cpp"));
+	    // 1. 插入头文件
+	    auto loc = mop->getLoc();
+	    OpBuilder builder(ctx);
+	    builder.setInsertionPointToStart(mop.getBody());
+	    builder.create<emitc::IncludeOp>(
+	        loc, builder.getStringAttr("pto/pto-inst.hpp"), /*isAngled=*/nullptr);
+		    builder.create<emitc::VerbatimOp>(
+		        loc, builder.getStringAttr("using namespace pto;"));
 
-    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
-    {
-      // scf.while / scf.index_switch are lowered via CFG blocks. This is not
+		    // Only inject the bitcast helper when we actually lower ops that need it
+		    // (e.g. arith.bitcast or arith.maximumf/minimumf tie-breaking on zeros).
+		    bool needsBitcastHelper = false;
+	    mop.walk([&](Operation *op) {
+	      if (isa<arith::BitcastOp, arith::MaximumFOp, arith::MinimumFOp>(op)) {
+	        needsBitcastHelper = true;
+	        return WalkResult::interrupt();
+	      }
+	      return WalkResult::advance();
+	    });
+	    if (needsBitcastHelper) {
+	      builder.create<emitc::VerbatimOp>(
+	          loc, builder.getStringAttr(R"cpp(
+		template <typename To, typename From>
+		static inline To ptoas_bitcast(From from) {
+		  static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
+		  To to;
+		  __builtin_memcpy(&to, &from, sizeof(To));
+		  return to;
+		}
+		)cpp"));
+	    }
+
+	    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
+	    {
+	      // scf.while / scf.index_switch are lowered via CFG blocks. This is not
       // possible inside ops that require single-block regions (e.g. scf.for /
       // scf.if). If we see such nesting, lower the entire function to the
       // ControlFlow dialect first.

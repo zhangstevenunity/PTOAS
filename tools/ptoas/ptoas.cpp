@@ -29,6 +29,7 @@
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
+#include "mlir/Dialect/EmitC/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -112,6 +113,8 @@ static llvm::cl::opt<bool> emitAddPtrTrace(
 //   PTOAS__TILE_SET_VALUE(dst, offset, val) -> dst.SetValue(offset, val)
 //   PTOAS__TILE_GET_VALUE(src, offset)      -> src.GetValue(offset)
 //   PTOAS__TILE_DATA(obj)                  -> obj.data()
+//   PTOAS__PTR_LOAD(ptr, offset)           -> ptr[offset]
+//   PTOAS__PTR_STORE(ptr, offset, val)     -> ptr[offset] = val
 // --------------------------------------------------------------------------
 static bool rewriteMarkerCallToMember(std::string &cpp, llvm::StringRef marker,
                                       llvm::StringRef memberName,
@@ -209,6 +212,90 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
         cpp, "PTOAS__TILE_GET_VALUE", "GetValue", /*expectedNumArgs=*/2);
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
+  }
+}
+
+static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marker,
+                                         unsigned expectedNumArgs,
+                                         bool isStore) {
+  size_t searchPos = 0;
+  bool changed = false;
+  while (true) {
+    size_t markerPos = cpp.find(marker.str(), searchPos);
+    if (markerPos == std::string::npos)
+      break;
+
+    size_t lparenPos = markerPos + marker.size();
+    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
+      searchPos = markerPos + marker.size();
+      continue;
+    }
+
+    size_t argsBegin = lparenPos + 1;
+    int parenDepth = 0;
+    size_t rparenPos = std::string::npos;
+    for (size_t i = argsBegin; i < cpp.size(); ++i) {
+      char c = cpp[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth == 0) {
+          rparenPos = i;
+          break;
+        }
+        --parenDepth;
+      }
+    }
+    if (rparenPos == std::string::npos) {
+      break;
+    }
+
+    llvm::StringRef argsRef(cpp.data() + argsBegin, rparenPos - argsBegin);
+    llvm::SmallVector<llvm::StringRef, 4> args;
+    size_t partBegin = 0;
+    parenDepth = 0;
+    for (size_t i = 0; i < argsRef.size(); ++i) {
+      char c = argsRef[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth > 0)
+          --parenDepth;
+      } else if (c == ',' && parenDepth == 0) {
+        args.push_back(argsRef.slice(partBegin, i).trim());
+        partBegin = i + 1;
+      }
+    }
+    if (partBegin <= argsRef.size())
+      args.push_back(argsRef.drop_front(partBegin).trim());
+
+    if (args.size() != expectedNumArgs) {
+      searchPos = rparenPos + 1;
+      continue;
+    }
+
+    std::string replacement;
+    if (isStore) {
+      replacement = (args[0] + "[" + args[1] + "] = " + args[2]).str();
+    } else {
+      replacement = (args[0] + "[" + args[1] + "]").str();
+    }
+
+    cpp.replace(markerPos, (rparenPos - markerPos) + 1, replacement);
+    changed = true;
+    searchPos = markerPos + replacement.size();
+  }
+  return changed;
+}
+
+static void rewritePtrScalarMarkers(std::string &cpp) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    changed |= rewriteMarkerCallToSubscript(
+        cpp, "PTOAS__PTR_LOAD", /*expectedNumArgs=*/2, /*isStore=*/false);
+    changed |= rewriteMarkerCallToSubscript(
+        cpp, "PTOAS__PTR_STORE", /*expectedNumArgs=*/3, /*isStore=*/true);
   }
 }
 
@@ -446,14 +533,15 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
   
-  pm.addPass(createCSEPass());
-  pm.addPass(pto::createEmitPTOManualPass());
-  pm.addPass(mlir::createCSEPass());
-  
-  if (failed(pm.run(*module))) {
-    llvm::errs() << "Error: Pass execution failed.\n";
-    return 1;
-  }
+	  pm.addPass(createCSEPass());
+	  pm.addPass(pto::createEmitPTOManualPass());
+	  pm.addPass(emitc::createFormExpressionsPass());
+	  pm.addPass(mlir::createCSEPass());
+	  
+	  if (failed(pm.run(*module))) {
+	    llvm::errs() << "Error: Pass execution failed.\n";
+	    return 1;
+	  }
 
   // llvm::outs() << "\n===== EmitC IR (before translateToCpp) =====\n";
   // module->print(llvm::outs());
@@ -462,16 +550,24 @@ int main(int argc, char **argv) {
   // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;
   llvm::raw_string_ostream cppOS(cppOutput);
-  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
-  // multiple blocks, requiring variables to be declared at the top for valid
-  // C++ emission.
-  if (failed(emitc::translateToCpp(*module, cppOS,
-                                  /*declareVariablesAtTop=*/true))) {
-    llvm::errs() << "Error: Failed to emit C++.\n";
-    return 1;
-  }
+	  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
+	  // multiple blocks, requiring variables to be declared at the top for valid
+	  // C++ emission.
+	  bool declareVariablesAtTop = false;
+	  for (auto func : module->getOps<func::FuncOp>()) {
+	    if (func.getBlocks().size() > 1) {
+	      declareVariablesAtTop = true;
+	      break;
+	    }
+	  }
+	  if (failed(emitc::translateToCpp(*module, cppOS,
+	                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
+	    llvm::errs() << "Error: Failed to emit C++.\n";
+	    return 1;
+	  }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
+  rewritePtrScalarMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
   rewriteHoistedGlobalTensorDecls(cppOutput);
   outputFile.os() << cppOutput;

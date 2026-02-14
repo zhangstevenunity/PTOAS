@@ -399,16 +399,15 @@ PYBIND11_MODULE(_pto, m) {
         [](MlirType type) -> bool { return mlirPTOTypeIsAPtrType(type); })
         .def_classmethod(
             "get",
-            [](py::object cls, MlirType elementType, MlirContext context) -> py::object {
-                MlirType t = mlirPTOPtrTypeGet(context, elementType);
-                // Construct the Python wrapper object from the underlying MlirType.
+            [](py::object cls, MlirType elementType,
+               MlirContext context) -> py::object {
+                MlirContext ctx = context;
+                if (!ctx.ptr)
+                    ctx = mlirTypeGetContext(elementType);
+                MlirType t = mlirPTOPtrTypeGet(ctx, elementType);
                 return cls.attr("__call__")(t);
             },
             py::arg("cls"), py::arg("element_type"),
-            // NOTE: If you don't have a "default context" helper, it is safer
-            // to require context explicitly. Here we keep a default to be
-            // consistent with common MLIR Python patterns, but passing None
-            // may crash if your C-API does not handle it.
             py::arg("context") = py::none())
         .def_property_readonly(
             "element_type",
