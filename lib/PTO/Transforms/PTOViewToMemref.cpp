@@ -303,17 +303,8 @@ static Value computeSubsetValidDim(IRRewriter &rewriter, Location loc,
     int64_t clipped = std::min<int64_t>(size, diff);
     return rewriter.create<arith::ConstantIndexOp>(loc, clipped);
   }
-
-  Value pv = ensureIndex(rewriter, loc, parentValid, anchorOp);
-  Value off = ensureIndex(rewriter, loc, offset, anchorOp);
-  Value diff = rewriter.create<arith::SubIOp>(loc, pv, off);
-  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  Value gt =
-      rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, diff, zero);
-  Value nonNeg = rewriter.create<arith::SelectOp>(loc, gt, diff, zero);
-  Value lt = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
-                                            nonNeg, sizeVal);
-  return rewriter.create<arith::SelectOp>(loc, lt, nonNeg, sizeVal);
+  // Keep static valid dims when runtime values are not constant.
+  return sizeVal;
 }
 
 static void dumpPretty(Operation *op, llvm::raw_ostream &os) {
