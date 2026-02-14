@@ -10,6 +10,10 @@ PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-}"
 DEVICE_ID="${DEVICE_ID:-0}"
 SKIP_CASES="${SKIP_CASES:-}"          # comma/space separated testcase names
 RUN_ONLY_CASES="${RUN_ONLY_CASES:-}"  # comma/space separated testcase names
+# Run specific flaky/stress-sensitive cases multiple times (run stage only).
+REPEAT_CASES="${REPEAT_CASES:-insertSync,injectSync}"  # comma/space separated testcase names
+REPEAT_ITERS="${REPEAT_ITERS:-10}"                     # iteration count for REPEAT_CASES
+DEFAULT_ITERS="${DEFAULT_ITERS:-1}"                    # iteration count for all other cases
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${SCRIPT_DIR}/test/npu_validation/scripts/generate_testcase.py" ]]; then
@@ -29,6 +33,7 @@ log "GOLDEN_MODE=${GOLDEN_MODE}"
 log "DEVICE_ID=${DEVICE_ID}"
 log "PTO_ISA_REPO=${PTO_ISA_REPO}"
 log "PTO_ISA_COMMIT=${PTO_ISA_COMMIT}"
+log "REPEAT_CASES=${REPEAT_CASES} REPEAT_ITERS=${REPEAT_ITERS} DEFAULT_ITERS=${DEFAULT_ITERS}"
 log "ROOT_DIR=${ROOT_DIR}"
 
 RESULTS_TSV="${RESULTS_TSV:-${ROOT_DIR}/remote_npu_validation_results.tsv}"
@@ -58,6 +63,7 @@ list_contains() {
 
 SKIP_CASES_NORM="$(normalize_list "${SKIP_CASES}")"
 RUN_ONLY_CASES_NORM="$(normalize_list "${RUN_ONLY_CASES}")"
+REPEAT_CASES_NORM="$(normalize_list "${REPEAT_CASES}")"
 
 source_rc() {
   local f="$1"
@@ -192,6 +198,14 @@ while IFS= read -r -d '' cpp; do
   case_dir="$(cd "$(dirname "${cpp}")" && pwd)"
   sample_name="$(basename "${case_dir}")"
   nv_dir="${OUTPUT_ROOT}/${sample_name}/${testcase}"
+  iters="${DEFAULT_ITERS}"
+  if [[ "${STAGE}" == "run" ]]; then
+    if [[ -n "${REPEAT_CASES_NORM}" ]] && list_contains "${REPEAT_CASES_NORM}" "${testcase}"; then
+      iters="${REPEAT_ITERS}"
+    fi
+  else
+    iters=1
+  fi
 
   set +e
   python3 "${ROOT_DIR}/test/npu_validation/scripts/generate_testcase.py" \
@@ -229,6 +243,14 @@ while IFS= read -r -d '' cpp; do
       exit 0
     fi
 
+    # Stress loops (run stage only). Keep default to 1 for most cases.
+    if ! [[ "${iters}" =~ ^[0-9]+$ ]] || [[ "${iters}" -lt 1 ]]; then
+      iters=1
+    fi
+    if [[ "${iters}" -gt 1 ]]; then
+      log "STRESS: ${testcase} iters=${iters}"
+    fi
+
     copy_outputs_as_golden() {
       if [[ -f "./outputs.txt" ]]; then
         while IFS= read -r name; do
@@ -246,32 +268,47 @@ while IFS= read -r -d '' cpp; do
 
     case "${GOLDEN_MODE}" in
       sim)
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
-        copy_outputs_as_golden
-        if [[ "${RUN_MODE}" == "npu" ]]; then
-          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        fi
-        COMPARE_STRICT=1 python3 ./compare.py
+        for ((i=1; i<=iters; i++)); do
+          if [[ "${iters}" -gt 1 ]]; then
+            log "RUN(sim) ${testcase} iter ${i}/${iters}"
+          fi
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
+          copy_outputs_as_golden
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          fi
+          COMPARE_STRICT=1 python3 ./compare.py
+        done
         ;;
       npu)
         if [[ "${RUN_MODE}" != "npu" ]]; then
           log "ERROR: GOLDEN_MODE=npu requires RUN_MODE=npu"
           exit 2
         fi
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        copy_outputs_as_golden
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        COMPARE_STRICT=1 python3 ./compare.py
+        for ((i=1; i<=iters; i++)); do
+          if [[ "${iters}" -gt 1 ]]; then
+            log "RUN(npu) ${testcase} iter ${i}/${iters}"
+          fi
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          copy_outputs_as_golden
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          COMPARE_STRICT=1 python3 ./compare.py
+        done
         ;;
       skip)
-        python3 ./golden.py
-        if [[ "${RUN_MODE}" == "npu" ]]; then
-          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        fi
-        log "WARN: compare skipped (GOLDEN_MODE=skip)"
+        for ((i=1; i<=iters; i++)); do
+          if [[ "${iters}" -gt 1 ]]; then
+            log "RUN(skip) ${testcase} iter ${i}/${iters}"
+          fi
+          python3 ./golden.py
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          fi
+          log "WARN: compare skipped (GOLDEN_MODE=skip)"
+        done
         ;;
       *)
         log "ERROR: unknown GOLDEN_MODE=${GOLDEN_MODE} (expected: sim|npu|skip)"
@@ -282,14 +319,26 @@ while IFS= read -r -d '' cpp; do
   )
   case_rc=$?
   set -euo pipefail
+  if ! [[ "${iters}" =~ ^[0-9]+$ ]] || [[ "${iters}" -lt 1 ]]; then
+    iters=1
+  fi
+  info="-"
+  if [[ "${STAGE}" == "run" && "${iters}" -gt 1 ]]; then
+    info="repeat=${iters}"
+  fi
   if [[ $case_rc -ne 0 ]]; then
     status=1
     fail_count=$((fail_count + 1))
-    printf "%s\tFAIL\t%s\texit=%s\n" "${testcase}" "${STAGE}" "${case_rc}" >> "${RESULTS_TSV}"
+    if [[ "${STAGE}" == "run" && "${iters}" -gt 1 ]]; then
+      info="repeat=${iters} exit=${case_rc}"
+    else
+      info="exit=${case_rc}"
+    fi
+    printf "%s\tFAIL\t%s\t%s\n" "${testcase}" "${STAGE}" "${info}" >> "${RESULTS_TSV}"
     log "ERROR: testcase failed (exit ${case_rc}): ${testcase}"
   else
     ok_count=$((ok_count + 1))
-    printf "%s\tOK\t%s\t-\n" "${testcase}" "${STAGE}" >> "${RESULTS_TSV}"
+    printf "%s\tOK\t%s\t%s\n" "${testcase}" "${STAGE}" "${info}" >> "${RESULTS_TSV}"
   fi
 done < <(find "${ROOT_DIR}/test/samples" -type f -name '*-pto.cpp' -print0)
 

@@ -60,6 +60,10 @@ def build_pingpong():
                 pong = pto.SubsetOp(workspace, [c0, c32], sizes=[32, 32]).result
 
                 # DPS: Compute, Prefetch, WriteBack
+                # NOTE: This demo models a double-buffer "step", but for NPU
+                # validation we must not read uninitialized UB tiles (it makes
+                # outputs non-deterministic across repeated runs).
+                pto.TLoadOp(None, sv_src, ping)
                 pto.TAddOp(ping, ping, ping)
                 pto.TLoadOp(None, sv_src, pong)
                 pto.TStoreOp(None, ping, sv_dst)
