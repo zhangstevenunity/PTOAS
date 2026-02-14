@@ -6724,24 +6724,28 @@ LogicalResult SubsetOp::inferReturnTypes(
 
     if (parentValid.size() == resultShape.size()) {
       int64_t pv = parentValid[i];
+      // In current subset usage, valid dims are treated as static.
+      // Only refine when both parent valid and offset are compile-time constants.
       if (pv == ShapedType::kDynamic) {
-        vdim = ShapedType::kDynamic;
+        vdim = sizeDim;
       } else {
         int64_t off = 0;
-        // operands: [source, offsets...]
         if (operands.size() > 1 + i) {
           auto offOpt = getConstIndexValue(operands[1 + i]);
-          if (!offOpt) {
-            vdim = ShapedType::kDynamic;
-            validShape.push_back(vdim);
-            continue;
+          if (offOpt) {
+            off = *offOpt;
+            if (pv == sizeDim) {
+              vdim = sizeDim;
+            } else {
+              int64_t diff = pv - off;
+              if (diff < 0) diff = 0;
+              vdim = std::min<int64_t>(sizeDim, diff);
+            }
+          } else {
+            vdim = sizeDim;
           }
-          off = *offOpt;
-          int64_t diff = pv - off;
-          if (diff < 0) diff = 0;
-          vdim = std::min<int64_t>(sizeDim, diff);
         } else {
-          vdim = ShapedType::kDynamic;
+          vdim = sizeDim;
         }
       }
     }
