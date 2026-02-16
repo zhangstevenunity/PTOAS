@@ -533,15 +533,18 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
   
-	  pm.addPass(createCSEPass());
-	  pm.addPass(pto::createEmitPTOManualPass());
-	  pm.addPass(emitc::createFormExpressionsPass());
-	  pm.addPass(mlir::createCSEPass());
-	  
-	  if (failed(pm.run(*module))) {
-	    llvm::errs() << "Error: Pass execution failed.\n";
-	    return 1;
-	  }
+  pm.addPass(createCSEPass());
+  pm.addPass(pto::createEmitPTOManualPass());
+  // NOTE: emitc::FormExpressionsPass currently segfaults on some valid EmitC IR
+  // patterns (e.g. when operands are block arguments). See issue #103.
+  // Disable it until upstream/MLIR fix lands.
+  // pm.addPass(emitc::createFormExpressionsPass());
+  pm.addPass(mlir::createCSEPass());
+
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return 1;
+  }
 
   // llvm::outs() << "\n===== EmitC IR (before translateToCpp) =====\n";
   // module->print(llvm::outs());
@@ -550,21 +553,21 @@ int main(int argc, char **argv) {
   // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;
   llvm::raw_string_ostream cppOS(cppOutput);
-	  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
-	  // multiple blocks, requiring variables to be declared at the top for valid
-	  // C++ emission.
-	  bool declareVariablesAtTop = false;
-	  for (auto func : module->getOps<func::FuncOp>()) {
-	    if (func.getBlocks().size() > 1) {
-	      declareVariablesAtTop = true;
-	      break;
-	    }
-	  }
-	  if (failed(emitc::translateToCpp(*module, cppOS,
-	                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
-	    llvm::errs() << "Error: Failed to emit C++.\n";
-	    return 1;
-	  }
+  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
+  // multiple blocks, requiring variables to be declared at the top for valid
+  // C++ emission.
+  bool declareVariablesAtTop = false;
+  for (auto func : module->getOps<func::FuncOp>()) {
+    if (func.getBlocks().size() > 1) {
+      declareVariablesAtTop = true;
+      break;
+    }
+  }
+  if (failed(emitc::translateToCpp(*module, cppOS,
+                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
+    llvm::errs() << "Error: Failed to emit C++.\n";
+    return 1;
+  }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);

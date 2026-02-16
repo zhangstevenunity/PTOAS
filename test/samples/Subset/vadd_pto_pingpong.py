@@ -25,7 +25,11 @@ def build_pingpong():
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
-            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 32], cfg, ctx)
+            # NOTE: This is a ping-pong workspace (two 32x32 tiles packed into a
+            # single 32x64 buffer). Mark the full buffer as valid so the second
+            # half doesn't infer v_col=0, which breaks downstream PTO-ISA TLOAD
+            # templates on some toolchains.
+            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 64], cfg, ctx)
 
             # ======================================================
             # 2. 逻辑主体
