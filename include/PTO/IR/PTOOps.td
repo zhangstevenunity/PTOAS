@@ -203,6 +203,31 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   }];
 }
 
+// =============================================================================
+// MarkMultiBufferOp
+// =============================================================================
+def MarkMultiBufferOp : PTO_Op<"mark_multibuffer", [
+    Pure,
+    SameOperandsAndResultType
+  ]> {
+  let summary = "Mark a buffer for multi-buffering.";
+  let description = [{
+    Attaches multi-buffer metadata to a buffer instance.
+    This is a metadata-only marker and does not change data semantics.
+  }];
+
+  let arguments = (ins
+    AnyMemRef:$source,
+    DefaultValuedAttr<I32Attr, "2">:$num
+  );
+
+  let results = (outs AnyMemRef:$result);
+
+  let assemblyFormat = [{
+    $source attr-dict `:` qualified(type($source)) `->` qualified(type($result))
+  }];
+}
+
 
 // ============================================================================
 // BindTileOp: 将 Config 和 Valid Dims 绑定到 MemRef 上

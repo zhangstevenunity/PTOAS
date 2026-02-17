@@ -331,6 +331,10 @@ void BlockSyncAnalysis::InsertSyncOperation(
             syncIndex_, insertSetId, forEndIndex);
             
         auto waitOp = setOp->GetMatchSync(insertWaitId); 
+
+        int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
+        setOp->eventIdNum = eventIdNum;
+        waitOp->eventIdNum = eventIdNum;
         
         llvm::errs() << " [Trace Insert] SET_EVENT at Node " << insertSetId << " (POST)\n";
         syncIR_[insertSetId]->pipeAfter.push_back(setOp.get());
@@ -635,13 +639,18 @@ SmallVector<Value> BlockSyncAnalysis::GetMemInfoBuffers(
 }
  
 int BlockSyncAnalysis::GetEventIdNum(const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+    int eventIdNum = 1;
     for (const auto &pair : depBaseMemInfosVec) {
-        // 逻辑含义：只要涉及 Matrix Buffer (MAT) 或者 Vector Buffer (UB)，都视为片上依赖，可能需要 Double Buffer。
-        bool isLocalA = pair.first && (pair.first->scope == pto::AddressSpace::MAT || pair.first->scope == pto::AddressSpace::VEC);
-        bool isLocalB = pair.second && (pair.second->scope == pto::AddressSpace::MAT || pair.second->scope == pto::AddressSpace::VEC);
-        if (isLocalA || isLocalB) return 2;
+        auto update = [&](const BaseMemInfo *info) {
+            if (!info) return;
+            if (info->baseAddresses.size() > static_cast<size_t>(eventIdNum)) {
+                eventIdNum = static_cast<int>(info->baseAddresses.size());
+            }
+        };
+        update(pair.first);
+        update(pair.second);
     }
-    return 1; 
+    return eventIdNum;
 }
  
 bool BlockSyncAnalysis::IsGMHazard(const CompoundInstanceElement *nowCompound,

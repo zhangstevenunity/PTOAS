@@ -111,6 +111,10 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       // 这告诉 Liveness Analysis：用到 result 的地方就是在用 source
       UpdateBufferAlias(bindOp.getResult(), bindOp.getSource());
       return WalkResult::advance();
+    } else if (auto markOp = dyn_cast<pto::MarkMultiBufferOp>(op)) {
+      UpdateBufferAlias(markOp.getResult(), markOp.getSource());
+      UpdateMultiBufferInfo(markOp);
+      return WalkResult::advance();
     } else if (isLocalMemPlan() && dyn_cast<memref::AllocOp>(op)) {
       if (failed(CheckLocalBufferAllocOp(op))) {
         return WalkResult::interrupt();
@@ -148,8 +152,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       UpdateBufferAlias(selectOp.getResult(), selectOp.getTrueValue(), true);
       UpdateBufferAlias(selectOp.getResult(), selectOp.getFalseValue(), true);
       OpKillHandle(curOpInfo, live, op->getBlock());
-    //} else if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
-      //UpdateMultiBufferInfo(markOp);
     } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(callOp->getOperands()));
       // UpdateOpTempGenInfo(curOpInfo);
@@ -300,24 +302,20 @@ SmallVector<Value> MemLivenessAnalysis::GetLiveBuffersInLoop(scf::ForOp forOp,
   return allocBeforeLoopBuffers;
 }
 
-// void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp) {
-//   auto attrDict = markOp->getAttrDictionary();
-//   if (attrDict.empty()) {
-//     return;
-//   }
-//   if (!attrDict.contains(pto::MultiBufferAttr::name)) {
-//     return;
-//   }
-//   auto multiBufferValAttr = attrDict.get(pto::MultiBufferAttr::name);
-//   assert(isa<IntegerAttr>(multiBufferValAttr) &&
-//          "multi buffer value must be integer!");
-//   auto valAttr = cast<IntegerAttr>(multiBufferValAttr);
-//   if (valAttr.getInt() == 1) {
-//     // Num is 1, which is a singebuffer and does not require any processing.
-//     return;
-//   }
-//   buffer2MultiNum[markOp.getSrc()] = static_cast<uint64_t>(valAttr.getInt());
-// }
+void MemLivenessAnalysis::UpdateMultiBufferInfo(pto::MarkMultiBufferOp markOp) {
+  auto numAttr = markOp->getAttrOfType<IntegerAttr>("num");
+  int64_t num = numAttr ? numAttr.getInt() : 2;
+  if (num <= 1) {
+    return;
+  }
+
+  Value src = markOp.getSource();
+  auto aliases = GetAliasBuffers(src);
+  aliases.insert(src);
+  for (auto v : aliases) {
+    buffer2MultiNum[v] = static_cast<uint32_t>(num);
+  }
+}
 
 LogicalResult
 MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
@@ -1977,6 +1975,14 @@ void PlanMemoryPass::runOnOperation() {
     populateBufferAddressToAllocOp(patterns, memPlan.GetBuffer2Offsets());
     if (failed(applyPatternsAndFoldGreedily(funcOp, std::move(patterns)))) {
       return signalPassFailure();
+    }
+
+    // MarkMultiBuffer is metadata-only; remove it after plan memory consumes it.
+    SmallVector<pto::MarkMultiBufferOp> marks;
+    funcOp.walk([&](pto::MarkMultiBufferOp op) { marks.push_back(op); });
+    for (auto op : marks) {
+      op.replaceAllUsesWith(op.getSource());
+      op.erase();
     }
   }
   llvm::errs() << "end PTO plan Mem!\n";
