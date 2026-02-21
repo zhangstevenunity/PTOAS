@@ -661,6 +661,67 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
             break
         return None, None
 
+    def strip_enclosing_parens(expr: str) -> str:
+        expr = expr.strip()
+        while expr.startswith("(") and expr.endswith(")"):
+            depth = 0
+            ok = True
+            for i, ch in enumerate(expr):
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0 and i != len(expr) - 1:
+                        ok = False
+                        break
+            if ok and depth == 0:
+                expr = expr[1:-1].strip()
+            else:
+                break
+        return expr
+
+    def resolve_param_and_offset_expr(ptr_expr: str):
+        """
+        Resolve a pointer expression passed to GlobalTensor(...) back to a GM
+        pointer param name plus a conservative constant offset in elements.
+
+        Handles common PTOAS patterns like:
+          v1
+          v1 + (expr)
+          reinterpret_cast<__gm__ float*>(v1 + expr)
+          (__gm__ float*)(v1 + expr)
+        """
+        expr = strip_enclosing_parens(ptr_expr.strip())
+        if not expr:
+            return None, None
+
+        m = re.match(r"^(?:reinterpret_cast|static_cast)<[^>]+>\((.*)\)$", expr)
+        if m:
+            expr = strip_enclosing_parens(m.group(1).strip())
+
+        # C-style cast prefix: (__gm__ float*)expr / (float*)expr
+        m = re.match(r"^\(\s*__gm__[^)]*\)\s*(.+)$", expr)
+        if m:
+            expr = strip_enclosing_parens(m.group(1).strip())
+        else:
+            m = re.match(r"^\(\s*[\w:<> ]+\*\s*\)\s*(.+)$", expr)
+            if m:
+                expr = strip_enclosing_parens(m.group(1).strip())
+
+        m = re.match(r"^(\w+)\s*\+\s*(.+)$", expr)
+        if m:
+            base = m.group(1)
+            off_expr = m.group(2).strip()
+            param, off0 = resolve_param_and_offset(base)
+            if not param or off0 is None:
+                return None, None
+            off_val = _safe_eval_int_expr(off_expr, int_max)
+            if off_val is None:
+                return param, off0
+            return param, off0 + max(off_val, 0)
+
+        return resolve_param_and_offset(expr)
+
     # Parse aliases: GTShape_*=pto::Shape<...>; GTStride_*=pto::Stride<...>;
     shape_aliases = {}
     for m in re.finditer(r"using\s+(\w+)\s*=\s*pto::Shape<([^>]*)>;", kernel_text):
@@ -711,7 +772,7 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
     # `using GTShape = ...; using GTStride = ...;` aliases and instead embeds
     # pto::Shape/pto::Stride directly in the GlobalTensor template.
     for m in re.finditer(
-        r"\b(?:pto::)?GlobalTensor<[^;\n]*(?:pto::)?Shape<([^>]*)>[^;\n]*(?:pto::)?Stride<([^>]*)>[^;\n]*>\s*\(\s*(\w+)\s*,",
+        r"\b(?:pto::)?GlobalTensor<[^;\n]*(?:pto::)?Shape<([^>]*)>[^;\n]*(?:pto::)?Stride<([^>]*)>[^;\n]*>\s*\(\s*([^,]+?)\s*,",
         kernel_text,
     ):
         shape_dims = _parse_int_list(m.group(1))
@@ -719,8 +780,8 @@ def _infer_gm_pointer_elem_counts(kernel_text: str, pointer_param_names):
         req = _required_elements_for_shape_stride(shape_dims, stride_dims)
         if not req:
             continue
-        base_ptr = m.group(3)
-        param, off = resolve_param_and_offset(base_ptr)
+        base_ptr_expr = m.group(3).strip()
+        param, off = resolve_param_and_offset_expr(base_ptr_expr)
         if not param or off is None:
             continue
         param_elem_counts[param] = max(param_elem_counts.get(param, 0), req + max(off, 0))

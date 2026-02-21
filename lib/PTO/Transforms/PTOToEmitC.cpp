@@ -2172,7 +2172,6 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     // 1. 获取 Source 的 Strides (支持动态 Stride 收集)
     SmallVector<OpFoldResult> sourceStrides;
-    SmallVector<Value> dynamicStrideValues; // 用于后续构造 StrideDim 对象
 
     if (auto rc = op.getSource().getDefiningOp<memref::ReinterpretCastOp>()) {
         sourceStrides = rc.getMixedStrides();
@@ -2351,49 +2350,75 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     // 2. 生成 Shape 模板参数，之后会右对齐有效维度并补齐到 5 维（高维填 1）
     SmallVector<std::string> shapeParamsVec;
+    SmallVector<Value> sizeValues; // 每个维度对应的运行时 size（统一为 unsigned）
     auto resShape = resTy.getShape();
+    auto mixedSizes = op.getMixedSizes();
+    sizeValues.reserve(rank);
     for (int i = 0; i < resTy.getRank(); ++i) {
-        if (resShape[i] == ShapedType::kDynamic) {
-            shapeParamsVec.push_back("-1");
-        } else {
-            shapeParamsVec.push_back(std::to_string(resShape[i]));
-        }
+      if (resShape[i] == ShapedType::kDynamic) {
+        shapeParamsVec.push_back("-1");
+      } else {
+        shapeParamsVec.push_back(std::to_string(resShape[i]));
+      }
+      // size 值：优先从 op.getMixedSizes() 取（可动态/静态），否则退化为类型里的静态 shape。
+      if (i < (int)mixedSizes.size())
+        sizeValues.push_back(ofrToEmitCValue(mixedSizes[i]));
+      else
+        sizeValues.push_back(
+            mkU32(resShape[i] == ShapedType::kDynamic ? 1 : resShape[i]));
     }
 
-    // 3. 生成 Stride 动态值收集（保留，用于动态 stride 传参）
+    // 3. 生成 Stride 模板参数 + 运行时 stride 值（考虑 subview step）
     SmallVector<std::string> dummyStrideVec;
+    SmallVector<Value> strideValues; // 每个维度对应的运行时 stride（统一为 unsigned）
+    dummyStrideVec.reserve(rank);
+    strideValues.reserve(rank);
     auto subViewSteps = op.getMixedStrides();
     for (int i = 0; i < rank; ++i) {
-        int64_t finalStride = 1;
-        bool isDynamic = false;
-        if (i < (int)sourceStrides.size()) {
-            if (auto val = extractStaticInt(sourceStrides[i])) {
-                finalStride = *val;
-            } else {
-                isDynamic = true;
-                if (auto v = sourceStrides[i].dyn_cast<Value>()) {
-                    dynamicStrideValues.push_back(rewriter.getRemappedValue(v));
-                }
-            }
-        }
-        if (i < (int)subViewSteps.size()) {
-            if (auto val = extractStaticInt(subViewSteps[i])) {
-                finalStride *= *val;
-            }
-        }
-        dummyStrideVec.push_back(isDynamic ? "-1" : std::to_string(finalStride));
+      OpFoldResult srcStrideOfr =
+          (i < (int)sourceStrides.size()) ? sourceStrides[i]
+                                          : rewriter.getIndexAttr(1);
+      OpFoldResult stepOfr = (i < (int)subViewSteps.size())
+                                 ? subViewSteps[i]
+                                 : rewriter.getIndexAttr(1);
+
+      auto srcStatic = extractStaticInt(srcStrideOfr);
+      auto stepStatic = extractStaticInt(stepOfr);
+      if (srcStatic && stepStatic) {
+        int64_t finalStride = (*srcStatic) * (*stepStatic);
+        dummyStrideVec.push_back(std::to_string(finalStride));
+        strideValues.push_back(mkU32(finalStride));
+        continue;
+      }
+
+      dummyStrideVec.push_back("-1");
+      Value srcV = ofrToEmitCValue(srcStrideOfr);
+      Value stepV = ofrToEmitCValue(stepOfr);
+      // 尽量避免乘以 1 生成冗余指令
+      if (stepStatic && *stepStatic == 1)
+        strideValues.push_back(srcV);
+      else if (srcStatic && *srcStatic == 1)
+        strideValues.push_back(stepV);
+      else
+        strideValues.push_back(
+            rewriter.create<emitc::MulOp>(loc, u32Ty, srcV, stepV));
     }
 
     // 3.1 右对齐到 5 维：shape 补 1；已有维度继承原 stride；
     //      被补出来的高维按“紧密升维”规则连续推导：stride[i] = shape[i+1] * stride[i+1]
     SmallVector<std::string, 5> finalShape(5, "1");
     SmallVector<std::string, 5> finalStride(5, "1");
+    Value oneU32 = mkU32(1);
+    SmallVector<Value, 5> finalShapeValues(5, oneU32);
+    SmallVector<Value, 5> finalStrideValues(5, oneU32);
     int shift = 5 - rank;
 
     // 先放入原始 shape/stride（保持用户提供的值）
     for (int i = 0; i < rank && i < 5; ++i) {
-        finalShape[shift + i] = shapeParamsVec[i];
-        finalStride[shift + i] = dummyStrideVec[i];
+      finalShape[shift + i] = shapeParamsVec[i];
+      finalStride[shift + i] = dummyStrideVec[i];
+      finalShapeValues[shift + i] = sizeValues[i];
+      finalStrideValues[shift + i] = strideValues[i];
     }
 
     auto mulOrDyn = [](const std::string &a, const std::string &b) -> std::string {
@@ -2407,11 +2432,24 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     // 从低维到高维倒推补齐 stride（仅对补出来的前置维度生效）
     for (int i = 3; i >= 0; --i) {
-        // 如果该维已由原始 rank 覆盖，则保持原值
-        if (i >= shift)
-            continue;
-        // 补维：shape 已经是 1，stride = shape[i+1] * stride[i+1]（或动态）
-        finalStride[i] = mulOrDyn(finalShape[i + 1], finalStride[i + 1]);
+      // 如果该维已由原始 rank 覆盖，则保持原值
+      if (i >= shift)
+        continue;
+      // 补维：shape 已经是 1，stride = shape[i+1] * stride[i+1]（或动态）
+      finalStride[i] = mulOrDyn(finalShape[i + 1], finalStride[i + 1]);
+      if (finalStride[i] != "-1") {
+        int64_t si = 1;
+        (void)llvm::to_integer(finalStride[i], si);
+        finalStrideValues[i] = mkU32(si);
+        continue;
+      }
+      // 动态推导：stride[i] = shape[i+1] * stride[i+1]
+      if (finalShape[i + 1] == "1") {
+        finalStrideValues[i] = finalStrideValues[i + 1];
+      } else {
+        finalStrideValues[i] = rewriter.create<emitc::MulOp>(
+            loc, u32Ty, finalShapeValues[i + 1], finalStrideValues[i + 1]);
+      }
     }
 
     auto joinParams = [](llvm::ArrayRef<std::string> vec) {
@@ -2513,14 +2551,17 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     
     // B. Instantiate Stride object.
     auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideCppType);
+    // 仅传入动态 stride 维度对应的值，匹配 pto::Stride 的 N-parameter ctor（并满足其 static_assert）。
+    SmallVector<Value> strideCtorArgs;
+    strideCtorArgs.reserve(5);
+    for (int i = 0; i < 5; ++i) {
+      if (finalStride[i] == "-1")
+        strideCtorArgs.push_back(finalStrideValues[i]);
+    }
     auto strideInstOp = rewriter.create<emitc::CallOpaqueOp>(
-        loc, 
-        strideTypeOpaque, 
-        strideCppType, 
-        /*args=*/ArrayAttr{}, 
-        /*templateArgs=*/ArrayAttr{}, 
-        /*operands=*/ValueRange(dynamicStrideValues) // 传入之前收集的动态stride
-    );
+        loc, strideTypeOpaque, strideCppType,
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange(strideCtorArgs));
 
     // C. Instantiate GlobalTensor object (ptr + shape + stride).
     std::string gtCppType = "GlobalTensor<" + elemTypeStr + ", " + shapeCppType +

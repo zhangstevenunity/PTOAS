@@ -215,6 +215,33 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
   }
 }
 
+// --------------------------------------------------------------------------
+// EmitC cleanup: drop empty emitc.expression ops.
+//
+// After FormExpressions + CSE, EmitC expressions can become empty when their
+// root op is CSE'd with an equivalent dominating value outside the expression
+// region. Such expressions crash mlir::emitc::translateToCpp because
+// ExpressionOp::getRootOp() returns nullptr.
+// --------------------------------------------------------------------------
+static void dropEmptyEmitCExpressions(Operation *rootOp) {
+  llvm::SmallVector<emitc::ExpressionOp, 8> toErase;
+  rootOp->walk([&](emitc::ExpressionOp expr) {
+    if (expr.getRootOp())
+      return;
+    Block *body = expr.getBody();
+    if (!body)
+      return;
+    auto yield = dyn_cast<emitc::YieldOp>(body->getTerminator());
+    if (!yield || yield.getNumOperands() != 1)
+      return;
+    Value yielded = yield.getOperand(0);
+    expr.getResult().replaceAllUsesWith(yielded);
+    toErase.push_back(expr);
+  });
+  for (emitc::ExpressionOp expr : llvm::reverse(toErase))
+    expr.erase();
+}
+
 static bool rewriteMarkerCallToSubscript(std::string &cpp, llvm::StringRef marker,
                                          unsigned expectedNumArgs,
                                          bool isStore) {
@@ -532,16 +559,18 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
-  
-	  pm.addPass(createCSEPass());
-	  pm.addPass(pto::createEmitPTOManualPass());
-	  pm.addPass(emitc::createFormExpressionsPass());
-	  pm.addPass(mlir::createCSEPass());
-	  
-	  if (failed(pm.run(*module))) {
-	    llvm::errs() << "Error: Pass execution failed.\n";
-	    return 1;
-	  }
+
+  pm.addPass(createCSEPass());
+  pm.addPass(pto::createEmitPTOManualPass());
+  pm.addPass(emitc::createFormExpressionsPass());
+  pm.addPass(mlir::createCSEPass());
+
+  if (failed(pm.run(*module))) {
+    llvm::errs() << "Error: Pass execution failed.\n";
+    return 1;
+  }
+
+  dropEmptyEmitCExpressions(module.get());
 
   // llvm::outs() << "\n===== EmitC IR (before translateToCpp) =====\n";
   // module->print(llvm::outs());
@@ -550,21 +579,21 @@ int main(int argc, char **argv) {
   // Emit C++ to string, then post-process, then write to output file.
   std::string cppOutput;
   llvm::raw_string_ostream cppOS(cppOutput);
-	  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
-	  // multiple blocks, requiring variables to be declared at the top for valid
-	  // C++ emission.
-	  bool declareVariablesAtTop = false;
-	  for (auto func : module->getOps<func::FuncOp>()) {
-	    if (func.getBlocks().size() > 1) {
-	      declareVariablesAtTop = true;
-	      break;
-	    }
-	  }
-	  if (failed(emitc::translateToCpp(*module, cppOS,
-	                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
-	    llvm::errs() << "Error: Failed to emit C++.\n";
-	    return 1;
-	  }
+  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
+  // multiple blocks, requiring variables to be declared at the top for valid
+  // C++ emission.
+  bool declareVariablesAtTop = false;
+  for (auto func : module->getOps<func::FuncOp>()) {
+    if (func.getBlocks().size() > 1) {
+      declareVariablesAtTop = true;
+      break;
+    }
+  }
+  if (failed(emitc::translateToCpp(*module, cppOS,
+                                  /*declareVariablesAtTop=*/declareVariablesAtTop))) {
+    llvm::errs() << "Error: Failed to emit C++.\n";
+    return 1;
+  }
   cppOS.flush();
   rewriteTileGetSetValueMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);

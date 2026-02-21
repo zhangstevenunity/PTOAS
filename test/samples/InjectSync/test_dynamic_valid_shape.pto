@@ -1,0 +1,32 @@
+module {
+  func.func @test_dynamic_valid_shape(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %argN: i32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c33 = arith.constant 33 : index
+    %n = arith.index_cast %argN : i32 to index
+
+    pto.section.vector {
+      // simple loop 0..2 to force multiple iterations
+      %c2 = arith.constant 2 : index
+      scf.for %i = %c0 to %c2 step %c1 {
+        // alternate valid_col between 32 and 33 to keep it dynamic
+        %is0 = arith.cmpi eq, %i, %c0 : index
+        %vcol = arith.select %is0, %c32, %c33 : index
+
+        %tv0 = pto.make_tensor_view %arg0, shape = [%n] strides = [%c1] : !pto.tensor_view<?xf32>
+        %ptv0 = pto.partition_view %tv0, offsets = [%c0], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
+
+        // v_row is static (1) but v_col is dynamic (?) and provided at runtime.
+        %tb0 = pto.alloc_tile valid_col = %vcol : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+        %tb1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+        pto.tload ins(%ptv0 : !pto.partition_tensor_view<32xf32>) outs(%tb0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+        pto.trelu ins(%tb0 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%tb1 : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+        scf.yield
+      }
+    }
+    return
+  }
+}

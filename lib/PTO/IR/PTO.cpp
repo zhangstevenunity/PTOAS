@@ -955,8 +955,10 @@ LogicalResult AllocTileOp::verify() {
   if (vs.size() != 2)
     return emitOpError("result tile_buf must have rank-2 validShape");
 
-  bool needVR = (vs[0] == -1);
-  bool needVC = (vs[1] == -1);
+  // TileBuf valid dims use a negative sentinel (e.g. '?' / -1). Be robust to
+  // any negative value (some code may materialize MLIR dynamic sentinels).
+  bool needVR = (vs[0] < 0);
+  bool needVC = (vs[1] < 0);
 
   // 你要求的：v_row=?, v_col=? 时必须同时给两个
   // （这条规则由下面两句自然实现）
@@ -1008,10 +1010,12 @@ LogicalResult TLoadOp ::verify() {
   // Only check element counts when both sides are statically known.
   int64_t partElems = srcType.getNumElements();
   int64_t tileValidElems = mlir::ShapedType::kDynamic;
-  if (!llvm::is_contained(dstType.getValidShape(),
-                          mlir::ShapedType::kDynamic)) {
+  auto validShape = dstType.getValidShape();
+  const bool anyDynamicValid =
+      llvm::any_of(validShape, [](int64_t v) { return v < 0; });
+  if (!anyDynamicValid) {
     tileValidElems = 1;
-    for (int64_t dim : dstType.getValidShape())
+    for (int64_t dim : validShape)
       tileValidElems *= dim;
   }
 
@@ -6717,6 +6721,7 @@ LogicalResult SubsetOp::inferReturnTypes(
 
   // Derive valid shape from parent valid dims when possible.
   SmallVector<int64_t> validShape;
+  constexpr int64_t kDynamicValidDim = -1;
   ArrayRef<int64_t> parentValid = sourceType.getValidShape();
   for (size_t i = 0, e = resultShape.size(); i < e; ++i) {
     int64_t sizeDim = resultShape[i];
@@ -6724,24 +6729,40 @@ LogicalResult SubsetOp::inferReturnTypes(
 
     if (parentValid.size() == resultShape.size()) {
       int64_t pv = parentValid[i];
-      if (pv == ShapedType::kDynamic) {
-        vdim = ShapedType::kDynamic;
+      if (pv < 0) {
+        vdim = kDynamicValidDim;
       } else {
         int64_t off = 0;
         // operands: [source, offsets...]
         if (operands.size() > 1 + i) {
           auto offOpt = getConstIndexValue(operands[1 + i]);
           if (!offOpt) {
-            vdim = ShapedType::kDynamic;
+            vdim = kDynamicValidDim;
             validShape.push_back(vdim);
             continue;
           }
           off = *offOpt;
-          int64_t diff = pv - off;
-          if (diff < 0) diff = 0;
+          // Interpret parent valid dims as a per-tile "period" when the parent
+          // buffer is wider than the valid region (e.g. ping/pong workspace).
+          // This avoids inferring a zero valid dim when taking a view at an
+          // offset equal to the parent valid dim.
+          //
+          // Example:
+          //   parent: shape 32x64, valid 32x32
+          //   subset: offset [0,32], sizes [32,32]
+          // should infer v_col=32 (not 0).
+          int64_t diff = 0;
+          if (pv > 0) {
+            int64_t offMod = off % pv;
+            if (offMod < 0)
+              offMod += pv;
+            diff = pv - offMod; // in [1, pv] when pv>0
+          }
+          if (diff < 0)
+            diff = 0;
           vdim = std::min<int64_t>(sizeDim, diff);
         } else {
-          vdim = ShapedType::kDynamic;
+          vdim = kDynamicValidDim;
         }
       }
     }

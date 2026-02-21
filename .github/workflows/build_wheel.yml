@@ -52,7 +52,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           export PATH="${PY_PATH}/bin:$PATH"
-          pip install --no-cache-dir numpy pybind11 nanobind setuptools wheel auditwheel
+          # LLVM/MLIR Python bindings are not yet compatible with pybind11 3.x
+          # (see pybind11 static_assert on def_property + keep_alive).
+          pip install --no-cache-dir numpy 'pybind11<3' nanobind setuptools wheel auditwheel
 
       - name: Set build directories
         run: |

@@ -162,6 +162,17 @@ process_one_dir() {
       overall=1
       continue
     fi
+
+    # Regression guard: SubsetOp valid-shape inference must not produce 0.
+    # This breaks downstream NPU compilation (e.g. vadd_pto_pingpong workspace ping/pong).
+    if [[ "$base" == "vadd_pto_pingpong" ]]; then
+      if grep -Fq ", 0, SLayout" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tgenerated tile has valid dim 0 (subset valid-shape bug)"
+        overall=1
+        continue
+      fi
+    fi
+
     echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 
@@ -188,6 +199,17 @@ process_one_dir() {
         echo -e "${A}(${base}.pto)\tFAIL\tptoas failed: $(basename "$f")"
         overall=1
         continue
+      fi
+
+      # Regression guard: dynamic valid_shape must be preserved through lowering.
+      # If `valid_col` is dynamic, PTOToEmitC must construct the Tile with a
+      # runtime argument (i.e. emit `= Tile<...>(...)` instead of `Tile<...>;`).
+      if [[ "$base" == "test_dynamic_valid_shape" ]]; then
+        if ! grep -Fq "= Tile<TileType::Vec, float" "$cpp"; then
+          echo -e "${A}(${base}.pto)\tFAIL\tmissing dynamic Tile constructor (valid_col likely dropped)"
+          overall=1
+          continue
+        fi
       fi
 
       echo -e "${A}(${base}.pto)\tOK\tgenerated: $(basename "$cpp")"
