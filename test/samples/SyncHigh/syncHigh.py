@@ -20,34 +20,21 @@ def main():
             f = func.FuncOp("run_sync_high", func.FunctionType.get([], []))
         entry = f.add_entry_block()
         with InsertionPoint(entry):
-            # Unrolled coverage for each SyncOpType (record + wait)
+            # NOTE(A5): On Ascend910B (dav-c310) the set_flag/wait_flag/pipe_barrier
+            # PIPE value ranges differ between the vec/cube arches. A single
+            # kernel cannot legally exercise both PIPE_V and cube-only pipes
+            # (PIPE_FIX/PIPE_MTE1/PIPE_M) under one arch.
+            #
+            # Keep this testcase vector-only so it compiles across targets.
             # Use string names to exercise helper auto-conversion.
             pto.record_event(TLOAD,       TLOAD,       EVENT_ID0)
             pto.wait_event  (TLOAD,       TLOAD,       EVENT_ID0)
 
-            pto.record_event(TSTORE_ACC,  TSTORE_ACC,  EVENT_ID1)
-            pto.wait_event  (TSTORE_ACC,  TSTORE_ACC,  EVENT_ID1)
-
             pto.record_event(TSTORE_VEC,  TSTORE_VEC,  EVENT_ID2)
             pto.wait_event  (TSTORE_VEC,  TSTORE_VEC,  EVENT_ID2)
 
-            pto.record_event(TMOV_M2L,    TMOV_M2L,    EVENT_ID3)
-            pto.wait_event  (TMOV_M2L,    TMOV_M2L,    EVENT_ID3)
-
-            pto.record_event(TMOV_M2S,    TMOV_M2S,    EVENT_ID4)
-            pto.wait_event  (TMOV_M2S,    TMOV_M2S,    EVENT_ID4)
-
-            pto.record_event(TMOV_M2B,    TMOV_M2B,    EVENT_ID5)
-            pto.wait_event  (TMOV_M2B,    TMOV_M2B,    EVENT_ID5)
-
             pto.record_event(TMOV_M2V,    TMOV_M2V,    EVENT_ID6)
             pto.wait_event  (TMOV_M2V,    TMOV_M2V,    EVENT_ID6)
-
-            pto.record_event(TMOV_V2M,    TMOV_V2M,    EVENT_ID7)
-            pto.wait_event  (TMOV_V2M,    TMOV_V2M,    EVENT_ID7)
-
-            pto.record_event(TMATMUL,     TMATMUL,     EVENT_ID0)
-            pto.wait_event  (TMATMUL,     TMATMUL,     EVENT_ID0)
 
             pto.record_event(TVEC,        TVEC,        EVENT_ID1)
             pto.wait_event  (TVEC,        TVEC,        EVENT_ID1)
@@ -55,8 +42,6 @@ def main():
             pto.record_event(TVECWAIT_EVENT, TVECWAIT_EVENT, EVENT_ID2)
             pto.wait_event  (TVECWAIT_EVENT, TVECWAIT_EVENT, EVENT_ID2)
 
-            # Barrier coverage for TMATMUL and TVEC
-            pto.barrier(TMATMUL)
             pto.barrier(TVEC)
             func.ReturnOp([])
         print(module)
