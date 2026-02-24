@@ -27,11 +27,15 @@ def build_module():
         pto.register_dialect(ctx, load=True)
 
         f32 = builtin.F32Type.get()
+        mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
         vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
         tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 1024, 1024], f32)
         part_view_ty = pto.PartitionTensorViewType.get([1, 1, 16, 16, 16], f32)
-        tile_buf_ty = pto.TileBufType.get(
+        tile_buf_mat_ty = pto.TileBufType.get(
+            [256, 16], f32, mat, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
+        )
+        tile_buf_vec_ty = pto.TileBufType.get(
             [256, 16], f32, vec, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
         )
 
@@ -55,8 +59,10 @@ def build_module():
                     sizes=[idx(1), idx(1), idx(16), idx(16), idx(16)],
                 ).result
 
-                tile = pto.AllocTileOp(tile_buf_ty).result
-                pto.TLoadOp(None, part, tile)
+                tile_mat = pto.AllocTileOp(tile_buf_mat_ty).result
+                tile_vec = pto.AllocTileOp(tile_buf_vec_ty).result
+                pto.TLoadOp(None, part, tile_mat)
+                pto.TMovOp(None, tile_mat, tile_vec)
 
                 dst_view = pto.MakeTensorViewOp(tensor_view_ty, dst, shape, strides).result
                 dst_part = pto.PartitionViewOp(
@@ -65,7 +71,7 @@ def build_module():
                     offsets=[c0, c0, c0, c0, c0],
                     sizes=[idx(1), idx(1), idx(16), idx(16), idx(16)],
                 ).result
-                pto.TStoreOp(None, tile, dst_part)
+                pto.TStoreOp(None, tile_vec, dst_part)
 
                 return
 

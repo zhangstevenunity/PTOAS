@@ -35,11 +35,16 @@ MLIR_TEXT = r'''module {
     %tmp1 = arith.muli %tmp0, %arg9 : index
     %tmp2 = arith.muli %tmp1, %arg10 : index
 
-    %tile = pto.alloc_tile valid_row = %tmp2 valid_col = %arg11
+    %tile_mat = pto.alloc_tile valid_row = %tmp2 valid_col = %arg11
+           : !pto.tile_buf<loc=mat, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tile_vec = pto.alloc_tile valid_row = %tmp2 valid_col = %arg11
            : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
     pto.tload ins(%part : !pto.partition_tensor_view<?x?x?x?x?xf32>)
-            outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+            outs(%tile_mat : !pto.tile_buf<loc=mat, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+
+    pto.tmov ins(%tile_mat : !pto.tile_buf<loc=mat, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+            outs(%tile_vec : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
     %dst_view = pto.make_tensor_view %arg1, shape = [%c1, %c1_0, %c16, %c1024, %c1024_1] strides = [%c1048576, %c1048576_2, %c1048576_3, %c1024_4, %c1_5]
                : !pto.tensor_view<1x1x16x1024x1024xf32>
@@ -49,7 +54,7 @@ MLIR_TEXT = r'''module {
                 sizes   = [%arg7, %arg8, %arg9, %arg10, %arg11]
                : !pto.tensor_view<1x1x16x1024x1024xf32> -> !pto.partition_tensor_view<?x?x?x?x?xf32>
 
-    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tile_vec : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
              outs(%dst_part : !pto.partition_tensor_view<?x?x?x?x?xf32>)
     return
   }
