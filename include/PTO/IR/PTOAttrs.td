@@ -349,7 +349,8 @@ def PTO_MaskPatternEnum : PTO_I32Enum<
     I32EnumAttrCase<"P0011", 1>,
     I32EnumAttrCase<"P0110", 2>,
     I32EnumAttrCase<"P0001", 3>,
-    I32EnumAttrCase<"P1111", 4>
+    I32EnumAttrCase<"P1111", 4>,
+    I32EnumAttrCase<"P1010", 5>
   ]
 >;
 
