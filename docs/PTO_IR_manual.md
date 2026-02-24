@@ -57,11 +57,13 @@ pto.tload ins(%pv1 : !pto.partition_tensor_view<16x16xf16>)
 Element types describe the primitive scalar values that can be stored in tensors/tiles; by themselves they do not form a value. They define how a sequence of bits is interpreted and the number of bits required to represent the value. This is distinct from any storage size implied by tensor layout.
 
 Common element categories include:
+
 - **Integers**: signless integers such as `i1/i8/i16/i32`. Signedness is not encoded in the type; it is selected by operation semantics or attributes where required.
 - **Floating-point**: IEEE floating-point types such as `f16/f32`. Some targets may also support additional formats (e.g., `bf16` or low-precision exponent/mantissa formats) with stricter constraints.
 - **Index-like**: index values may appear as scalar operands in certain operations (e.g., offsets, sizes, or scalar comparisons).
 
 Element type constraints are operation-specific:
+
 - **Shape/type consistency**: most elementwise ops require all operands and results to have the same element type.
 - **Numeric domain**: reductions, math ops, and division typically restrict element types to floating-point or a subset of integer types.
 - **Bitwise ops**: require integer element types.
