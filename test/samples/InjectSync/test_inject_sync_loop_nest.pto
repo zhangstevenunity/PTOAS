@@ -13,7 +13,7 @@ module {
   // CHECK: } else {
   // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
   // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-  // CHECK: pto.store
+  // CHECK: pto.tstore
   // CHECK: pto.barrier <PIPE_ALL>
   func.func @test_loop_nest_sync(%arg0: memref<16x16x16xf16, #pto.address_space<gm>>,
                                  %arg1: memref<16x16x16xf16, #pto.address_space<gm>>) {

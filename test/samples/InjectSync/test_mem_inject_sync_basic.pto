@@ -27,7 +27,7 @@ module {
     }
 
     // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-    // CHECK: pto.store_dps
+    // CHECK: pto.tstore
     pto.tstore ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
     

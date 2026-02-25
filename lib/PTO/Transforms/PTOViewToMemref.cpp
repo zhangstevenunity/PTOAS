@@ -1034,7 +1034,7 @@ struct PTOViewToMemrefPass
       for (auto op : exp) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::ExpOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExpOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1));
       }
 
@@ -1368,7 +1368,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddSOp>(
             op,
             TypeRange{},
             src,
@@ -1397,7 +1397,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddSCOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddSCOp>(
             op,
             TypeRange{},
             src0,
@@ -1453,7 +1453,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AndSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAndSOp>(
             op,
             TypeRange{},
             src,
@@ -1508,7 +1508,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-         auto newOp = rewriter.create<pto::CmpOp_DPS>(
+         auto newOp = rewriter.create<pto::TCmpOp>(
             op.getLoc(),
             TypeRange{},
             src0,
@@ -1541,15 +1541,14 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        auto newOp = rewriter.create<pto::CmpSOp_DPS>(
+        auto cmpMode = op.getCmpModeAttr();
+        auto newOp = rewriter.create<pto::TCmpSOp>(
             op.getLoc(),
             TypeRange{},
             src,
             scalar,
+            cmpMode,
             dst);
-
-        if (auto a = op.getCmpModeAttr())
-          newOp->setAttr("cmpMode", a);
 
         rewriter.replaceOp(op, newOp->getResults()); // 0 results -> OK
       }
@@ -1572,7 +1571,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColExpandOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColExpandOp>(
             op,
             TypeRange{},
             src,
@@ -1597,7 +1596,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColMaxOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColMaxOp>(
             op,
             TypeRange{},
             src,
@@ -1622,7 +1621,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColMinOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColMinOp>(
             op,
             TypeRange{},
             src,
@@ -1663,7 +1662,7 @@ struct PTOViewToMemrefPass
             isBinaryAttr = BoolAttr::get(ctx, false);
           }
 
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               src,
@@ -1681,7 +1680,7 @@ struct PTOViewToMemrefPass
               attrs.push_back(attr);
             }
           }
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               operands,
@@ -1709,7 +1708,7 @@ struct PTOViewToMemrefPass
 
         auto rmodeAttr = op.getRmodeAttr(); // PTO_RoundModeAttr
 
-        auto newOp = rewriter.create<pto::CvtOp_DPS>(
+        auto newOp = rewriter.create<pto::TCvtOp>(
             op.getLoc(),
             TypeRange{},
             src,
@@ -1741,7 +1740,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivOp>(
             op,
             TypeRange{},
             src0,
@@ -1769,7 +1768,7 @@ struct PTOViewToMemrefPass
         auto dstTileTy = dyn_cast<mlir::pto::TileBufType>(dst.getType());
         
         // Determine which operand is the tile/memref and which is the scalar
-        // DivSOp_DPS expects (memref, scalar, dst) internally, so we need to ensure correct order
+        // TDivSOp expects (memref, scalar, dst) internally, so we need to ensure correct order
         // Check if src is memref/tensor/tile (not scalar)
         bool srcIsMemref = (srcTy != nullptr || srcTileTy != nullptr || 
                             isa<RankedTensorType>(src.getType()) ||
@@ -1804,12 +1803,12 @@ struct PTOViewToMemrefPass
           scalarOperand = scale;
         } else {
           // Swapped order: (src=scalar, scale=tile/memref, dst)
-          // Need to swap to (memref, scalar, dst) for DivSOp_DPS
+          // Need to swap to (memref, scalar, dst) for TDivSOp
           memrefOperand = scale;
           scalarOperand = src;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivSOp>(
             op,
             TypeRange{},
             memrefOperand,
@@ -1834,7 +1833,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ExpandsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExpandsOp>(
             op,
             TypeRange{},
             scalar,
@@ -1863,7 +1862,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ExtractOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExtractOp>(
             op,
             TypeRange{},
             src,
@@ -1890,7 +1889,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::FillPadOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TFillPadOp>(
             op,
             TypeRange{},
             src,
@@ -1917,7 +1916,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::SetValDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TSetValOp>(
             op,
             TypeRange{},
             dst,
@@ -1982,12 +1981,13 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::GatherOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TGatherOp>(
               op,
               TypeRange{},
               src,
               dst,
-              indices);
+              indices,
+              /*maskPattern=*/pto::MaskPatternAttr());
         } else {
           if (!maskPattern) {
             op.emitError("expects maskPattern when indices is absent");
@@ -1995,7 +1995,7 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::GatherOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TGatherOp>(
               op,
               TypeRange{},
               src,
@@ -2025,7 +2025,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::GatherbOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TGatherbOp>(
             op,
             TypeRange{},
             src,
@@ -2051,7 +2051,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::LogOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TLogOp>(
             op,
             TypeRange{},
             src,
@@ -2078,7 +2078,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::LReluOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TLReluOp>(
             op,
             TypeRange{},
             src,
@@ -2106,7 +2106,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MaxOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMaxOp>(
             op,
             TypeRange{},
             src0,
@@ -2134,7 +2134,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MaxSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMaxSOp>(
             op,
             TypeRange{},
             src,
@@ -2162,7 +2162,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MinOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMinOp>(
             op,
             TypeRange{},
             src0,
@@ -3138,7 +3138,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MScatterDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMScatterOp>(
             op,
             TypeRange{},
             src,
