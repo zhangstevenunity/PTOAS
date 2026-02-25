@@ -1451,6 +1451,8 @@ def GetSubBlockNumOp : PTO_Op<"get_subblock_num", [Pure]> {
 // High-Level Synchronization Ops
 //===----------------------------------------------------------------------===//
 
+def PTO_PipeEventTypeLikeAttr : AnyAttrOf<[PTO_PipeEventTypeAttr, PTO_SyncOpTypeAttr]>;
+
 def PTO_RecordEventOp : PTO_Op<"record_event"> {
   let summary = "Record an event for synchronization (High Level)";
   let description = [{
@@ -1458,8 +1460,8 @@ def PTO_RecordEventOp : PTO_Op<"record_event"> {
     Will be lowered to `pto.set_flag` based on op-to-pipe mapping.
   }];
   let arguments = (ins
-    PTO_SyncOpTypeAttr:$src_op,
-    PTO_SyncOpTypeAttr:$dst_op,
+    PTO_PipeEventTypeLikeAttr:$src_op,
+    PTO_PipeEventTypeLikeAttr:$dst_op,
     PTO_EventAttr:$event_id
   );
   let results = (outs);
@@ -1475,8 +1477,8 @@ def PTO_WaitEventOp : PTO_Op<"wait_event"> {
     Will be lowered to `pto.wait_flag` based on op-to-pipe mapping.
   }];
   let arguments = (ins
-    PTO_SyncOpTypeAttr:$src_op,
-    PTO_SyncOpTypeAttr:$dst_op,
+    PTO_PipeEventTypeLikeAttr:$src_op,
+    PTO_PipeEventTypeLikeAttr:$dst_op,
     PTO_EventAttr:$event_id
   );
   let results = (outs);

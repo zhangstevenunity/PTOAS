@@ -148,11 +148,21 @@ def PTO_SyncOpTypeEnum : PTO_I32Enum<
     PTO_SYNC_TVECWAIT
   ]>;
 
-def PTO_SyncOpTypeAttr : PTO_Attr<"SyncOpType", "sync_op_type"> {
+// Canonical sync endpoint type attribute used by record_event/wait_event.
+def PTO_PipeEventTypeAttr : PTO_Attr<"PipeEventType", "pipe_event_type"> {
   let parameters = (ins EnumParameter<PTO_SyncOpTypeEnum>:$op_type);
   let assemblyFormat = "`<` params `>`";
   let description = [{
     High-level synchronization endpoint type. Lowering pass maps it to hardware pipes.
+  }];
+}
+
+// Legacy alias kept for compatibility with older code.
+def PTO_SyncOpTypeAttr : PTO_Attr<"SyncOpType", "sync_op_type"> {
+  let parameters = (ins EnumParameter<PTO_SyncOpTypeEnum>:$op_type);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Deprecated alias of pipe_event_type. Prefer #pto.pipe_event_type<...>.
   }];
 }
 
@@ -349,7 +359,8 @@ def PTO_MaskPatternEnum : PTO_I32Enum<
     I32EnumAttrCase<"P0011", 1>,
     I32EnumAttrCase<"P0110", 2>,
     I32EnumAttrCase<"P0001", 3>,
-    I32EnumAttrCase<"P1111", 4>
+    I32EnumAttrCase<"P1111", 4>,
+    I32EnumAttrCase<"P1010", 5>
   ]
 >;
 

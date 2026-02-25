@@ -154,6 +154,7 @@ PYBIND11_MODULE(_pto, m) {
       .value("P0110", mlir::pto::MaskPattern::P0110)
       .value("P0001", mlir::pto::MaskPattern::P0001)
       .value("P1111", mlir::pto::MaskPattern::P1111)
+      .value("P1010", mlir::pto::MaskPattern::P1010)
       .export_values();
 
     mlir_attribute_subclass(m, "BLayoutAttr",
