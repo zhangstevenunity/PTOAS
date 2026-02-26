@@ -12,6 +12,7 @@ set(LLVM_TARGET_DEFINITIONS pto/dialects/PTOOps.td)
 mlir_tablegen(pto/dialects/_pto_ops_gen.py
   -gen-python-op-bindings
   -bind-dialect=pto
+  -I${PROJECT_SOURCE_DIR}/include
 )
 add_public_tablegen_target(PTOOpsPyGen)
 

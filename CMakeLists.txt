@@ -9,6 +9,55 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # =========================================================
+# 0. 目标架构选择 (Ascend A3 / A5)
+#
+# 用法:
+#   cmake -S . -B build -DPTOAS_TARGET_ARCH=A3
+#   cmake -S . -B build -DPTOAS_TARGET_ARCH=A5
+#
+# 说明:
+# - 该选项用于控制部分 lowering/代码生成时的硬件 intrinsic 名称差异。
+# - 默认保持现有行为 (A5)。
+# =========================================================
+set(PTOAS_TARGET_ARCH "A5" CACHE STRING "Target Ascend architecture: A3 or A5")
+set_property(CACHE PTOAS_TARGET_ARCH PROPERTY STRINGS A3 A5)
+string(TOUPPER "${PTOAS_TARGET_ARCH}" PTOAS_TARGET_ARCH_UPPER)
+if(PTOAS_TARGET_ARCH_UPPER STREQUAL "A3")
+  add_compile_definitions(PTOAS_TARGET_A3=1)
+elseif(PTOAS_TARGET_ARCH_UPPER STREQUAL "A5")
+  add_compile_definitions(PTOAS_TARGET_A5=1)
+else()
+  message(FATAL_ERROR "Invalid PTOAS_TARGET_ARCH='${PTOAS_TARGET_ARCH}'. Expected A3 or A5.")
+endif()
+message(STATUS "PTOAS Target Arch: ${PTOAS_TARGET_ARCH_UPPER}")
+
+# =========================================================
+# 0.5 编译 Level 选择 (level1 / level2 / level3)
+#
+# 用法:
+#   cmake -S . -B build -DPTOAS_BUILD_LEVEL=level1
+#   cmake -S . -B build -DPTOAS_BUILD_LEVEL=level2
+#   cmake -S . -B build -DPTOAS_BUILD_LEVEL=level3
+#
+# 说明:
+# - 默认 level2（保持现有行为）。
+# - level3 会在 ptoas 默认 pipeline 中禁用部分 passes（例如 PlanMemory/InsertSync）。
+# =========================================================
+set(PTOAS_BUILD_LEVEL "level2" CACHE STRING "Build level: level1, level2, or level3")
+set_property(CACHE PTOAS_BUILD_LEVEL PROPERTY STRINGS level1 level2 level3)
+string(TOLOWER "${PTOAS_BUILD_LEVEL}" PTOAS_BUILD_LEVEL_LOWER)
+if(PTOAS_BUILD_LEVEL_LOWER STREQUAL "level1")
+  add_compile_definitions(PTOAS_BUILD_LEVEL1=1)
+elseif(PTOAS_BUILD_LEVEL_LOWER STREQUAL "level2")
+  add_compile_definitions(PTOAS_BUILD_LEVEL2=1)
+elseif(PTOAS_BUILD_LEVEL_LOWER STREQUAL "level3")
+  add_compile_definitions(PTOAS_BUILD_LEVEL3=1)
+else()
+  message(FATAL_ERROR "Invalid PTOAS_BUILD_LEVEL='${PTOAS_BUILD_LEVEL}'. Expected level1, level2, or level3.")
+endif()
+message(STATUS "PTOAS Build Level: ${PTOAS_BUILD_LEVEL_LOWER}")
+
+# =========================================================
 # 1. 显式寻找 LLVM (这是解决 tablegen 报错的关键)
 # =========================================================
 find_package(LLVM REQUIRED CONFIG)

@@ -53,7 +53,9 @@ struct LoadToDPSPattern : public OpRewritePattern<pto::LoadOp> {
     // === Path B: Tile 流程 (Alloc Tile) ===
     if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 显式分配 Buffer
-      Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType, Value(), /*valid_col*/Value());
+      Value alloc = rewriter.create<pto::AllocTileOp>(
+          op.getLoc(), tileBufType,
+          /*addr=*/Value(), /*valid_row=*/Value(), /*valid_col=*/Value());
       
       // 2. 创建无返回值的 DPS Op (Void return)
       rewriter.create<pto::TLoadOp >(
@@ -162,7 +164,9 @@ struct MatmulToDPSPattern : public OpRewritePattern<pto::MatmulOp> {
 
     // === Path B: Tile 流程 ===
     if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::MAT)) {
-      Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
+      Value alloc = rewriter.create<pto::AllocTileOp>(
+          op.getLoc(), tileBufType,
+          /*addr=*/Value(), /*valid_row=*/Value(), /*valid_col=*/Value());
 
       // 创建无返回值的 Op
       rewriter.create<pto::TMatmulOp>(
@@ -213,7 +217,9 @@ struct MatmulAccToDPSPattern : public OpRewritePattern<pto::MatmulAccOp> {
     // 逻辑：创建 pto.alloc_tile 作为 outs，不返回值 (Void)，原结果替换为 alloc
     if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::MAT)) {
       // 1. 显式分配 Output Buffer
-      Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
+      Value alloc = rewriter.create<pto::AllocTileOp>(
+          op.getLoc(), tileBufType,
+          /*addr=*/Value(), /*valid_row=*/Value(), /*valid_col=*/Value());
 
       // 2. 创建无返回值的 MatmulAccDpsOp
       //    acc_in 在这里已经是上游转换过的 TileBuf (或者原始 TileView，取决于 ODS 约束)
@@ -259,7 +265,9 @@ struct MovToDPSPattern : public OpRewritePattern<pto::MovOp> {
     // === Path B: Tile (Alloc) ===
     if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 分配目标 Buffer
-      Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
+      Value alloc = rewriter.create<pto::AllocTileOp>(
+          op.getLoc(), tileBufType,
+          /*addr=*/Value(), /*valid_row=*/Value(), /*valid_col=*/Value());
 
       // 2. 创建 DPS Mov
       rewriter.create<pto::TMovOp >(
@@ -301,7 +309,9 @@ struct TransposeToDPSPattern : public OpRewritePattern<pto::TransOp> {
     // === Path B: Tile 流程 (Alloc Tile) ===
     if (auto tileBufType = getTileBufType(resType, pto::AddressSpace::VEC)) {
       // 1. 显式分配 Buffer
-      Value alloc = rewriter.create<pto::AllocTileOp>(op.getLoc(), tileBufType,Value(), /*valid_col*/Value());
+      Value alloc = rewriter.create<pto::AllocTileOp>(
+          op.getLoc(), tileBufType,
+          /*addr=*/Value(), /*valid_row=*/Value(), /*valid_col=*/Value());
       
       // 2. 创建无返回值的 DPS Op (Void return)
       rewriter.create<pto::TTransOp>(

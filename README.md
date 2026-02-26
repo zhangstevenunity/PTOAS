@@ -119,11 +119,15 @@ export PYBIND11_CMAKE_DIR=$(python3 -m pybind11 --cmakedir)
 
 # 3. 配置 CMake
 # 注意：此处直接使用了 3.0 章节中定义的变量，无需手动修改
+# 目标硬件架构选择：-DPTOAS_TARGET_ARCH=A3 或 A5（默认 A5）
 cmake -G Ninja \
     -S . \
     -B build \
     -DLLVM_DIR=$LLVM_BUILD_DIR/lib/cmake/llvm \
     -DMLIR_DIR=$LLVM_BUILD_DIR/lib/cmake/mlir \
+    -DPTOAS_TARGET_ARCH=A5 \
+    # 编译 Level 选择：level1 / level2 / level3（默认 level2；level3 会禁用 PlanMemory/InsertSync）
+    -DPTOAS_BUILD_LEVEL=level2 \
     -DPython3_EXECUTABLE=$(which python3) \
     -DPython3_FIND_STRATEGY=LOCATION \
     -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
@@ -192,6 +196,12 @@ ptoas tests/input.pto
 
 # 运行 AutoSyncInsert Pass
 ptoas tests/input.pto --enable-insert-sync -o outputfile.cpp
+
+# 指定目标硬件架构（A3 / A5）
+ptoas tests/input.pto --pto-arch=a3 -o outputfile.cpp
+
+# 指定构建 Level（level3 会禁用 PlanMemory/InsertSync）
+ptoas tests/input.pto --pto-level=level3 -o outputfile.cpp
 
 ```
 

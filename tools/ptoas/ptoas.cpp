@@ -105,6 +105,53 @@ static llvm::cl::opt<bool> emitAddPtrTrace(
     llvm::cl::desc("Emit addptr trace comments in generated C++ output"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<std::string> ptoTargetArch(
+    "pto-arch",
+    llvm::cl::desc("Target Ascend architecture for codegen: a3 or a5 (default: build-time setting)"),
+    llvm::cl::value_desc("a3|a5"),
+    llvm::cl::init(""));
+
+static llvm::cl::opt<std::string> ptoBuildLevel(
+    "pto-level",
+    llvm::cl::desc("Build level for pass pipeline: level1, level2, or level3 (default: build-time setting)"),
+    llvm::cl::value_desc("level1|level2|level3"),
+    llvm::cl::init(""));
+
+enum class PTOBuildLevel {
+  Level1,
+  Level2,
+  Level3,
+};
+
+static PTOBuildLevel defaultBuildLevel() {
+#if defined(PTOAS_BUILD_LEVEL1)
+  return PTOBuildLevel::Level1;
+#elif defined(PTOAS_BUILD_LEVEL3)
+  return PTOBuildLevel::Level3;
+#else
+  return PTOBuildLevel::Level2;
+#endif
+}
+
+static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
+  std::string s = levelStr.str();
+  for (char &c : s)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (s == "level1") {
+    out = PTOBuildLevel::Level1;
+    return true;
+  }
+  if (s == "level2") {
+    out = PTOBuildLevel::Level2;
+    return true;
+  }
+  if (s == "level3") {
+    out = PTOBuildLevel::Level3;
+    return true;
+  }
+  return false;
+}
+
 // --------------------------------------------------------------------------
 // Post-process C++ output: rewrite marker calls into Tile member calls.
 //
@@ -523,6 +570,27 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  PTOBuildLevel effectiveLevel = defaultBuildLevel();
+  if (!ptoBuildLevel.empty()) {
+    if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
+      llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
+                   << "'. Expected 'level1', 'level2', or 'level3'.\n";
+      return 1;
+    }
+  }
+
+  if (effectiveLevel == PTOBuildLevel::Level3) {
+    bool missing = false;
+    module->walk([&](pto::AllocTileOp op) {
+      if (!op.getAddr()) {
+        op.emitError("requires 'addr' operand when --pto-level=level3");
+        missing = true;
+      }
+    });
+    if (missing)
+      return 1;
+  }
+
   // [Fix] ToolOutputFile Usage
   std::error_code ec;
   llvm::ToolOutputFile outputFile(outputFilename, ec, llvm::sys::fs::OF_None);
@@ -544,16 +612,23 @@ int main(int argc, char **argv) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createInferPTOLayoutPass());
   // bufferizationPipeline(pm);
   //pm.addPass(createInferPTOMemScopePass());
-  
-  PlanMemoryOptions planMemoryOption;
-  planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
-  planMemoryOption.enableGlobalReuse = false;
-  planMemoryOption.enablePrintMemoryAllocatedSize = false;
-  pm.addPass(pto::createPlanMemoryPass());
+
+  if (effectiveLevel != PTOBuildLevel::Level3) {
+    PlanMemoryOptions planMemoryOption;
+    planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
+    planMemoryOption.enableGlobalReuse = false;
+    planMemoryOption.enablePrintMemoryAllocatedSize = false;
+    pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
+  }
 
   // Conditionally add Sync pass based on flag
   if (enableInsertSync) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
+    if (effectiveLevel == PTOBuildLevel::Level3) {
+      llvm::errs()
+          << "Warning: --enable-insert-sync is ignored because --pto-level=level3.\n";
+    } else {
+      pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertSyncPass());
+    }
   }
 
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
@@ -561,7 +636,22 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
 
   pm.addPass(createCSEPass());
-  pm.addPass(pto::createEmitPTOManualPass());
+  if (ptoTargetArch.empty()) {
+    pm.addPass(pto::createEmitPTOManualPass());
+  } else {
+    std::string arch = ptoTargetArch;
+    for (char &c : arch)
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (arch == "a3") {
+      pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
+    } else if (arch == "a5") {
+      pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
+    } else {
+      llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
+                   << "'. Expected 'a3' or 'a5'.\n";
+      return 1;
+    }
+  }
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());
 
