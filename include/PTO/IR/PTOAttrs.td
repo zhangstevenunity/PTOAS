@@ -370,43 +370,58 @@ def PTO_MaskPatternAttr : PTO_Attr<"MaskPattern", "mask_pattern"> {
   let assemblyFormat = "`<` params `>`";
 }
 
-// ---------- enums ----------
-def PTO_BLayout_Enum : I32EnumAttr<"BLayout", "Base layout", [
+// ---------- BLayout / SLayout / PadValue (same style as AddressSpace via PTO_I32Enum) ----------
+def PTO_BLayout_Enum : PTO_I32Enum<"BLayout", "Base layout", [
   I32EnumAttrCase<"RowMajor", 0, "row_major">,
   I32EnumAttrCase<"ColMajor", 1, "col_major">
-]>;
+  ]>;
 
-def PTO_SLayout_Enum : I32EnumAttr<"SLayout", "Secondary layout", [
+def PTO_BLayoutAttr : PTO_Attr<"BLayout", "blayout"> {
+  let parameters = (ins EnumParameter<PTO_BLayout_Enum>:$value);
+  let assemblyFormat = "`<` params `>`";
+}
+
+def PTO_SLayout_Enum : PTO_I32Enum<"SLayout", "Secondary layout", [
   I32EnumAttrCase<"NoneBox",  0, "none_box">,
   I32EnumAttrCase<"RowMajor", 1, "row_major">,
   I32EnumAttrCase<"ColMajor", 2, "col_major">
-]>;
+  ]>;
 
-def PTO_PadValue_Enum : I32EnumAttr<"PadValue", "Pad value policy", [
+def PTO_SLayoutAttr : PTO_Attr<"SLayout", "slayout"> {
+  let parameters = (ins EnumParameter<PTO_SLayout_Enum>:$value);
+  let assemblyFormat = "`<` params `>`";
+}
+
+def PTO_PadValue_Enum : PTO_I32Enum<"PadValue", "Pad value policy", [
   I32EnumAttrCase<"Null", 0, "null">,
   I32EnumAttrCase<"Zero", 1, "zero">,
   I32EnumAttrCase<"Max",  2, "max">,
   I32EnumAttrCase<"Min",  3, "min">
-]>;
+  ]>;
+
+def PTO_PadValueAttr : PTO_Attr<"PadValue", "pad_value"> {
+  let parameters = (ins EnumParameter<PTO_PadValue_Enum>:$value);
+  let assemblyFormat = "`<` params `>`";
+}
 
 // ---------- tile_buf_config (NO b_fractal / s_fractal) ----------
 def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   let mnemonic = "tile_buf_config";
   let parameters = (ins
-    "mlir::Attribute":$bLayout,      // expect: mlir::pto::BLayoutAttr from PTOEnums
-    "mlir::Attribute":$sLayout,      // expect: mlir::pto::SLayoutAttr from PTOEnums
+    "BLayoutAttr":$bLayout,
+    "SLayoutAttr":$sLayout,
     "mlir::IntegerAttr":$sFractalSize, // i32
-    "mlir::Attribute":$pad           // expect: mlir::pto::PadValueAttr from PTOEnums
+    "PadValueAttr":$pad
   );
 
   let hasCustomAssemblyFormat = 1;
 
   let builders = [
     AttrBuilder<(ins
-      "mlir::Attribute":$bLayout,
-      "mlir::Attribute":$sLayout,
+      "BLayoutAttr":$bLayout,
+      "SLayoutAttr":$sLayout,
       "mlir::IntegerAttr":$sFractalSize,
-      "mlir::Attribute":$pad
+      "PadValueAttr":$pad
     )>
   ];
 

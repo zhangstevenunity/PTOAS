@@ -13,17 +13,10 @@ using namespace mlir::pto;
 
 TileBufConfigAttr TileBufConfigAttr::getDefault(MLIRContext *ctx) {
   Builder b(ctx);
-
-  // enums attr 在你工程里是 IntegerAttr 子类；用 i32 integer attr 直接表达最稳
-  auto i32 = IntegerType::get(ctx, 32);
-
-  // 默认：RowMajor=0, NoneBox=0, Zero=1
-  Attribute bl = IntegerAttr::get(i32, /*RowMajor*/ 0);
-  Attribute sl = IntegerAttr::get(i32, /*NoneBox*/ 0);
-  Attribute pv = IntegerAttr::get(i32, /*Null*/ 0);
-
+  BLayoutAttr bl = BLayoutAttr::get(ctx, BLayout::RowMajor);
+  SLayoutAttr sl = SLayoutAttr::get(ctx, SLayout::NoneBox);
+  PadValueAttr pv = PadValueAttr::get(ctx, PadValue::Null);
   IntegerAttr sz = b.getI32IntegerAttr(512);
-
   return TileBufConfigAttr::get(ctx, bl, sl, sz, pv);
 }
 
@@ -35,20 +28,25 @@ bool TileBufConfigAttr::isDefault() const {
          getPad() == d.getPad();
 }
 
+static int32_t getLayoutInt(Attribute a, int32_t def) {
+  if (auto bl = mlir::dyn_cast<BLayoutAttr>(a)) return static_cast<int32_t>(bl.getValue());
+  if (auto sl = mlir::dyn_cast<SLayoutAttr>(a)) return static_cast<int32_t>(sl.getValue());
+  if (auto pv = mlir::dyn_cast<PadValueAttr>(a)) return static_cast<int32_t>(pv.getValue());
+  if (auto ia = mlir::dyn_cast<IntegerAttr>(a)) return static_cast<int32_t>(ia.getInt());
+  return def;
+}
+
 LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                                        Attribute bLayout,
                                        Attribute sLayout,
                                        IntegerAttr sFractalSize,
                                        Attribute pad) {
-    auto bl = mlir::dyn_cast_or_null<IntegerAttr>(bLayout);
-    auto sl = mlir::dyn_cast_or_null<IntegerAttr>(sLayout);
-    auto pv = mlir::dyn_cast_or_null<IntegerAttr>(pad);
-  if (!bl || !bl.getType().isInteger(32))
-    return emitError() << "blayout must be i32 integer attr", failure();
-  if (!sl || !sl.getType().isInteger(32))
-    return emitError() << "slayout must be i32 integer attr", failure();
-  if (!pv || !pv.getType().isInteger(32))
-    return emitError() << "pad must be i32 integer attr", failure();
+  if (!bLayout || (!mlir::isa<BLayoutAttr>(bLayout) && !mlir::isa<IntegerAttr>(bLayout)))
+    return emitError() << "blayout must be BLayoutAttr or i32 integer attr", failure();
+  if (!sLayout || (!mlir::isa<SLayoutAttr>(sLayout) && !mlir::isa<IntegerAttr>(sLayout)))
+    return emitError() << "slayout must be SLayoutAttr or i32 integer attr", failure();
+  if (!pad || (!mlir::isa<PadValueAttr>(pad) && !mlir::isa<IntegerAttr>(pad)))
+    return emitError() << "pad must be PadValueAttr or i32 integer attr", failure();
 
   if (!sFractalSize || !sFractalSize.getType().isInteger(32))
     return emitError() << "s_fractal_size must be i32", failure();
@@ -57,36 +55,48 @@ LogicalResult TileBufConfigAttr::verify(function_ref<InFlightDiagnostic()> emitE
   if (s != 32 && s != 16 && s != 512 && s != 1024)
     return emitError() << "unsupported s_fractal_size: " << s, failure();
 
-  // 值域检查（按你 enum）
-  int32_t blv = (int32_t)bl.getInt();
+  int32_t blv = getLayoutInt(bLayout, -1);
   if (blv != 0 && blv != 1)
     return emitError() << "unsupported blayout value: " << blv, failure();
 
-  int32_t slv = (int32_t)sl.getInt();
+  int32_t slv = getLayoutInt(sLayout, -1);
   if (slv < 0 || slv > 2)
     return emitError() << "unsupported slayout value: " << slv, failure();
 
-  int32_t pvv = (int32_t)pv.getInt();
+  int32_t pvv = getLayoutInt(pad, -1);
   if (pvv < 0 || pvv > 3)
     return emitError() << "unsupported pad value: " << pvv, failure();
 
   return success();
 }
 
-// ---- TileBufConfigAttr custom asm ----
-// 现在的 parse/print 也建议改成直接读写 Attribute（不再依赖 PTO_*_Enum）
+// Helper: parse Attribute and convert to BLayoutAttr/SLayoutAttr/PadValueAttr
+static BLayoutAttr toBLayoutAttr(MLIRContext *ctx, Attribute a) {
+  if (auto bl = mlir::dyn_cast<BLayoutAttr>(a)) return bl;
+  if (auto ia = mlir::dyn_cast<IntegerAttr>(a)) return BLayoutAttr::get(ctx, static_cast<BLayout>(ia.getInt()));
+  return {};
+}
+static SLayoutAttr toSLayoutAttr(MLIRContext *ctx, Attribute a) {
+  if (auto sl = mlir::dyn_cast<SLayoutAttr>(a)) return sl;
+  if (auto ia = mlir::dyn_cast<IntegerAttr>(a)) return SLayoutAttr::get(ctx, static_cast<SLayout>(ia.getInt()));
+  return {};
+}
+static PadValueAttr toPadValueAttr(MLIRContext *ctx, Attribute a) {
+  if (auto pv = mlir::dyn_cast<PadValueAttr>(a)) return pv;
+  if (auto ia = mlir::dyn_cast<IntegerAttr>(a)) return PadValueAttr::get(ctx, static_cast<PadValue>(ia.getInt()));
+  return {};
+}
+
 Attribute TileBufConfigAttr::parse(AsmParser &p, Type) {
   MLIRContext *ctx = p.getContext();
   auto def = TileBufConfigAttr::getDefault(ctx);
-
-  Attribute bl = def.getBLayout();
-  Attribute sl = def.getSLayout();
+  BLayoutAttr bl = def.getBLayout();
+  SLayoutAttr sl = def.getSLayout();
   IntegerAttr sz = def.getSFractalSize();
-  Attribute pv = def.getPad();
+  PadValueAttr pv = def.getPad();
 
   if (p.parseLess()) return {};
 
-  // allow empty: #pto.tile_buf_config<>
   if (succeeded(p.parseOptionalGreater()))
     return TileBufConfigAttr::get(ctx, bl, sl, sz, pv);
 
@@ -96,15 +106,24 @@ Attribute TileBufConfigAttr::parse(AsmParser &p, Type) {
     if (p.parseEqual()) return {};
 
     if (key == "blayout") {
-      if (p.parseAttribute(bl)) return {};
+      Attribute a;
+      if (p.parseAttribute(a)) return {};
+      bl = toBLayoutAttr(ctx, a);
+      if (!bl) return {};
     } else if (key == "slayout") {
-      if (p.parseAttribute(sl)) return {};
+      Attribute a;
+      if (p.parseAttribute(a)) return {};
+      sl = toSLayoutAttr(ctx, a);
+      if (!sl) return {};
     } else if (key == "s_fractal_size") {
       int32_t v;
       if (p.parseInteger(v)) return {};
       sz = IntegerAttr::get(IntegerType::get(ctx, 32), v);
     } else if (key == "pad") {
-      if (p.parseAttribute(pv)) return {};
+      Attribute a;
+      if (p.parseAttribute(a)) return {};
+      pv = toPadValueAttr(ctx, a);
+      if (!pv) return {};
     } else {
       p.emitError(p.getCurrentLocation(), "unknown key in tile_buf_config: ") << key;
       return {};

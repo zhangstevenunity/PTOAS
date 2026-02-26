@@ -222,22 +222,49 @@ MlirType mlirPTOTileBufTypeGetWithValidShapeAndConfig(MlirContext ctx,
   return wrap(ty);
 }
 
+bool mlirPTOAttrIsABLayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::BLayoutAttr>(unwrap(attr));
+}
+
 MlirAttribute mlirPTOBLayoutAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
-  auto i32 = mlir::IntegerType::get(c, 32);
-  return wrap(mlir::IntegerAttr::get(i32, value));
+  auto v = static_cast<mlir::pto::BLayout>(value);
+  return wrap(mlir::pto::BLayoutAttr::get(c, v));
+}
+
+int32_t mlirPTOBLayoutAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::BLayoutAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+bool mlirPTOAttrIsASLayoutAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::SLayoutAttr>(unwrap(attr));
 }
 
 MlirAttribute mlirPTOSLayoutAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
-  auto i32 = mlir::IntegerType::get(c, 32);
-  return wrap(mlir::IntegerAttr::get(i32, value));
+  auto v = static_cast<mlir::pto::SLayout>(value);
+  return wrap(mlir::pto::SLayoutAttr::get(c, v));
+}
+
+int32_t mlirPTOSLayoutAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::SLayoutAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
+}
+
+bool mlirPTOAttrIsAPadValueAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::PadValueAttr>(unwrap(attr));
 }
 
 MlirAttribute mlirPTOPadValueAttrGet(MlirContext ctx, int32_t value) {
   auto *c = unwrap(ctx);
-  auto i32 = mlir::IntegerType::get(c, 32);
-  return wrap(mlir::IntegerAttr::get(i32, value));
+  auto v = static_cast<mlir::pto::PadValue>(value);
+  return wrap(mlir::pto::PadValueAttr::get(c, v));
+}
+
+int32_t mlirPTOPadValueAttrGetValue(MlirAttribute attr) {
+  auto a = mlir::cast<mlir::pto::PadValueAttr>(unwrap(attr));
+  return static_cast<int32_t>(a.getValue());
 }
 
 MlirAttribute mlirPTORoundModeAttrGet(MlirContext ctx, int32_t value) {
@@ -354,29 +381,40 @@ MlirAttribute mlirPTOTileBufConfigAttrGetDefault(MlirContext ctx) {
   return wrap(mlir::pto::TileBufConfigAttr::getDefault(c));
 }
 
+static mlir::pto::BLayoutAttr toBLayoutAttr(mlir::MLIRContext *c, mlir::Attribute a) {
+  if (auto bl = mlir::dyn_cast<mlir::pto::BLayoutAttr>(a)) return bl;
+  if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a))
+    return mlir::pto::BLayoutAttr::get(c, static_cast<mlir::pto::BLayout>(ia.getInt()));
+  return {};
+}
+static mlir::pto::SLayoutAttr toSLayoutAttr(mlir::MLIRContext *c, mlir::Attribute a) {
+  if (auto sl = mlir::dyn_cast<mlir::pto::SLayoutAttr>(a)) return sl;
+  if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a))
+    return mlir::pto::SLayoutAttr::get(c, static_cast<mlir::pto::SLayout>(ia.getInt()));
+  return {};
+}
+static mlir::pto::PadValueAttr toPadValueAttr(mlir::MLIRContext *c, mlir::Attribute a) {
+  if (auto pv = mlir::dyn_cast<mlir::pto::PadValueAttr>(a)) return pv;
+  if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a))
+    return mlir::pto::PadValueAttr::get(c, static_cast<mlir::pto::PadValue>(ia.getInt()));
+  return {};
+}
+
 MlirAttribute mlirPTOTileBufConfigAttrGet(MlirContext ctx,
                                           MlirAttribute bLayout,
                                           MlirAttribute sLayout,
                                           MlirAttribute sFractalSize,
                                           MlirAttribute pad) {
   auto *c = unwrap(ctx);
-
-  // bLayout/sLayout/pad：要求至少是 IntegerAttr（PTOEnums 里是 IntegerAttr 子类）
-  auto bl = unwrap(bLayout).dyn_cast<mlir::IntegerAttr>();
-  auto sl = unwrap(sLayout).dyn_cast<mlir::IntegerAttr>();
-  auto pv = unwrap(pad).dyn_cast<mlir::IntegerAttr>();
-  if (!bl || !sl || !pv)
+  auto blA = toBLayoutAttr(c, unwrap(bLayout));
+  auto slA = toSLayoutAttr(c, unwrap(sLayout));
+  auto pvA = toPadValueAttr(c, unwrap(pad));
+  if (!blA || !slA || !pvA)
     return MlirAttribute{nullptr};
 
-  // size：要求 i32 IntegerAttr
-  auto sz = unwrap(sFractalSize).dyn_cast<mlir::IntegerAttr>();
+  auto sz = mlir::dyn_cast<mlir::IntegerAttr>(unwrap(sFractalSize));
   if (!sz || !sz.getType().isInteger(32))
     return MlirAttribute{nullptr};
-
-  // 如果你的 TileBufConfigAttr 参数类型是 Attribute（推荐），直接传 Attribute
-  mlir::Attribute blA = bl;
-  mlir::Attribute slA = sl;
-  mlir::Attribute pvA = pv;
 
   return wrap(mlir::pto::TileBufConfigAttr::get(c, blA, slA, sz, pvA));
 }

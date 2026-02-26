@@ -67,20 +67,20 @@ PYBIND11_MODULE(_pto, m) {
     .value("BIAS",   mlir::pto::AddressSpace::BIAS)
     .value("SCALING", mlir::pto::AddressSpace::SCALING)
     .export_values();
-    py::enum_<BLayout>(m, "BLayout")
-    .value("RowMajor", BLayout::RowMajor)
-    .value("ColMajor", BLayout::ColMajor);
+    py::enum_<mlir::pto::BLayout>(m, "BLayout")
+    .value("RowMajor", mlir::pto::BLayout::RowMajor)
+    .value("ColMajor", mlir::pto::BLayout::ColMajor);
 
-    py::enum_<SLayout>(m, "SLayout")
-    .value("NoneBox", SLayout::NoneBox)
-    .value("RowMajor", SLayout::RowMajor)
-    .value("ColMajor", SLayout::ColMajor);
+    py::enum_<mlir::pto::SLayout>(m, "SLayout")
+    .value("NoneBox", mlir::pto::SLayout::NoneBox)
+    .value("RowMajor", mlir::pto::SLayout::RowMajor)
+    .value("ColMajor", mlir::pto::SLayout::ColMajor);
 
-    py::enum_<PadValue>(m, "PadValue")
-    .value("Null", PadValue::Null)
-    .value("Zero", PadValue::Zero)
-    .value("Max", PadValue::Max)
-    .value("Min", PadValue::Min);
+    py::enum_<mlir::pto::PadValue>(m, "PadValue")
+    .value("Null", mlir::pto::PadValue::Null)
+    .value("Zero", mlir::pto::PadValue::Zero)
+    .value("Max", mlir::pto::PadValue::Max)
+    .value("Min", mlir::pto::PadValue::Min);
 
     py::enum_<mlir::pto::RoundMode>(m, "RoundMode")
     .value("NONE", mlir::pto::RoundMode::NONE)
@@ -159,14 +159,12 @@ PYBIND11_MODULE(_pto, m) {
 
     mlir_attribute_subclass(m, "BLayoutAttr",
                         [](MlirAttribute a) -> bool {
-                          // 我们这里用“i32 integer attr”表示 enum，所以只要是 i32 IntegerAttr 就 accept
-                          return mlirAttributeIsAInteger(a) &&
-                                 mlirIntegerTypeGetWidth(mlirAttributeGetType(a)) == 32;
+                          return mlirPTOAttrIsABLayoutAttr(a);
                         })
     .def_classmethod(
         "get",
-        [](py::object cls, int32_t value, MlirContext ctx) -> py::object {
-          MlirAttribute a = mlirPTOBLayoutAttrGet(ctx, value);
+        [](py::object cls, mlir::pto::BLayout value, MlirContext ctx) -> py::object {
+          MlirAttribute a = mlirPTOBLayoutAttrGet(ctx, static_cast<int32_t>(value));
           if (mlirAttributeIsNull(a)) return py::none();
           return cls(a);
         },
@@ -174,13 +172,12 @@ PYBIND11_MODULE(_pto, m) {
 
     mlir_attribute_subclass(m, "SLayoutAttr",
                             [](MlirAttribute a) -> bool {
-                            return mlirAttributeIsAInteger(a) &&
-                                    mlirIntegerTypeGetWidth(mlirAttributeGetType(a)) == 32;
+                            return mlirPTOAttrIsASLayoutAttr(a);
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, int32_t value, MlirContext ctx) -> py::object {
-            MlirAttribute a = mlirPTOSLayoutAttrGet(ctx, value);
+            [](py::object cls, mlir::pto::SLayout value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOSLayoutAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) return py::none();
             return cls(a);
             },
@@ -188,13 +185,12 @@ PYBIND11_MODULE(_pto, m) {
 
     mlir_attribute_subclass(m, "PadValueAttr",
                             [](MlirAttribute a) -> bool {
-                            return mlirAttributeIsAInteger(a) &&
-                                    mlirIntegerTypeGetWidth(mlirAttributeGetType(a)) == 32;
+                            return mlirPTOAttrIsAPadValueAttr(a);
                             })
         .def_classmethod(
             "get",
-            [](py::object cls, int32_t value, MlirContext ctx) -> py::object {
-            MlirAttribute a = mlirPTOPadValueAttrGet(ctx, value);
+            [](py::object cls, mlir::pto::PadValue value, MlirContext ctx) -> py::object {
+            MlirAttribute a = mlirPTOPadValueAttrGet(ctx, static_cast<int32_t>(value));
             if (mlirAttributeIsNull(a)) return py::none();
             return cls(a);
             },

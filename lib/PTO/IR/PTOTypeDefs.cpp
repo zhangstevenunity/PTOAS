@@ -32,22 +32,20 @@ int32_t TileBufType::getSFractalSizeI32() const {
 }
 
 int32_t TileBufType::getBLayoutValueI32() const {
-  // 你的 enums attr 如果是 IntegerAttr 子类或可转 IntegerAttr：
-  if (auto ia = llvm::dyn_cast<IntegerAttr>(getBLayoutAttr()))
-    return (int32_t)ia.getInt();
-  // 如果是自定义 enum attr（但仍然可以 cast IntegerAttr），上面通常就够了
+  if (auto a = llvm::dyn_cast<BLayoutAttr>(getBLayoutAttr()))
+    return static_cast<int32_t>(a.getValue());
   return 0;
 }
 
 int32_t TileBufType::getSLayoutValueI32() const {
-  if (auto ia = llvm::dyn_cast<IntegerAttr>(getSLayoutAttr()))
-    return (int32_t)ia.getInt();
+  if (auto a = llvm::dyn_cast<SLayoutAttr>(getSLayoutAttr()))
+    return static_cast<int32_t>(a.getValue());
   return 0;
 }
 
 int32_t TileBufType::getPadValueI32() const {
-  if (auto ia = llvm::dyn_cast<IntegerAttr>(getPadValueAttr()))
-    return (int32_t)ia.getInt();
+  if (auto a = llvm::dyn_cast<PadValueAttr>(getPadValueAttr()))
+    return static_cast<int32_t>(a.getValue());
   return 0;
 }
 
