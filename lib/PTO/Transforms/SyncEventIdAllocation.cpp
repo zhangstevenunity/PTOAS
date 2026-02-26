@@ -134,6 +134,26 @@ void SyncEventIdAllocation::SetEventId(SyncOperation *sync) {
     for (size_t id = availableEventIdNum; id < poolSize; ++id)
       eventIdLifetimeAvailableStatus[id] = false;
   }
+
+  // --- Ascend event-id steering for Issue #112 ---
+  //
+  // Some Ascend devices may hang when PIPE_M -> PIPE_FIX uses high event IDs
+  // (e.g. EVENT_ID3/4/5). At the same time, event IDs must not be reused across
+  // different destinations from the same source pipe while lifetimes overlap,
+  // otherwise waits can mismatch and trigger device-side failures.
+  //
+  // To keep PIPE_M -> PIPE_FIX on low IDs without violating the per-source
+  // uniqueness requirement, steer the hot PIPE_M -> PIPE_MTE1 direction away
+  // from the lowest IDs so PIPE_M -> PIPE_FIX can reliably pick them.
+  //
+  // Note: PIPE_M -> PIPE_FIX itself is limited via reservedEventIdNum (tail
+  // reservation) so it only considers EVENT_ID0..2.
+  if (sync->GetActualSrcPipe() == PipelineType::PIPE_M &&
+      sync->GetActualDstPipe() == PipelineType::PIPE_MTE1) {
+    constexpr size_t kPipeMToPipeFixLowIdNum = 3;
+    for (size_t id = 0; id < kPipeMToPipeFixLowIdNum && id < poolSize; ++id)
+      eventIdLifetimeAvailableStatus[id] = false;
+  }
   
   size_t idSize = static_cast<size_t>(sync->eventIdNum);
   SmallVector<int> canAllocaEventId = GetAvailableEventId(
@@ -246,17 +266,16 @@ int SyncEventIdAllocation::ScopePair(const SyncOperation *s) {
     return 0;
   }
   // Event IDs are a limited shared resource and must not be reused across
-  // overlapping lifetimes within the same (src,dst) pipe pair.
+  // overlapping lifetimes.
   //
-  // Key by (src,dst) pipe pair to keep independent hardware pipe directions from
-  // fighting over the same small event-id pool. This avoids unnecessary event-id
-  // pressure where a single source pipe syncs to multiple destinations (e.g.
-  // PIPE_M -> PIPE_MTE1 and PIPE_M -> PIPE_FIX), which can otherwise push some
-  // pairs into high event IDs and trigger device-side failures.
+  // In practice, reusing the same numeric event ID for different destinations
+  // from the same source pipe without waiting in between can lead to mismatched
+  // waits and NPU runtime failures.
+  //
+  // Scope by source pipe (and offset by 1 to avoid clashing with block-sync
+  // scope 0) so all syncs issued from the same pipe share one lifetime pool.
   auto srcT = static_cast<unsigned int>(s->GetActualSrcPipe());
-  auto dstT = static_cast<unsigned int>(s->GetActualDstPipe());
-  // Offset by 1 so non-block scopes never collide with block-sync scope 0.
-  return static_cast<int>(((dstT << 8U) | srcT) + 1U);
+  return static_cast<int>(srcT + 1U);
 }
  
 void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
@@ -694,4 +713,7 @@ const llvm::DenseMap<std::pair<PipelineType, PipelineType>, uint64_t>
         {{PipelineType::PIPE_V, PipelineType::PIPE_S}, 1},
         {{PipelineType::PIPE_S, PipelineType::PIPE_V}, 1},
         {{PipelineType::PIPE_MTE2, PipelineType::PIPE_V}, 1},
+        // Issue #112: avoid high event IDs for PIPE_M -> PIPE_FIX on Ascend.
+        // Reserve 5 IDs from the tail so only EVENT_ID0..2 are available.
+        {{PipelineType::PIPE_M, PipelineType::PIPE_FIX}, 5},
 };
