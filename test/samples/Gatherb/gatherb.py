@@ -67,7 +67,7 @@ def build():
 
                 # pto.addf_dps_tb ins(%tb0,%tb1) outs(%tb2)
                 # 你在 ODS 里提供了 builders (lhs,rhs,dst) 版本，所以这里直接这么构造
-                pto.TGatherbOp(tb0, tb1, tb2)
+                pto.TGatherBOp(tb0, tb1, tb2)
 
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_f32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result

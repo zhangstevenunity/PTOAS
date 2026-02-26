@@ -173,6 +173,18 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard for Issue #112:
+    # `--enable-insert-sync` must not push PIPE_M -> PIPE_FIX into high event IDs
+    # for the autosync tmatmulk sample, otherwise it may deadlock on Ascend NPU.
+    if [[ "$base" == "tmatmulk_autosync" ]]; then
+      if grep -Eq "set_flag\\(PIPE_M,[[:space:]]*PIPE_FIX,[[:space:]]*EVENT_ID[3-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_M,[[:space:]]*PIPE_FIX,[[:space:]]*EVENT_ID[3-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tdeadlock signature: PIPE_M->PIPE_FIX uses EVENT_ID[3-7]"
+        overall=1
+        continue
+      fi
+    fi
+
     echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 
