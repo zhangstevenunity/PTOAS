@@ -66,6 +66,12 @@ INCLUDE_REPLACEMENT = (
 )
 
 
+def _is_a5_soc(soc_version: str) -> bool:
+    sv = (soc_version or "").lower()
+    # pto-isa uses "A5 (Ascend 950)" naming, while many scripts use Ascend910B*.
+    return "910b" in sv or "ascend950" in sv or sv == "950"
+
+
 def _parse_shape(text: str):
     match = re.search(r"Shape<(\d+)\s*,\s*(\d+)>", text)
     if match:
@@ -371,8 +377,7 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    sv = (soc_version or "").lower()
-    if "910b" in sv:
+    if _is_a5_soc(soc_version):
         # Ascend910B* (A5 / dav-c310) is stricter about which PIPE_* values are
         # legal under the "vec" arch for set_flag/wait_flag/pipe_barrier.
         # Some sync-heavy kernels (e.g. SyncHigh) use PIPE_FIX/PIPE_MTE1/PIPE_M
@@ -385,7 +390,7 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
             "PIPE_M)",
         )
         needs_cube = needs_cube or any(m in kernel_text for m in a5_vec_illegal_pipe_markers)
-        # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
+        # Ascend910B* / Ascend950 (A5) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
 
     # Default to Ascend910 (dav-c220) when SoC is unknown.
@@ -862,8 +867,7 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            sv = (soc_version or "").lower()
-            aicore_arch = "dav-c310-vec" if "910b" in sv else "dav-c220-vec"
+            aicore_arch = "dav-c310-vec" if _is_a5_soc(soc_version) else "dav-c220-vec"
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
@@ -1224,7 +1228,7 @@ def generate_testcase(
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
     mem_base_define = "MEMORY_BASE"
-    if "910b" in (soc_version or "").lower():
+    if _is_a5_soc(soc_version):
         mem_base_define = "REGISTER_BASE"
 
     cce_stack_size_opt = ""
