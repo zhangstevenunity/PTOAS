@@ -49,7 +49,12 @@ resolve_dep_path() {
   local owner_dir
   owner_dir="$(dirname "$owner")"
 
-  mapfile -t owner_rpaths < <(
+  # macOS GitHub runners use bash 3.2; avoid mapfile for compatibility.
+  local owner_rpaths=()
+  local rp_line
+  while IFS= read -r rp_line; do
+    [ -n "$rp_line" ] && owner_rpaths+=("$rp_line")
+  done < <(
     otool -l "$owner" | awk '
       $1=="cmd" && $2=="LC_RPATH" {want=1; next}
       want && $1=="path" {print $2; want=0}
@@ -72,7 +77,7 @@ resolve_dep_path() {
     candidates+=("${PTOAS_DIST_DIR}/bin/${dep#@executable_path/}")
   fi
   if [[ "$dep" == @rpath/* ]]; then
-    for rp in "${owner_rpaths[@]}"; do
+    for rp in "${owner_rpaths[@]:-}"; do
       case "$rp" in
         @loader_path/*) rp="${owner_dir}/${rp#@loader_path/}" ;;
         @executable_path/*) rp="${PTOAS_DIST_DIR}/bin/${rp#@executable_path/}" ;;
