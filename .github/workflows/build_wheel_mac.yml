@@ -129,7 +129,15 @@ jobs:
         run: |
           export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
           cd $PY_PACKAGE_DIR
-          delocate-wheel --wheel-dir wheelhouse dist/ptoas*.whl
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            REQUIRED_ARCH="x86_64"
+          else
+            REQUIRED_ARCH="arm64"
+          fi
+          delocate-wheel \
+            --require-archs "${REQUIRED_ARCH}" \
+            --wheel-dir wheelhouse \
+            dist/ptoas*.whl
 
       - name: Test wheel installation
         run: |
