@@ -59,16 +59,21 @@ void MoveSyncState::PlanMoveOutBranchSync(
   }
   e->pipeBefore = newPipeBefore;
  
-  // [Fix] 禁用 If/Else 分支的 Set Sink 优化
-  // 原因：如果在 If/Else 中通过补偿机制生成了 Set，移动它们会导致双重执行和逻辑错误。
-  // NPU 场景下，条件 Set 必须保留在控制流内部。
-  /* SyncOps newPipeAfter;
+  // 处理 PipeAfter (Set) - Sink Set out of If/Else when the matched Wait is
+  // outside the branch region (AscendNPU-IR behavior).
+  //
+  // This avoids patterns like:
+  //   if (...) { set_flag(A) } else { set_flag(B) }
+  //   wait_flag(A); wait_flag(B);   // may deadlock if wait consumes the flag
+  //
+  // By sinking the conditional sets to IF_END, we effectively materialize a
+  // "merge" signal: regardless of which branch executed, the required events
+  // are set after the join point.
+  SyncOps newPipeAfter;
   for (auto &s : llvm::reverse(e->pipeAfter)) {
     PlanMoveOutIfSetSync(newPipeAfter, s, pair, bound);
   }
   e->pipeAfter = newPipeAfter;
-  */
-  // 保持原样，不做任何移动
 }
  
 void MoveSyncState::PlanMoveOutIfWaitSync(

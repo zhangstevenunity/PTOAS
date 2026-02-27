@@ -4,24 +4,24 @@
 #include "PTO/Transforms/SyncCommon.h"
 #include "PTO/Transforms/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include <array>
  
 namespace mlir {
 namespace pto {
  
 struct SyncRecord {
-  SmallVector<const SyncOperation *> alreadySync;
- 
-  // [Fix] 显式 resize，防止越界访问
-  SyncRecord() {
-      alreadySync.resize(32, nullptr); 
-  }
- 
-  SyncRecord(int pipeNum) {
-      alreadySync.resize(pipeNum, nullptr);
-  }
+  // Record pipes that have already been waited for (per multi-buffer slot).
+  //
+  // Use PIPE_LAST + 1 to keep indices stable even if PIPE_UNASSIGNED (99)
+  // appears transiently in intermediate states.
+  std::array<bool, static_cast<unsigned>(PipelineType::PIPE_LAST) + 1U>
+      alreadySync{false};
+
+  // Record the pairing status of set/wait within a syncIndex.
+  llvm::DenseMap<int, bool> syncFinder;
 };
  
-using SyncRecordList = std::vector<SyncRecord>;
+using SyncRecordList = std::array<SyncRecord, MAX_MULTI_BUFFER_NUM>;
  
 class BlockSyncAnalysis {
 public:
@@ -68,45 +68,45 @@ private:
                      SyncIRs &syncElement,
                      int begin, int end, 
                      SyncRecordList &syncRecordList,
-                     const std::optional<unsigned> &forEndIndex,
-                     InstanceElement *waitAnchor);
+                     const std::optional<unsigned> &forEndIndex);
                      
   /// 处理 Loop 内部的递归调用
   unsigned InsertLoopSync(
     unsigned index, CompoundInstanceElement *nowCompound, unsigned begin,
     LoopInstanceElement *loopElement, SyncIRs &syncElement,
-    SyncRecordList &syncRecordList, const std::optional<unsigned> &forEndIndex,
-    InstanceElement *waitAnchor); // [New Arg]
+    SyncRecordList &syncRecordList,
+    const std::optional<unsigned> &forEndIndex);
 
   unsigned InsertBranchSync(
     unsigned index, CompoundInstanceElement *nowCompound, unsigned begin,
     BranchInstanceElement *branchElement, SyncIRs &syncElement,
-    SyncRecordList &syncRecordList, const std::optional<unsigned> &forEndIndex,
-    InstanceElement *waitAnchor); // [New Arg]
+    SyncRecordList &syncRecordList,
+    const std::optional<unsigned> &forEndIndex);
 
   /// 合并两个分支的同步状态 (Intersection)
   void MergeAlreadySync(SyncRecordList &syncRecordList,
-                      const SyncRecordList &syncRecordIfList,
-                      const SyncRecordList &syncRecordElseList,
-                      InstanceElement* ifAnchor,
-                      InstanceElement* elseAnchor,
-                      const std::optional<unsigned> &forEndIndex);
+                        const SyncRecordList &syncRecordIfList,
+                        const SyncRecordList &syncRecordElseList);
  
   // --- Dependency & Sync Insertion ---
+
+  /// Inset backward sync with LoopInstanceElement's end by copying a loop body
+  /// slice and running the sequential inserter on the copied structure.
+  void InsertBackForSync(CompoundInstanceElement *nowCompound,
+                         SyncIRs &backSyncIr,
+                         const LoopInstanceElement *loopElement);
  
   /// 检查 nowCompound 和 frontCompound 是否需要同步
   void InsertSync(CompoundInstanceElement *nowCompound,
                   CompoundInstanceElement *frontCompound,
                   SyncRecordList &syncRecordList,
-                  const std::optional<unsigned> &forEndIndex,
-                  InstanceElement *waitAnchor);
+                  const std::optional<unsigned> &forEndIndex);
  
   /// 调用 memAnalyzer 判断内存依赖
   void MemAnalyze(CompoundInstanceElement *nowCompound,
                   CompoundInstanceElement *frontCompound,
                   SyncRecordList &syncRecordList,
-                  const std::optional<unsigned> &forEndIndex,
-                  InstanceElement *waitAnchor);
+                  const std::optional<unsigned> &forEndIndex);
  
   /// 判断两个节点是否存在 RAW/WAR/WAW 依赖
   bool IsMemInfoHasDependency(CompoundInstanceElement *nowCompound,
@@ -117,8 +117,7 @@ private:
   void InsertSyncOperation(CompoundInstanceElement *nowCompound,
                            CompoundInstanceElement *frontCompound,
                            DepBaseMemInfoPairVec &depBaseMemInfosVec,
-                           const std::optional<unsigned> &forEndIndex,
-                           InstanceElement *waitAnchor);
+                           const std::optional<unsigned> &forEndIndex);
  
   // --- Utility Methods ---
  
@@ -131,8 +130,7 @@ private:
   /// 更新 SyncRecord (当插入新同步后)
   void UpdateAlreadySync(const SyncOps &syncVector,
                          SyncRecordList &syncRecordList,
-                         const PipelineType nowPipeValue,
-                         unsigned index); // [Fix] 增加参数声明
+                         const PipelineType nowPipeValue);
                             
   void UpdateSyncRecordInfo(CompoundInstanceElement *frontCompound,
                             SyncRecordList &syncRecordList);
