@@ -49,10 +49,27 @@ INCLUDE_REPLACEMENT = (
     "#endif\n"
     "#include <pto/pto-inst.hpp>\n"
     "#include <pto/common/constants.hpp>\n"
+    "\n"
+    "// PTOAS arch compatibility: pto-isa uses PIPE_S for some ops on a2a3 but\n"
+    "// PIPE_V on a5 (dav-c310). When we validate determinism across SoCs, keep\n"
+    "// generated kernels portable by mapping PIPE_S -> PIPE_V on a5.\n"
+    "#ifndef PTOAS_PIPE_S_OR_V\n"
+    "#if defined(REGISTER_BASE)\n"
+    "#define PTOAS_PIPE_S_OR_V PIPE_V\n"
+    "#else\n"
+    "#define PTOAS_PIPE_S_OR_V PIPE_S\n"
+    "#endif\n"
+    "#endif\n"
     "#ifndef __CPU_SIM\n"
     "#include \"acl/acl.h\"\n"
     "#endif\n"
 )
+
+
+def _is_a5_soc(soc_version: str) -> bool:
+    sv = (soc_version or "").lower()
+    # pto-isa uses "A5 (Ascend 950)" naming, while many scripts use Ascend910B*.
+    return "910b" in sv or "ascend950" in sv or sv == "950"
 
 
 def _parse_shape(text: str):
@@ -227,6 +244,25 @@ def _np_dtype_for_cpp(cpp_type: str) -> str:
     return mapping.get(cpp_type, "np.float32")
 
 
+def _bytes_per_cpp_type(cpp_type: str) -> int:
+    mapping = {
+        "float": 4,
+        "half": 2,
+        "aclFloat16": 2,
+        "__bf16": 2,
+        "bfloat16_t": 2,
+        "int8_t": 1,
+        "uint8_t": 1,
+        "int16_t": 2,
+        "uint16_t": 2,
+        "int32_t": 4,
+        "uint32_t": 4,
+        "int64_t": 8,
+        "uint64_t": 8,
+    }
+    return mapping.get(cpp_type, 4)
+
+
 def _cpp_host_type(cpp_type: str) -> str:
     if cpp_type == "half":
         return "aclFloat16"
@@ -341,9 +377,20 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    sv = (soc_version or "").lower()
-    if "910b" in sv:
-        # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
+    if _is_a5_soc(soc_version):
+        # Ascend910B* (A5 / dav-c310) is stricter about which PIPE_* values are
+        # legal under the "vec" arch for set_flag/wait_flag/pipe_barrier.
+        # Some sync-heavy kernels (e.g. SyncHigh) use PIPE_FIX/PIPE_MTE1/PIPE_M
+        # and must be compiled with the cube arch.
+        a5_vec_illegal_pipe_markers = (
+            "PIPE_FIX",
+            "PIPE_MTE1",
+            # Match PIPE_M as a whole token (avoid matching PIPE_MTE*).
+            "PIPE_M,",
+            "PIPE_M)",
+        )
+        needs_cube = needs_cube or any(m in kernel_text for m in a5_vec_illegal_pipe_markers)
+        # Ascend910B* / Ascend950 (A5) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
 
     # Default to Ascend910 (dav-c220) when SoC is unknown.
@@ -820,8 +867,7 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            sv = (soc_version or "").lower()
-            aicore_arch = "dav-c310-vec" if "910b" in sv else "dav-c220-vec"
+            aicore_arch = "dav-c310-vec" if _is_a5_soc(soc_version) else "dav-c220-vec"
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
@@ -1023,16 +1069,28 @@ def generate_testcase(
     golden_template = (templates_root / "golden_template.py").read_text(encoding="utf-8")
     input_generate = []
     elem_count = logical_elem_count
-    # Some kernels use an integer tensor as "indices". The safe in-range domain
-    # depends on the op semantics. For the pto-isa a2a3 implementations:
+    # Some kernels use an integer tensor as indices/offsets. The safe in-range
+    # domain depends on the op semantics:
     # - TSCATTER: indices are linear indices in [0, rows*cols)
-    # - TGATHER/TGATHERB: indices are linear indices in [0, rows*cols)
+    # - TGATHER: indices are linear indices in [0, rows*cols)
+    # - TGATHERB: offsets are *byte offsets* (typically 32B-aligned blocks)
+    has_tscatter = re.search(r"\bTSCATTER\b", raw_kernel) is not None
+    has_tgather = re.search(r"\bTGATHER\b", raw_kernel) is not None
+    has_tgatherb = re.search(r"\bTGATHERB\b", raw_kernel) is not None
     index_mod = None
-    if "TSCATTER" in raw_kernel:
+    if has_tscatter:
         index_mod = max(elem_count, 1)
-    elif any(m in raw_kernel for m in ("TGATHER", "TGATHERB")):
+    elif has_tgather:
         index_mod = max(elem_count, 1)
     mrgsort_packed = "TMRGSORT" in raw_kernel
+    gatherb_offset_align = 32
+    gatherb_offset_bucket_count = 1
+    if has_tgatherb and output_ptrs:
+        out_elem_bytes = _bytes_per_cpp_type(output_ptrs[0]["cpp_type"])
+        tile_bytes = max(elem_count, 1) * max(out_elem_bytes, 1)
+        # TGATHERB reads 32B blocks; keep offsets in-range: offset + 32 <= tile_bytes.
+        max_valid_offset = max(tile_bytes - gatherb_offset_align, 0)
+        gatherb_offset_bucket_count = max(max_valid_offset // gatherb_offset_align + 1, 1)
     for p in init_ptrs:
         np_dtype = _np_dtype_for_cpp(p["cpp_type"])
         name = p["name"]
@@ -1104,7 +1162,13 @@ def generate_testcase(
             input_generate.append(f"    {name}__packed['i'] = {name}__idx")
             input_generate.append(f"    {name}__packed.tofile(\"{name}.bin\")")
         elif np_dtype.startswith("np.int") or np_dtype.startswith("np.uint"):
-            if index_mod is not None:
+            if has_tgatherb and (not is_output):
+                # TGATHERB offsets are byte offsets. Upstream pto-isa tests use
+                # 32B blocks; keep offsets aligned and in-range for all dtypes.
+                input_generate.append(
+                    f"    {name} = ((np.arange({size}, dtype=np.uint64) % {gatherb_offset_bucket_count}) * {gatherb_offset_align}).astype({np_dtype})"
+                )
+            elif index_mod is not None:
                 input_generate.append(
                     f"    {name} = (np.arange({size}, dtype=np.int64) % {index_mod}).astype({np_dtype})"
                 )
@@ -1137,6 +1201,11 @@ def generate_testcase(
                     logical_elem_count=logical_elem_count,
                 )
 
+    # Keep PIPE_S portable across SoCs: some pto-isa implementations treat the
+    # underlying instruction as PIPE_S on a2a3 but PIPE_V on a5. Replace with a
+    # macro that maps based on the compile-time arch.
+    kernel_text_out = re.sub(r"\bPIPE_S\b", "PTOAS_PIPE_S_OR_V", kernel_text_out)
+
     kernel_out = output_dir / f"{testcase}_kernel.cpp"
     kernel_out.write_text(_replace_includes(kernel_text_out), encoding="utf-8")
 
@@ -1159,7 +1228,7 @@ def generate_testcase(
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
     mem_base_define = "MEMORY_BASE"
-    if "910b" in (soc_version or "").lower():
+    if _is_a5_soc(soc_version):
         mem_base_define = "REGISTER_BASE"
 
     cce_stack_size_opt = ""

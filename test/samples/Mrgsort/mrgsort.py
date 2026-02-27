@@ -13,9 +13,11 @@ def build():
             f32 = F32Type.get(ctx)
             ptr_f32 = pto.PtrType.get(f32, ctx)
 
-            # Mergesort on a 32x32 tile (flattened to a 1x1024 list for TMrgSort)
-            tv2_f32 = pto.TensorViewType.get([32, 32], f32, ctx)
-            part_view_32x32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
+            # TMrgSort format1 works on a single packed list. Model it directly
+            # as a 1x1024 view so that TLOAD's GlobalTensor shape matches the
+            # tile's valid shape on stricter targets (e.g. A5).
+            tv2_f32 = pto.TensorViewType.get([1, 1024], f32, ctx)
+            part_view_1x1024 = pto.PartitionTensorViewType.get([1, 1024], f32, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
@@ -34,20 +36,19 @@ def build():
                 # constants
                 c0 = arith.ConstantOp(IndexType.get(ctx), 0).result
                 c1 = arith.ConstantOp(IndexType.get(ctx), 1).result
-                c32 = arith.ConstantOp(IndexType.get(ctx), 32).result
-                c256 = arith.ConstantOp(IndexType.get(ctx), 256).result
+                c1024 = arith.ConstantOp(IndexType.get(ctx), 1024).result
                 # blockLen for tmrgsort format1: ins(src, blockLen) outs(dst), must be integer (e.g. i32)
                 i32 = IntegerType.get_signless(32, ctx)
                 c64_i32 = arith.ConstantOp(i32, 64).result
 
                 arg0, arg1 = entry.arguments
 
-                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c32,%c32] strides=[%c256,%c1]
-                tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c32, c32], [c256, c1]).result
-                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c32, c32], [c256, c1]).result
+                # %0/%1/%2 = pto.make_tensor_view %arg?, shape=[%c1,%c1024] strides=[%c1024,%c1]
+                tv0 = pto.MakeTensorViewOp(tv2_f32, arg0, [c1, c1024], [c1024, c1]).result
+                tv1 = pto.MakeTensorViewOp(tv2_f32, arg1, [c1, c1024], [c1024, c1]).result
 
-                # %3/%4/%8 = pto.partition_view %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
-                sv0 = pto.PartitionViewOp(part_view_32x32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
+                # %3/%4/%8 = pto.partition_view %tv, offsets=[%c0,%c0], sizes=[%c1,%c1024]
+                sv0 = pto.PartitionViewOp(part_view_1x1024, tv0, offsets=[c0, c0], sizes=[c1, c1024]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <1x1024xf32>
                 tb0 = pto.AllocTileOp(tile_buf_1x1024).result
@@ -59,7 +60,7 @@ def build():
                 pto.TMrgSortOp(srcs=[tb0], dsts=[tb1], blockLen=c64_i32)
 
                 # %8 = partition_view on output tensor_view
-                sv1 = pto.PartitionViewOp(part_view_32x32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv1 = pto.PartitionViewOp(part_view_1x1024, tv1, offsets=[c0, c0], sizes=[c1, c1024]).result
 
                 # pto.store_dps_tb ins(%tb1) outs(%sv1)
                 pto.TStoreOp(None, tb1, sv1)

@@ -2279,14 +2279,17 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
           }
         }
 
-        auto typedPtrTy = emitc::OpaqueType::get(ctx, qualifier + " " + castElemTypeStr + "*");
-        Value typedSourcePtr = rewriter.create<emitc::CastOp>(loc, typedPtrTy, sourcePtr);
-        newPtr = rewriter.create<emitc::AddOp>(loc, typedPtrTy, typedSourcePtr, totalOffset);
+        auto typedPtrTy =
+            emitc::OpaqueType::get(ctx, qualifier + " " + castElemTypeStr + "*");
+        Value typedSourcePtr =
+            rewriter.create<emitc::CastOp>(loc, typedPtrTy, sourcePtr);
+        newPtr = rewriter.create<emitc::AddOp>(loc, typedPtrTy, typedSourcePtr,
+                                               totalOffset);
       } else {
-        newPtr = rewriter.create<emitc::AddOp>(loc, sourcePtr.getType(), sourcePtr, totalOffset);
+        newPtr = rewriter.create<emitc::AddOp>(loc, sourcePtr.getType(), sourcePtr,
+                                               totalOffset);
       }
     }
-
 
     // -------------------------------------------------------------------------
     // Part 2: For non-GM memrefs, keep pointer (no GlobalTensor).
@@ -3011,24 +3014,71 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         resultValue = varOp.getResult();
     }
 
-    // TASSIGN: pto-isa expects an integral address.
-    Value addr = adaptor.getAddrs()[0];
-    if (isa<emitc::PointerType>(addr.getType()) ||
-        (isa<emitc::OpaqueType>(addr.getType()) &&
-         cast<emitc::OpaqueType>(addr.getType()).getValue().ends_with("*"))) {
-      auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
-      auto rcU64 = rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
-      addr = rewriter.create<emitc::CallOpaqueOp>(
-                 loc, u64Ty, "reinterpret_cast",
-                 /*args=*/ArrayAttr{}, /*templateArgs=*/rcU64,
-                 /*operands=*/ValueRange{addr})
-                 .getResult(0);
+    // TASSIGN(tile, addr) requires an integral address. Our IR sometimes
+    // carries pointers here (e.g. tile subviews in UB), so canonicalize:
+    //   addr = reinterpret_cast<uint64_t>(ptr)
+    Value addr = adaptor.getAddrs().empty() ? Value() : adaptor.getAddrs()[0];
+    if (!addr)
+      return failure();
+
+    auto isIntegralAddrTy = [](Type ty) -> bool {
+      if (auto it = dyn_cast<IntegerType>(ty))
+        return it.getWidth() == 64;
+      if (auto ot = dyn_cast<emitc::OpaqueType>(ty)) {
+        StringRef s = ot.getValue();
+        return s == "int64_t" || s == "uint64_t" || s == "intptr_t" ||
+               s == "uintptr_t" || s == "long" || s == "unsigned long" ||
+               s == "long long" || s == "unsigned long long";
+      }
+      return false;
+    };
+    auto isPointerLikeTy = [](Type ty) -> bool {
+      if (isa<emitc::PointerType>(ty))
+        return true;
+      if (auto ot = dyn_cast<emitc::OpaqueType>(ty))
+        return ot.getValue().contains("*");
+      return false;
+    };
+
+    Value addrForAssign = addr;
+    if (!isIntegralAddrTy(addr.getType())) {
+      Value ptrVal = addr;
+      if (auto ot = dyn_cast<emitc::OpaqueType>(ptrVal.getType())) {
+        StringRef tyStr = ot.getValue();
+        if (tyStr.starts_with("Tile<") || tyStr.starts_with("ConvTile<")) {
+          // Get the underlying element pointer via tile.data().
+          std::string qualifier = "__gm__";
+          if (auto ms = dyn_cast_or_null<pto::AddressSpaceAttr>(
+                  selfType.getMemorySpace())) {
+            qualifier = addrSpaceQualifier(ms.getAddressSpace());
+          }
+          auto elemPtrTy = emitc::PointerType::get(
+              emitc::OpaqueType::get(ctx, qualifier + " " + elemTypeStr));
+          ptrVal = rewriter
+                       .create<emitc::CallOpaqueOp>(
+                           loc, elemPtrTy, "PTOAS__TILE_DATA", ArrayAttr{},
+                           ArrayAttr{}, ValueRange{ptrVal})
+                       .getResult(0);
+        }
+      }
+
+      if (isPointerLikeTy(ptrVal.getType())) {
+        auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+        auto rcU64 = rewriter.getArrayAttr(
+            {emitc::OpaqueAttr::get(ctx, "uint64_t")});
+        addrForAssign = rewriter
+                            .create<emitc::CallOpaqueOp>(
+                                loc, u64Ty, "reinterpret_cast",
+                                /*args=*/ArrayAttr{},
+                                /*templateArgs=*/rcU64,
+                                /*operands=*/ValueRange{ptrVal})
+                            .getResult(0);
+      }
     }
 
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TASSIGN",
-        ArrayAttr{}, ArrayAttr{},
-        ValueRange{resultValue, addr});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{resultValue, addrForAssign});
 
     rewriter.replaceOp(op, resultValue);
     return success();
@@ -7018,12 +7068,12 @@ struct EmitPTOManualPass
 	    builder.setInsertionPointToStart(mop.getBody());
 	    builder.create<emitc::IncludeOp>(
 	        loc, builder.getStringAttr("pto/pto-inst.hpp"), /*isAngled=*/nullptr);
-	    builder.create<emitc::VerbatimOp>(
-	        loc, builder.getStringAttr("using namespace pto;"));
-	
-	    // Only inject the bitcast helper when we actually lower ops that need it
-	    // (e.g. arith.bitcast or arith.maximumf/minimumf tie-breaking on zeros).
-	    bool needsBitcastHelper = false;
+		    builder.create<emitc::VerbatimOp>(
+		        loc, builder.getStringAttr("using namespace pto;"));
+
+		    // Only inject the bitcast helper when we actually lower ops that need it
+		    // (e.g. arith.bitcast or arith.maximumf/minimumf tie-breaking on zeros).
+		    bool needsBitcastHelper = false;
 	    mop.walk([&](Operation *op) {
 	      if (isa<arith::BitcastOp, arith::MaximumFOp, arith::MinimumFOp>(op)) {
 	        needsBitcastHelper = true;
@@ -7186,6 +7236,30 @@ struct EmitPTOManualPass
         output.replaceAllUsesWith(input);
         castsToErase.push_back(cast);
         return;
+      }
+
+      // Tile -> pointer: use Tile::data() marker instead of a C-style cast.
+      // A direct cast like `(__ubuf__ float*)tile` is invalid for pto-isa Tiles.
+      if (auto inOt = dyn_cast<emitc::OpaqueType>(inTy)) {
+        bool outIsPtr = isa<emitc::PointerType>(outTy);
+        if (auto outOt = dyn_cast<emitc::OpaqueType>(outTy))
+          outIsPtr |= outOt.getValue().contains("*");
+        if (inOt.getValue().starts_with("Tile<") && outIsPtr) {
+          // Materialize at each use site to preserve ordering w.r.t. TASSIGN.
+          llvm::SmallVector<OpOperand *, 8> uses;
+          for (OpOperand &u : output.getUses())
+            uses.push_back(&u);
+          for (OpOperand *u : uses) {
+            Operation *user = u->getOwner();
+            OpBuilder builder(user);
+            auto call = builder.create<emitc::CallOpaqueOp>(
+                cast.getLoc(), outTy, "PTOAS__TILE_DATA", ArrayAttr{},
+                ArrayAttr{}, ValueRange{input});
+            u->set(call.getResult(0));
+          }
+          castsToErase.push_back(cast);
+          return;
+        }
       }
 
       if (emitc::isSupportedEmitCType(inTy) && emitc::isSupportedEmitCType(outTy)) {

@@ -27,12 +27,12 @@ def build_module():
         pto.register_dialect(ctx, load=True)
 
         f32 = builtin.F32Type.get()
-        mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+        vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
-        tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 1024, 1024], f32)
+        tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 64, 64], f32)
         part_view_ty = pto.PartitionTensorViewType.get([1, 1, 16, 16, 16], f32)
         tile_buf_ty = pto.TileBufType.get(
-            [256, 16], f32, mat, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
+            [256, 16], f32, vec, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
         )
 
         ptr_f32 = pto.PtrType.get(f32)
@@ -43,8 +43,8 @@ def build_module():
             def run_partition(src, dst):
                 c0 = idx(0)
                 # Shapes/strides for make_tensor_view
-                shape = [idx(1), idx(1), idx(16), idx(1024), idx(1024)]
-                strides = [idx(1048576), idx(1048576), idx(1048576), idx(1024), idx(1)]
+                shape = [idx(1), idx(1), idx(16), idx(64), idx(64)]
+                strides = [idx(65536), idx(65536), idx(4096), idx(64), idx(1)]
 
                 base_view = pto.MakeTensorViewOp(tensor_view_ty, src, shape, strides).result
 
@@ -75,4 +75,3 @@ def build_module():
 if __name__ == "__main__":
     module = build_module()
     print(module)
-
