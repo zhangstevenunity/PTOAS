@@ -6155,6 +6155,63 @@ struct PTOXORSToEmitC : public OpConversionPattern<pto::TXorSOp> {
   }
 };
 
+// pto.print "format", %scalar -> PRINTF("format", scalar)
+struct PTOPrintOpToEmitC : public OpConversionPattern<pto::PrintOp> {
+  using OpConversionPattern<pto::PrintOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::PrintOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+
+    std::string fmt = op.getFormat().str();
+    if (fmt.empty())
+      fmt = "%f";
+    std::string quoted = "\"";
+    for (char c : fmt) {
+      if (c == '"' || c == '\\')
+        quoted += '\\';
+      else if (c == '\n')
+        quoted += "\\n";
+      else if (c == '\t')
+        quoted += "\\t";
+      else
+        quoted += c;
+    }
+    quoted += "\"";
+
+    Value scalar = peelUnrealized(adaptor.getScalar());
+    auto argsAttr = rewriter.getArrayAttr(
+        {emitc::OpaqueAttr::get(ctx, quoted),
+         IntegerAttr::get(IndexType::get(ctx), 0)});
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "cce::printf",
+        /*args=*/argsAttr,
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{scalar});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+// pto.trap -> TRAP()
+struct PTOTrapOpToEmitC : public OpConversionPattern<pto::TrapOp> {
+  using OpConversionPattern<pto::TrapOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TrapOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "trap",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TSYNC DPS/memref op)
 //===----------------------------------------------------------------------===//
@@ -6943,6 +7000,8 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOGetSubBlockIdxToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetSubBlockNumToEmitC>(typeConverter, ctx);
   patterns.add<PTOPrintToTPRINT>(typeConverter, ctx);
+  patterns.add<PTOPrintOpToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTrapOpToEmitC>(typeConverter, ctx);
   patterns.add<
     PTOTMatmulBiasToTMATMUL_BIAS,
     PTOTMatmulMXToTMATMUL_MX,
@@ -6985,7 +7044,7 @@ struct EmitPTOManualPass
 	    MLIRContext *ctx = &getContext();
 	    ModuleOp mop = getOperation();
 
-	    // 1. 插入头文件
+		    // 1. 插入头文件
 	    auto loc = mop->getLoc();
 	    OpBuilder builder(ctx);
 	    builder.setInsertionPointToStart(mop.getBody());

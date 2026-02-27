@@ -45,6 +45,9 @@ def ScalarPtrOrMemRef :
     CPred<"::mlir::pto::isScalarPtrOrMemRef($_self)">,
     "Ptr or MemRef in GM">;
 
+def PrintScalarType :
+  AnyTypeOf<[Index, AnySignlessInteger, AnyFloat], "numeric (index/integer/float)">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -1197,6 +1200,33 @@ def SetFFTsOp : PTO_Op<"set_ffts", [MemoryEffects<[MemRead, MemWrite]>]> {
 
   let hasVerifier = 1;
 }
+
+
+def PrintOp : PTO_Op<"print", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "Print debug: format string (attribute) and scalar value.";
+  let description = [{
+    Debug print op. First argument is the format string (string attribute), second is a scalar value.
+    Format in IR: `pto.print ins("format", %scalar : type(%scalar))`
+  }];
+  let arguments = (ins StrAttr:$format, PrintScalarType:$scalar);
+  let results = (outs);
+  let assemblyFormat = [{
+    `ins` `(` $format `,` $scalar `:` type($scalar) `)`
+    attr-dict
+  }];
+}
+
+def TrapOp : PTO_Op<"trap"> {
+  let summary = "Trap: abort execution (no operands).";
+  let description = [{
+    Inserts a trap to stop execution. No arguments, no results.
+    Format in IR: pto.trap
+  }];
+  let arguments = (ins);
+  let results = (outs);
+  let assemblyFormat = "attr-dict";
+}
+
 // ---- tile-world TOp version (with 't') ----
 // pto.tmgather ins(%mem, %idx) outs(%dst) [ ...] -> tensor?
 def MGatherOp : PTO_TOp<"mgather", [
