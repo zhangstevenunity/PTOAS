@@ -1,0 +1,245 @@
+name: Build Wheel (macOS)
+
+on:
+  push:
+    tags-ignore:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  LLVM_TAG: llvmorg-19.1.7
+
+jobs:
+  build_wheel:
+    name: Build wheel (Python ${{ matrix.python }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'x86_64' && 'macos-26-intel' || 'macos-26' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+        arch: ["x86_64", "aarch64"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Set Python path
+        run: |
+          echo "PY_PATH=$(python -c 'import sys; print(sys.prefix)')" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          brew install ninja ccache
+
+      - name: Install Python dependencies
+        run: |
+          # LLVM/MLIR Python bindings are not yet compatible with pybind11 3.x
+          # (see pybind11 static_assert on def_property + keep_alive).
+          pip install --no-cache-dir numpy 'pybind11<3' nanobind setuptools wheel delocate
+
+      - name: Set build directories
+        run: |
+          echo "WORKSPACE_DIR=${RUNNER_TEMP}/llvm-workspace" >> $GITHUB_ENV
+          echo "LLVM_SOURCE_DIR=${RUNNER_TEMP}/llvm-workspace/llvm-project" >> $GITHUB_ENV
+          echo "LLVM_BUILD_DIR=${RUNNER_TEMP}/llvm-workspace/llvm-project/build-shared" >> $GITHUB_ENV
+          echo "PTO_SOURCE_DIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "PTO_INSTALL_DIR=$GITHUB_WORKSPACE/install" >> $GITHUB_ENV
+
+      - name: Restore LLVM build cache (exact key)
+        id: cache-llvm
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/llvm-workspace/llvm-project/build-shared
+          key: llvm-${{ env.LLVM_TAG }}-macos-26-${{ matrix.arch }}-${{ matrix.python }}-v1
+
+      - name: Prepare LLVM source
+        run: |
+          mkdir -p $LLVM_SOURCE_DIR
+          cd $LLVM_SOURCE_DIR
+          if [ ! -d .git ]; then
+            git init
+            git remote add origin https://github.com/llvm/llvm-project.git
+          fi
+          git fetch --depth 1 origin tag ${{ env.LLVM_TAG }}
+          git checkout ${{ env.LLVM_TAG }}
+
+      - name: Warn when default-branch cache is missing for PR/release runs
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && (github.event_name == 'pull_request' || github.event_name == 'release')
+        run: |
+          echo "LLVM cache miss while running on PR/release."
+          echo "PR/release runs are cache-consumers only and should reuse cache generated on the default branch."
+          echo "Please run this workflow on the default branch first to populate cache key:"
+          echo "llvm-${{ env.LLVM_TAG }}-macos-26-${{ matrix.arch }}-${{ matrix.python }}-v1"
+
+      - name: Build LLVM/MLIR
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          cd $LLVM_SOURCE_DIR
+          cmake -G Ninja -S llvm -B $LLVM_BUILD_DIR \
+            -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+            -DBUILD_SHARED_LIBS=ON \
+            -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+            -DPython3_EXECUTABLE=$(which python) \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_TARGETS_TO_BUILD="host"
+          ninja -C $LLVM_BUILD_DIR
+
+      # Upload cache immediately after the build step, to avoid `build-shared` directory being polluted by later steps.
+      - name: Save LLVM cache
+        # Allow cache writes except for PR/release runs to avoid duplicated tag/merge caches.
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name != 'pull_request' && github.event_name != 'release'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/llvm-workspace/llvm-project/build-shared
+          key: llvm-${{ env.LLVM_TAG }}-macos-26-${{ matrix.arch }}-${{ matrix.python }}-v1
+
+      - name: Build PTOAS
+        run: |
+          cd $PTO_SOURCE_DIR
+          cmake -G Ninja \
+            -S . \
+            -B build \
+            -DLLVM_DIR=$LLVM_BUILD_DIR/lib/cmake/llvm \
+            -DMLIR_DIR=$LLVM_BUILD_DIR/lib/cmake/mlir \
+            -DPython3_ROOT_DIR=${PY_PATH} \
+            -DPython3_EXECUTABLE=$(which python) \
+            -DPython3_FIND_STRATEGY=LOCATION \
+            -Dpybind11_DIR=$(python -m pybind11 --cmakedir) \
+            -DMLIR_PYTHON_PACKAGE_DIR=${LLVM_BUILD_DIR}/tools/mlir/python_packages/mlir_core \
+            -DCMAKE_INSTALL_PREFIX=${PTO_INSTALL_DIR}
+          ninja -C build
+          ninja -C build install
+
+      - name: Create Python wheel
+        run: |
+          bash $PTO_SOURCE_DIR/docker/create_wheel.sh
+
+      - name: Repair wheel with delocate
+        run: |
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          cd $PY_PACKAGE_DIR
+          delocate-wheel --wheel-dir wheelhouse dist/ptoas*.whl
+
+      - name: Test wheel installation
+        run: |
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          pip install $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl
+          export DYLD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:${DYLD_LIBRARY_PATH}
+          bash $PTO_SOURCE_DIR/docker/test_wheel_imports.sh
+
+      - name: Test ptoas CLI
+        run: |
+          export DYLD_LIBRARY_PATH=$LLVM_BUILD_DIR/lib:$PTO_INSTALL_DIR/lib:${DYLD_LIBRARY_PATH}
+          bash $PTO_SOURCE_DIR/docker/test_ptoas_cli.sh
+
+      - name: Copy wheel to workspace
+        run: |
+          export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          mkdir -p $GITHUB_WORKSPACE/wheelhouse
+          cp $PY_PACKAGE_DIR/wheelhouse/ptoas*.whl $GITHUB_WORKSPACE/wheelhouse/
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptoas-wheel-macos-py${{ matrix.python }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+
+      - name: Collect ptoas binary and dependencies
+        if: matrix.python == '3.11'
+        run: |
+          set -euo pipefail
+          OUT_DIR="$GITHUB_WORKSPACE/ptoas-dist"
+          PTOAS_BIN="$PTO_SOURCE_DIR/build/tools/ptoas/ptoas"
+          mkdir -p "$OUT_DIR/bin" "$OUT_DIR/lib"
+          cp "$PTOAS_BIN" "$OUT_DIR/bin/"
+
+          collect_dylibs() {
+            local bin="$1"
+            otool -L "$bin" | awk 'NR>1 {print $1}' | while read -r dep; do
+              case "$dep" in
+                "$LLVM_BUILD_DIR"/*|"$PTO_INSTALL_DIR"/*)
+                  local base
+                  base=$(basename "$dep")
+                  if [ ! -f "$OUT_DIR/lib/$base" ]; then
+                    cp "$dep" "$OUT_DIR/lib/$base"
+                    install_name_tool -id "@loader_path/../lib/$base" "$OUT_DIR/lib/$base" || true
+                    collect_dylibs "$OUT_DIR/lib/$base"
+                  fi
+                  install_name_tool -change "$dep" "@loader_path/../lib/$base" "$bin" || true
+                  ;;
+              esac
+            done
+          }
+
+          collect_dylibs "$OUT_DIR/bin/ptoas"
+
+          cat > "$OUT_DIR/ptoas" << 'WRAPPER_EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export DYLD_LIBRARY_PATH="${SCRIPT_DIR}/lib:${DYLD_LIBRARY_PATH}"
+          exec "${SCRIPT_DIR}/bin/ptoas" "$@"
+          WRAPPER_EOF
+          chmod +x "$OUT_DIR/ptoas"
+
+          ls -la "$OUT_DIR"
+          ls -la "$OUT_DIR/bin"
+          ls -la "$OUT_DIR/lib"
+
+      - name: Upload ptoas binary artifact
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptoas-bin-macos-${{ matrix.arch }}
+          path: ptoas-dist/
+
+  upload_release_assets:
+    name: Upload release assets
+    if: github.event_name == 'release'
+    needs: build_wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ptoas-wheel-macos-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download x86_64 binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ptoas-bin-macos-x86_64
+          path: release-artifacts/ptoas-bin-macos-x86_64
+
+      - name: Download aarch64 binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ptoas-bin-macos-aarch64
+          path: release-artifacts/ptoas-bin-macos-aarch64
+
+      - name: Package ptoas binaries
+        run: |
+          set -euo pipefail
+          tar -czf "release-artifacts/ptoas-bin-macos-x86_64.tar.gz" \
+            -C "release-artifacts/ptoas-bin-macos-x86_64" .
+          tar -czf "release-artifacts/ptoas-bin-macos-aarch64.tar.gz" \
+            -C "release-artifacts/ptoas-bin-macos-aarch64" .
+
+      - name: Upload assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/*.whl
+            release-artifacts/*.tar.gz
