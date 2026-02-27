@@ -9,9 +9,9 @@ module {
     
     // CHECK: // === [PTOInsertSync] Final Result === //
     // CHECK-NEXT: func.func @test_basic_pipeline
-    // CHECK: pto.load_dps
+    // CHECK: pto.tload
     // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
-    pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
 
     // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
@@ -21,14 +21,14 @@ module {
     // CHECK: } else {
     // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
     scf.if %cond {
-      pto.addf_dps ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<vec>>,
+      pto.tadd ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<vec>>,
                                    memref<16x16x16xf16, #pto.address_space<vec>>)
                    outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
     }
 
     // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-    // CHECK: pto.store_dps
-    pto.store_dps ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
+    // CHECK: pto.tstore
+    pto.tstore ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
     
     // CHECK: pto.barrier <PIPE_ALL>

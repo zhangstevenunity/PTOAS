@@ -1016,7 +1016,7 @@ struct PTOViewToMemrefPass
           
           auto config = lookupConfig(dst); // Config on Tile
 
-          rewriter.replaceOpWithNewOp<pto::LoadDpsOp>(op, TypeRange{}, src, dst);
+          rewriter.replaceOpWithNewOp<pto::TLoadOp>(op, TypeRange{}, src, dst);
       }
 
       // --- TStoreOp [Src, Dst] ---
@@ -1031,7 +1031,7 @@ struct PTOViewToMemrefPass
 
         auto config = lookupConfig(src); // Config on Tile
 
-        rewriter.replaceOpWithNewOp<pto::StoreDpsOp>(op, TypeRange{}, src, dst);
+        rewriter.replaceOpWithNewOp<pto::TStoreOp>(op, TypeRange{}, src, dst);
       }
 
        // --- TTransOp [Src, Tmp, Dst] ---
@@ -1040,7 +1040,7 @@ struct PTOViewToMemrefPass
       for (auto op : trans) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::TransDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TTransOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1), op->getOperand(2));
       }
 
@@ -1050,7 +1050,7 @@ struct PTOViewToMemrefPass
       for (auto op : exp) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::ExpOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExpOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1));
       }
 
@@ -1060,72 +1060,18 @@ struct PTOViewToMemrefPass
       for (auto op : mul) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MulOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMulOp>(
             op, op->getOperand(0), op.getOperand(1), op->getOperand(2));
       }
 
-      // --- TMulsOp [Src, Scalar, Dst] ---
-      SmallVector<mlir::pto::TMulsOp, 8> muls;
-      func.walk([&](mlir::pto::TMulsOp op) { muls.push_back(op); });
+      // --- TMulSOp [Src, Scalar, Dst] ---
+      SmallVector<mlir::pto::TMulSOp, 8> muls;
+      func.walk([&](mlir::pto::TMulSOp op) { muls.push_back(op); });
       for (auto op : muls) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MulsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMulSOp>(
             op, op->getOperand(0), op.getScalar(), op->getOperand(2));
-      }
-
-      SmallVector<mlir::pto::TRowExpandMulOp, 8> rowemul;
-      func.walk([&](mlir::pto::TRowExpandMulOp op) { rowemul.push_back(op); });
-
-      for (auto op : rowemul) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RowExpandMulOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRowMinOp, 8> rowmin;
-      func.walk([&](mlir::pto::TRowMinOp op) { rowmin.push_back(op); });
-
-      for (auto op : rowmin) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value tmp = op.getTmp();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto tmpTy = dyn_cast<MemRefType>(tmp.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !tmpTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RowMinOp_DPS>(
-            op,
-            src,
-            tmp,
-            dst);
       }
 
       // --- TAddOp [Src0, Src1, Dst] ---
@@ -1164,7 +1110,7 @@ struct PTOViewToMemrefPass
 
         auto config = lookupConfig(lhs);
 
-        rewriter.replaceOpWithNewOp<pto::MatmulDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulOp>(
           op, TypeRange{}, lhs, rhs, bias, dst);
       }
 
@@ -1174,7 +1120,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulAccs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulAccDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulAccOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1185,7 +1131,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1196,7 +1142,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4));
       }
@@ -1207,7 +1153,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxAccs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxAccDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxAccOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
       }
@@ -1218,7 +1164,7 @@ struct PTOViewToMemrefPass
       for (auto op : matmulMxBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MatmulMxBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMatmulMxBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3), op->getOperand(4), op->getOperand(5));
       }
@@ -1236,7 +1182,7 @@ struct PTOViewToMemrefPass
 
         auto config = lookupConfig(lhs);
 
-        rewriter.replaceOpWithNewOp<pto::GemvDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvOp>(
           op, TypeRange{}, lhs, rhs, dst);
       }
 
@@ -1246,7 +1192,7 @@ struct PTOViewToMemrefPass
       for (auto op : gemvAccs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::GemvAccDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvAccOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1257,7 +1203,7 @@ struct PTOViewToMemrefPass
       for (auto op : gemvBiass) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::GemvBiasDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TGemvBiasOp>(
           op, TypeRange{}, 
           op->getOperand(0), op->getOperand(1), op->getOperand(2), op->getOperand(3));
       }
@@ -1268,45 +1214,8 @@ struct PTOViewToMemrefPass
       for (auto op : movs) {
         IRRewriter rewriter(ctx);
         rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::MovDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TMovOp>(
             op, TypeRange{}, op->getOperand(0), op->getOperand(1));
-      }
-
-      // --- Row Ops (ExpandDiv, ExpandSub, Max, Sum) ---
-      SmallVector<mlir::pto::TRowExpandDivOp, 8> rowediv;
-      func.walk([&](mlir::pto::TRowExpandDivOp op) { rowediv.push_back(op); });
-      for (auto op : rowediv) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::RowExpandDivOp_DPS>(
-            op, op->getOperand(0), op->getOperand(1), op->getOperand(2));
-      }
-
-      SmallVector<mlir::pto::TRowExpandSubOp, 8> rowesub;
-      func.walk([&](mlir::pto::TRowExpandSubOp op) { rowesub.push_back(op); });
-      for (auto op : rowesub) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::RowExpandSubOp_DPS>(
-            op, op->getOperand(0), op->getOperand(1), op->getOperand(2));
-      }
-
-      SmallVector<mlir::pto::TRowMaxOp, 8> rowmax;
-      func.walk([&](mlir::pto::TRowMaxOp op) { rowmax.push_back(op); });
-      for (auto op : rowmax) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::RowMaxOp_DPS>(
-            op, TypeRange{}, op.getSrc(), op.getTmp(), op.getDst());
-      }
-
-      SmallVector<mlir::pto::TRowSumOp, 8> rowsum;
-      func.walk([&](mlir::pto::TRowSumOp op) { rowsum.push_back(op); });
-      for (auto op : rowsum) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::RowSumOp_DPS>(
-            op, TypeRange{}, op.getSrc(), op.getTmp(), op.getDst());
       }
 
       SmallVector<mlir::pto::TAbsOp, 8> abseops;
@@ -1327,7 +1236,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AbsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAbsOp>(
             op,
             TypeRange{},
             src,
@@ -1356,7 +1265,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddCOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddCOp>(
             op,
             TypeRange{},
             src0,
@@ -1384,7 +1293,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddSOp>(
             op,
             TypeRange{},
             src,
@@ -1413,7 +1322,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AddSCOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAddSCOp>(
             op,
             TypeRange{},
             src0,
@@ -1442,7 +1351,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AndOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAndOp>(
             op,
             TypeRange{},
             src0,
@@ -1469,7 +1378,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::AndSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TAndSOp>(
             op,
             TypeRange{},
             src,
@@ -1496,7 +1405,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::CIOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TCIOp>(
             op,
             TypeRange{},
             s,
@@ -1524,7 +1433,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-         auto newOp = rewriter.create<pto::CmpOp_DPS>(
+         auto newOp = rewriter.create<pto::TCmpOp>(
             op.getLoc(),
             TypeRange{},
             src0,
@@ -1557,15 +1466,14 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        auto newOp = rewriter.create<pto::CmpSOp_DPS>(
+        auto cmpMode = op.getCmpModeAttr();
+        auto newOp = rewriter.create<pto::TCmpSOp>(
             op.getLoc(),
             TypeRange{},
             src,
             scalar,
+            cmpMode,
             dst);
-
-        if (auto a = op.getCmpModeAttr())
-          newOp->setAttr("cmpMode", a);
 
         rewriter.replaceOp(op, newOp->getResults()); // 0 results -> OK
       }
@@ -1588,7 +1496,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColExpandOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColExpandOp>(
             op,
             TypeRange{},
             src,
@@ -1613,7 +1521,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColMaxOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColMaxOp>(
             op,
             TypeRange{},
             src,
@@ -1638,7 +1546,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ColMinOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TColMinOp>(
             op,
             TypeRange{},
             src,
@@ -1679,7 +1587,7 @@ struct PTOViewToMemrefPass
             isBinaryAttr = BoolAttr::get(ctx, false);
           }
 
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               src,
@@ -1697,7 +1605,7 @@ struct PTOViewToMemrefPass
               attrs.push_back(attr);
             }
           }
-          rewriter.replaceOpWithNewOp<pto::ColSumOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TColSumOp>(
               op,
               TypeRange{},
               operands,
@@ -1725,7 +1633,7 @@ struct PTOViewToMemrefPass
 
         auto rmodeAttr = op.getRmodeAttr(); // PTO_RoundModeAttr
 
-        auto newOp = rewriter.create<pto::CvtOp_DPS>(
+        auto newOp = rewriter.create<pto::TCvtOp>(
             op.getLoc(),
             TypeRange{},
             src,
@@ -1757,7 +1665,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivOp>(
             op,
             TypeRange{},
             src0,
@@ -1785,7 +1693,7 @@ struct PTOViewToMemrefPass
         auto dstTileTy = dyn_cast<mlir::pto::TileBufType>(dst.getType());
         
         // Determine which operand is the tile/memref and which is the scalar
-        // DivSOp_DPS expects (memref, scalar, dst) internally, so we need to ensure correct order
+        // TDivSOp expects (memref, scalar, dst) internally, so we need to ensure correct order
         // Check if src is memref/tensor/tile (not scalar)
         bool srcIsMemref = (srcTy != nullptr || srcTileTy != nullptr || 
                             isa<RankedTensorType>(src.getType()) ||
@@ -1820,12 +1728,12 @@ struct PTOViewToMemrefPass
           scalarOperand = scale;
         } else {
           // Swapped order: (src=scalar, scale=tile/memref, dst)
-          // Need to swap to (memref, scalar, dst) for DivSOp_DPS
+          // Need to swap to (memref, scalar, dst) for TDivSOp
           memrefOperand = scale;
           scalarOperand = src;
         }
 
-        rewriter.replaceOpWithNewOp<pto::DivSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TDivSOp>(
             op,
             TypeRange{},
             memrefOperand,
@@ -1850,7 +1758,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ExpandsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExpandsOp>(
             op,
             TypeRange{},
             scalar,
@@ -1879,7 +1787,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::ExtractOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TExtractOp>(
             op,
             TypeRange{},
             src,
@@ -1906,7 +1814,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::FillPadOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TFillPadOp>(
             op,
             TypeRange{},
             src,
@@ -1933,7 +1841,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::SetValDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::TSetValOp>(
             op,
             TypeRange{},
             dst,
@@ -1998,12 +1906,13 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::GatherOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TGatherOp>(
               op,
               TypeRange{},
               src,
               dst,
-              indices);
+              indices,
+              /*maskPattern=*/pto::MaskPatternAttr());
         } else {
           if (!maskPattern) {
             op.emitError("expects maskPattern when indices is absent");
@@ -2011,7 +1920,7 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::GatherOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TGatherOp>(
               op,
               TypeRange{},
               src,
@@ -2021,8 +1930,8 @@ struct PTOViewToMemrefPass
         }
       }
 
-      SmallVector<mlir::pto::TGatherbOp, 8> gatherbops;
-      func.walk([&](mlir::pto::TGatherbOp op) { gatherbops.push_back(op); });
+      SmallVector<mlir::pto::TGatherBOp, 8> gatherbops;
+      func.walk([&](mlir::pto::TGatherBOp op) { gatherbops.push_back(op); });
 
       for (auto op : gatherbops) {
         IRRewriter rewriter(ctx);
@@ -2041,7 +1950,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::GatherbOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TGatherBOp>(
             op,
             TypeRange{},
             src,
@@ -2067,7 +1976,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::LogOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TLogOp>(
             op,
             TypeRange{},
             src,
@@ -2094,7 +2003,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::LReluOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TLReluOp>(
             op,
             TypeRange{},
             src,
@@ -2122,7 +2031,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MaxOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMaxOp>(
             op,
             TypeRange{},
             src0,
@@ -2150,7 +2059,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MaxSOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMaxSOp>(
             op,
             TypeRange{},
             src,
@@ -2178,7 +2087,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MinOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMinOp>(
             op,
             TypeRange{},
             src0,
@@ -2186,8 +2095,8 @@ struct PTOViewToMemrefPass
             dst);
       }
 
-      SmallVector<mlir::pto::TMinsOp, 8> minsops;
-      func.walk([&](mlir::pto::TMinsOp op) { minsops.push_back(op); });
+      SmallVector<mlir::pto::TMinSOp, 8> minsops;
+      func.walk([&](mlir::pto::TMinSOp op) { minsops.push_back(op); });
 
       for (auto op : minsops) {
         IRRewriter rewriter(ctx);
@@ -2206,7 +2115,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MinsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMinSOp>(
             op,
             TypeRange{},
             src,
@@ -2234,7 +2143,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MovFPOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TMovFPOp>(
             op,
             TypeRange{},
             src,
@@ -2262,7 +2171,7 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::MrgSortOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TMrgSortOp>(
               op,
               TypeRange{},
               ValueRange{src},
@@ -2299,7 +2208,7 @@ struct PTOViewToMemrefPass
             return;
           }
 
-          rewriter.replaceOpWithNewOp<pto::MrgSortOp_DPS>(
+          rewriter.replaceOpWithNewOp<pto::TMrgSortOp>(
               op,
               TypeRange{},
               op.getSrcs(),
@@ -2332,7 +2241,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::NegOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TNegOp>(
             op,
             TypeRange{},
             src,
@@ -2357,7 +2266,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::NotOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TNotOp>(
             op,
             TypeRange{},
             src,
@@ -2384,15 +2293,15 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::OrOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TOrOp>(
             op,
             src0,
             src1,
             dst);
       }
 
-      SmallVector<mlir::pto::TOrsOp, 8> orsops;
-      func.walk([&](mlir::pto::TOrsOp op) { orsops.push_back(op); });
+      SmallVector<mlir::pto::TOrSOp, 8> orsops;
+      func.walk([&](mlir::pto::TOrSOp op) { orsops.push_back(op); });
 
       for (auto op : orsops) {
         IRRewriter rewriter(ctx);
@@ -2411,7 +2320,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::OrsOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TOrSOp>(
             op,
             TypeRange{},
             src,
@@ -2439,675 +2348,15 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::PartAddOp_DPS>(
+        rewriter.replaceOpWithNewOp<pto::TPartAddOp>(
             op,
             src0,
             src1,
             dst);
       }
 
-      SmallVector<mlir::pto::TPartMaxOp, 8> partmaxops;
-      func.walk([&](mlir::pto::TPartMaxOp op) { partmaxops.push_back(op); });
-
-      for (auto op : partmaxops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::PartMaxOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TPartMinOp, 8> partminops;
-      func.walk([&](mlir::pto::TPartMinOp op) { partminops.push_back(op); });
-
-      for (auto op : partminops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::PartMinOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TPreluOp, 8> preluops;
-      func.walk([&](mlir::pto::TPreluOp op) { preluops.push_back(op); });
-
-      for (auto op : preluops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::PreluOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRecipOp , 8> recipops;
-      func.walk([&](mlir::pto::TRecipOp  op) { recipops.push_back(op); });
-
-      for (auto op : recipops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RecipOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TReluOp , 8> reluops;
-      func.walk([&](mlir::pto::TReluOp  op) { reluops.push_back(op); });
-
-      for (auto op : reluops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::ReluOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRemOp, 8> remops;
-      func.walk([&](mlir::pto::TRemOp op) { remops.push_back(op); });
-
-      for (auto op : remops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RemOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRemSOp, 8> rems;
-      func.walk([&](mlir::pto::TRemSOp op) { rems.push_back(op); });
-
-      for (auto op : rems) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-        Value scale = op.getScalar();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<FloatType>(scale.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RemSOp_DPS>(
-            op,
-            src,
-            scale,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TReshapeOp , 8> reshapeops;
-      func.walk([&](mlir::pto::TReshapeOp  op) { reshapeops.push_back(op); });
-
-      for (auto op : reshapeops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::ReshapeOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRowExpandOp , 8> rowexpandops;
-      func.walk([&](mlir::pto::TRowExpandOp  op) { rowexpandops.push_back(op); });
-
-      for (auto op : rowexpandops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RowExpandOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TRsqrtOp , 8> rsqrtops;
-      func.walk([&](mlir::pto::TRsqrtOp  op) { rsqrtops.push_back(op); });
-
-      for (auto op : rsqrtops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::RsqrtOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TScatterOp, 8> scatters;
-      func.walk([&](mlir::pto::TScatterOp op) { scatters.push_back(op); });
-
-      for (auto op : scatters) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value indexes = op.getIndexes();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto indexesTy = dyn_cast<MemRefType>(indexes.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !indexesTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::ScatterOp_DPS>(
-            op,
-            src,
-            indexes,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TSelOp, 8> selops;
-      func.walk([&](mlir::pto::TSelOp op) { selops.push_back(op); });
-
-      for (auto op : selops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value mask = op.getMask();
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto maskTy = dyn_cast<MemRefType>(mask.getType());
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!maskTy || !src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SelOp_DPS>(
-            op,
-            mask,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TSelsOp, 8> selsops;
-      func.walk([&](mlir::pto::TSelsOp op) { selsops.push_back(op); });
-
-      for (auto op : selsops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value selectMode = op.getSelectMode();
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto selectModeTy = dyn_cast<IntegerType>(selectMode.getType());
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!selectModeTy || !src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SelsOp_DPS>(
-            op,
-            src0,
-            src1,
-            selectMode,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TShlOp, 8> shlps;
-      func.walk([&](mlir::pto::TShlOp op) { shlps.push_back(op); });
-
-      for (auto op : shlps) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::ShlOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-      
-      SmallVector<mlir::pto::TShrOp, 8> shrps;
-      func.walk([&](mlir::pto::TShrOp op) { shrps.push_back(op); });
-
-      for (auto op : shrps) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::ShrOp_DPS>(
-            op,
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TShlSOp, 8> shlsops;
-      func.walk([&](mlir::pto::TShlSOp op) { shlsops.push_back(op); });
-      for (auto op : shlsops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::ShlSOp_DPS>(
-            op, op.getSrc(), op.getScalar(), op.getDst());
-      }
-
-      SmallVector<mlir::pto::TShrSOp, 8> shrsops;
-      func.walk([&](mlir::pto::TShrSOp op) { shrsops.push_back(op); });
-      for (auto op : shrsops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::ShrSOp_DPS>(
-            op, op.getSrc(), op.getScalar(), op.getDst());
-      }
-
-      SmallVector<mlir::pto::TSort32Op , 8> sort32ops;
-      func.walk([&](mlir::pto::TSort32Op  op) { sort32ops.push_back(op); });
-
-      for (auto op : sort32ops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-        Value idx = op.getIdx();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        auto idxTy = dyn_cast<MemRefType>(idx.getType());
-        if (!srcTy || !dstTy || !idxTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::Sort32Op_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst,
-            idx);
-      }
-
-      SmallVector<mlir::pto::TSqrtOp , 8> sqrtops;
-      func.walk([&](mlir::pto::TSqrtOp  op) { sqrtops.push_back(op); });
-
-      for (auto op : sqrtops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SqrtOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TStoreFPOp, 8> storefpops;
-      func.walk([&](mlir::pto::TStoreFPOp op) { storefpops.push_back(op); });
-
-      for (auto op : storefpops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value fp = op.getFp();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto fpTy = dyn_cast<MemRefType>(fp.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !fpTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::StoreFPOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            fp,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TSubOp, 8> subops;
-      func.walk([&](mlir::pto::TSubOp op) { subops.push_back(op); });
-
-      for (auto op : subops) {
-        Type s0Ty = op.getSrc0().getType();
-        Type s1Ty = op.getSrc1().getType();
-        if (s0Ty != s1Ty)
-          continue;
-
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        rewriter.replaceOpWithNewOp<pto::SubOp_DPS>(
-            op,
-            TypeRange{},
-            op.getSrc0(),
-            op.getSrc1(),
-            op.getDst());
-      }
-
-      SmallVector<mlir::pto::TSubCOp, 8> subcops;
-      func.walk([&](mlir::pto::TSubCOp op) { subcops.push_back(op); });
-
-      for (auto op : subcops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value src2 = op.getSrc2();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto src2Ty = dyn_cast<MemRefType>(src2.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !src2Ty ||!dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SubCOp_DPS>(
-            op,
-            TypeRange{},
-            src0,
-            src1,
-            src2,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TSubSOp, 8> subsops;
-      func.walk([&](mlir::pto::TSubSOp op) { subsops.push_back(op); });
-
-      for (auto op : subsops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value scalar = op.getScalar();
-        Value dst = op.getDst();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SubSOp_DPS>(
-            op,
-            TypeRange{},
-            src,
-            scalar,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TSubSCOp, 8> subscops;
-      func.walk([&](mlir::pto::TSubSCOp op) { subscops.push_back(op); });
-
-      for (auto op : subscops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value scalar = op.getScalar();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::SubSCOp_DPS>(
-            op,
-            TypeRange{},
-            src0,
-            scalar,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TXORSOp, 8> xors;
-      func.walk([&](mlir::pto::TXORSOp op) { xors.push_back(op); });
-
-      for (auto op : xors) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src = op.getSrc();
-        Value dst = op.getDst();
-        Value scale = op.getScalar();
-
-        auto srcTy = dyn_cast<MemRefType>(src.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!srcTy || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::XORSOp_DPS>(
-            op,
-            src,
-            scale,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TXOROp, 8> xorops;
-      func.walk([&](mlir::pto::TXOROp op) { xorops.push_back(op); });
-
-      for (auto op : xorops) {
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-
-        Value src0 = op.getSrc0();
-        Value src1 = op.getSrc1();
-        Value dst = op.getDst();
-
-        auto src0Ty = dyn_cast<MemRefType>(src0.getType());
-        auto src1Ty = dyn_cast<MemRefType>(src1.getType());
-        auto dstTy = dyn_cast<MemRefType>(dst.getType());
-        if (!src0Ty || !src1Ty || !dstTy) {
-          op.emitError("ins/outs are not memref yet");
-          signalPassFailure();
-          return;
-        }
-
-        rewriter.replaceOpWithNewOp<pto::XOROp_DPS>(
-            op,
-            TypeRange{},
-            src0,
-            src1,
-            dst);
-      }
-
-      SmallVector<mlir::pto::TMGatherOp, 8> mgatherops;
-      func.walk([&](mlir::pto::TMGatherOp op) { mgatherops.push_back(op); });
+      SmallVector<mlir::pto::MGatherOp, 8> mgatherops;
+      func.walk([&](mlir::pto::MGatherOp op) { mgatherops.push_back(op); });
 
       for (auto op : mgatherops) {
         IRRewriter rewriter(ctx);
@@ -3126,7 +2375,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MGatherDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::MGatherOp>(
             op,
             TypeRange{},
             mem,
@@ -3134,8 +2383,8 @@ struct PTOViewToMemrefPass
             dst);
       }
 
-      SmallVector<mlir::pto::TMScatterOp, 8> mascatterops;
-      func.walk([&](mlir::pto::TMScatterOp op) { mascatterops.push_back(op); });
+      SmallVector<mlir::pto::MScatterOp, 8> mascatterops;
+      func.walk([&](mlir::pto::MScatterOp op) { mascatterops.push_back(op); });
 
       for (auto op : mascatterops) {
         IRRewriter rewriter(ctx);
@@ -3154,7 +2403,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        rewriter.replaceOpWithNewOp<pto::MScatterDpsOp>(
+        rewriter.replaceOpWithNewOp<pto::MScatterOp>(
             op,
             TypeRange{},
             src,

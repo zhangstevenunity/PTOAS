@@ -173,6 +173,39 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard for Issue #112:
+    # `--enable-insert-sync` must not push PIPE_M -> PIPE_FIX into high event IDs
+    # for the autosync tmatmulk sample, otherwise it may deadlock on Ascend NPU.
+    if [[ "$base" == "tmatmulk_autosync" ]]; then
+      if grep -Eq "set_flag\\(PIPE_M,[[:space:]]*PIPE_FIX,[[:space:]]*EVENT_ID[3-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_M,[[:space:]]*PIPE_FIX,[[:space:]]*EVENT_ID[3-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tdeadlock signature: PIPE_M->PIPE_FIX uses EVENT_ID[3-7]"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Regression guard for issue #117: vector mask must be reset for each
+    # `pto.section.vector` region to avoid cross-kernel state leakage.
+    # Use an existing sample (Complex/cv_region.py) that contains a vector section.
+    if [[ "$base" == "cv_region" ]]; then
+      if ! grep -Fq "#if defined(__DAV_VEC__)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing __DAV_VEC__ guard"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "set_mask_norm();" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_mask_norm() reset"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "set_vector_mask(-1, -1);" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_vector_mask(-1, -1) reset"
+        overall=1
+        continue
+      fi
+    fi
+
     echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 

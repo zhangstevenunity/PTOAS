@@ -23,7 +23,7 @@ func.func @tci_kernel_2d(
   // 4) Compute: Generate contiguous integer sequence into dst tile
   //    线性 k: dst(k) = S + k (默认升序)
   // ==========================================
-  pto.tci_dps ins(%S : i32)
+  pto.tci ins(%S : i32)
           outs(%ub_dst : memref<1024xi32, #pto.address_space<ub>>)
   // ==========================================
   // 5) DMA Store: UB -> GM

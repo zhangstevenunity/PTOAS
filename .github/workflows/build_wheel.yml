@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        python: ["3.10", "3.11", "3.12"]
         arch: ["x86_64", "aarch64"]
 
     container:

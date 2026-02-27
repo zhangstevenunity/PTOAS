@@ -57,7 +57,7 @@ def build():
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
                 # pto.addf_dps_tb ins(%tb0,%tb1) outs(%tb2)
-                pto.TSelsOp(tb0, tb1, c64, tb2)
+                pto.TSelSOp(tb0, tb1, c64, tb2)
 
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result

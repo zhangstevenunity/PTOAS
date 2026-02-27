@@ -9,9 +9,9 @@ module {
   // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID1>]
   // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
   // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-  // CHECK: pto.store_dps
+  // CHECK: pto.tstore
   // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
-  // CHECK: pto.store_dps
+  // CHECK: pto.tstore
   // CHECK: pto.barrier <PIPE_ALL>
   func.func @test_two_event_ids(%arg0: memref<16x16x16xf16, #pto.address_space<gm>>,
                                 %arg1: memref<16x16x16xf16, #pto.address_space<gm>>,
@@ -19,19 +19,19 @@ module {
                                 %arg3: memref<16x16x16xf16, #pto.address_space<gm>>) {
     %ub0 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     %ub1 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.load_dps ins(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tload ins(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
                  outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.addf_dps ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
+    pto.tadd ins(%ub0, %ub0 : memref<16x16x16xf16, #pto.address_space<vec>>,
                                  memref<16x16x16xf16, #pto.address_space<vec>>)
                  outs(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.addf_dps ins(%ub1, %ub1 : memref<16x16x16xf16, #pto.address_space<vec>>,
+    pto.tadd ins(%ub1, %ub1 : memref<16x16x16xf16, #pto.address_space<vec>>,
                                  memref<16x16x16xf16, #pto.address_space<vec>>)
                  outs(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.store_dps ins(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
+    pto.tstore ins(%ub0 : memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%arg2 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.store_dps ins(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
+    pto.tstore ins(%ub1 : memref<16x16x16xf16, #pto.address_space<vec>>)
                   outs(%arg3 : memref<16x16x16xf16, #pto.address_space<gm>>)
     return
   }

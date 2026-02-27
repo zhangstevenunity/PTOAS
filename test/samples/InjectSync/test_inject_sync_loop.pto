@@ -3,16 +3,16 @@
 module {
   // CHECK-LABEL: func.func @test_loop_sync
   // CHECK: scf.for
-  // CHECK: pto.load_dps
+  // CHECK: pto.tload
   // CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID0>]
   // CHECK: scf.if
-  // CHECK: pto.addf_dps
+  // CHECK: pto.tadd
   // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
   // CHECK: } else {
   // CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
   // CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
-  // CHECK: pto.store_dps
+  // CHECK: pto.tstore
   // CHECK: pto.barrier <PIPE_ALL>
   func.func @test_loop_sync(%arg0: memref<16x16x16xf16, #pto.address_space<gm>>,
                             %arg1: memref<16x16x16xf16, #pto.address_space<gm>>) {
@@ -21,15 +21,15 @@ module {
     %c2 = arith.constant 2 : index
     %ub = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
     scf.for %i = %c0 to %c2 step %c1 {
-      pto.load_dps ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
+      pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
                    outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
       %cond = arith.cmpi eq, %i, %c0 : index
       scf.if %cond {
-        pto.addf_dps ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<vec>>,
+        pto.tadd ins(%ub, %ub : memref<16x16x16xf16, #pto.address_space<vec>>,
                                     memref<16x16x16xf16, #pto.address_space<vec>>)
                      outs(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
       }
-      pto.store_dps ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
+      pto.tstore ins(%ub : memref<16x16x16xf16, #pto.address_space<vec>>)
                     outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
     }
     return

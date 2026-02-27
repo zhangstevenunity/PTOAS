@@ -246,15 +246,17 @@ int SyncEventIdAllocation::ScopePair(const SyncOperation *s) {
     return 0;
   }
   // Event IDs are a limited shared resource and must not be reused across
-  // overlapping lifetimes. In practice, reusing the same event ID number for
-  // different destinations from the same source pipe without waiting in between
-  // can lead to mismatched waits and NPU runtime failures.
+  // overlapping lifetimes within the same (src,dst) pipe pair.
   //
-  // Key by source pipe only (and offset by 1 to avoid clashing with block-sync
-  // scope 0). This prevents assigning the same numeric event ID concurrently to
-  // multiple (src,dst) pairs that share the same source pipe.
+  // Key by (src,dst) pipe pair to keep independent hardware pipe directions from
+  // fighting over the same small event-id pool. This avoids unnecessary event-id
+  // pressure where a single source pipe syncs to multiple destinations (e.g.
+  // PIPE_M -> PIPE_MTE1 and PIPE_M -> PIPE_FIX), which can otherwise push some
+  // pairs into high event IDs and trigger device-side failures.
   auto srcT = static_cast<unsigned int>(s->GetActualSrcPipe());
-  return static_cast<int>(srcT + 1);
+  auto dstT = static_cast<unsigned int>(s->GetActualDstPipe());
+  // Offset by 1 so non-block scopes never collide with block-sync scope 0.
+  return static_cast<int>(((dstT << 8U) | srcT) + 1U);
 }
  
 void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,

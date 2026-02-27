@@ -53,7 +53,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
-                pto.TMScatterOp(tb0, tb1, sv2)
+                pto.MScatterOp(tb0, tb1, sv2)
 
                 func.ReturnOp([])
 
