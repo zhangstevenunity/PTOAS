@@ -200,8 +200,12 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   // If alloc_tile carries an explicit address, record it when it's a constant.
   if (Value addr = op.getAddr()) {
     int64_t c = 0;
-    if (matchPattern(addr, m_ConstantInt(&c)))
-      baseAddr = static_cast<uint64_t>(c);
+    llvm::APInt apIntValue;
++   if (matchPattern(addr, m_ConstantInt(&apIntValue))) {
++     int64_t c = apIntValue.getSExtValue();
++     baseAddr = static_cast<uint64_t>(c);
++   }
+
   }
 
   // 1. 计算大小
