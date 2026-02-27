@@ -11,4 +11,3 @@
 include "PTO/IR/PTOOps.td"
 
 #endif // MLIR_DIALECT_PTO_PYTHON_PTOOPS
-
