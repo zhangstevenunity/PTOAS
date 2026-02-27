@@ -2900,24 +2900,30 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
       case TileRole::Scaling: roleTok = "TileType::Scaling"; break;
     }
 
-    // 4. Config & Layout
+    // 4. Config & Layout (support BLayoutAttr/SLayoutAttr/PadValueAttr after namespace change)
     std::string layoutParams = "BLayout::RowMajor";
     std::string extraParams = "";
     if (auto configOpt = op.getConfig()) {
         auto config = *configOpt;
         int32_t blVal = 0;
-        if (auto attr = dyn_cast<IntegerAttr>(config.getBLayout())) blVal = attr.getInt();
+        if (auto attr = dyn_cast<BLayoutAttr>(config.getBLayout()))
+            blVal = static_cast<int32_t>(attr.getValue());
+ 
         if (blVal == 1) layoutParams = "BLayout::ColMajor";
 
         int32_t slVal = 0;
-        if (auto attr = dyn_cast<IntegerAttr>(config.getSLayout())) slVal = attr.getInt();
+        if (auto attr = dyn_cast<SLayoutAttr>(config.getSLayout()))
+            slVal = static_cast<int32_t>(attr.getValue());
+
         std::string slStr = (slVal == 1) ? "SLayout::RowMajor" : (slVal == 2) ? "SLayout::ColMajor" : "SLayout::NoneBox";
 
         int32_t frVal = 0;
         if (auto attr = dyn_cast<IntegerAttr>(config.getSFractalSize())) frVal = attr.getInt();
-        
+
         int32_t padVal = 0;
-        if (auto attr = dyn_cast<IntegerAttr>(config.getPad())) padVal = attr.getInt();
+        if (auto attr = dyn_cast<PadValueAttr>(config.getPad()))
+            padVal = static_cast<int32_t>(attr.getValue());
+
         std::string padStr = "PadValue::Null";
         switch (padVal) {
             case 1: padStr = "PadValue::Zero"; break;
