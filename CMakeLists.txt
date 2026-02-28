@@ -60,6 +60,15 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
 
+# =========================================================
+# 4.1 Tests (ctest)
+# =========================================================
+include(CTest)
+if(BUILD_TESTING)
+  enable_testing()
+  add_subdirectory(tools/ptobc/tests)
+endif()
+
 # 开启 Python 绑定选项
 option(PTO_ENABLE_PYTHON_BINDING "Enable Python bindings" ON)
 

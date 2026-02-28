@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include <cctype>
+#include <cstring>
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -26,6 +27,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/FileSystem.h" // [Fix] Required for OF_None
+#include "ptobc/ptobc_decode.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
@@ -498,17 +500,19 @@ int main(int argc, char **argv) {
   // Parse command line options
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");
 
-  llvm::SourceMgr sourceMgr;
-  // Use inputFilename from cl options
+  // Read whole input first (so we can auto-detect .ptobc by magic).
   auto fileOrErr = llvm::MemoryBuffer::getFileOrSTDIN(inputFilename);
   if (!fileOrErr) {
-    llvm::errs() << "Error: Could not open input file: " 
+    llvm::errs() << "Error: Could not open input file: "
                  << fileOrErr.getError().message() << "\n";
     return 1;
   }
-  sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
-  
+
   MLIRContext context(registry);
+  // Be tolerant: ptobc decode may materialize ops from dialects that aren't
+  // explicitly registered/loaded in this tool yet.
+  context.allowUnregisteredDialects(true);
+
   context.getOrLoadDialect<emitc::EmitCDialect>();
   context.getOrLoadDialect<mlir::pto::PTODialect>();
   context.getOrLoadDialect<func::FuncDialect>();
@@ -516,11 +520,29 @@ int main(int argc, char **argv) {
   context.getOrLoadDialect<memref::MemRefDialect>();
   context.getOrLoadDialect<affine::AffineDialect>();
   context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
-  
-  OwningOpRef<ModuleOp> module = parseSourceFile<ModuleOp>(sourceMgr, &context);
-  if (!module) {
-    llvm::errs() << "Error: Failed to parse MLIR.\n";
-    return 1;
+
+  OwningOpRef<ModuleOp> module;
+  llvm::StringRef buf = (*fileOrErr)->getBuffer();
+  const bool isPTOBC = (buf.size() >= 6 && std::memcmp(buf.data(), "PTOBC\0", 6) == 0);
+
+  if (isPTOBC) {
+    // Decode PTO bytecode directly into an MLIR module.
+    llvm::ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(buf.data()), buf.size());
+    try {
+      module = ptobc::decodePTOBCToModule(bytes, context);
+    } catch (const std::exception &e) {
+      llvm::errs() << "Error: Failed to decode PTOBC: " << e.what() << "\n";
+      return 1;
+    }
+  } else {
+    // Parse textual MLIR (.pto).
+    llvm::SourceMgr sourceMgr;
+    sourceMgr.AddNewSourceBuffer(std::move(*fileOrErr), llvm::SMLoc());
+    module = parseSourceFile<ModuleOp>(sourceMgr, &context);
+    if (!module) {
+      llvm::errs() << "Error: Failed to parse MLIR.\n";
+      return 1;
+    }
   }
 
   // [Fix] ToolOutputFile Usage

@@ -19,6 +19,7 @@ target_link_libraries(pto-opt PRIVATE
   # === 你的本地库 (请确认 lib/PTO/*/CMakeLists.txt 里的定义名) ===
   PTOIR            # 替代 MLIRPTODialect
   PTOTransforms    # 替代 MLIRPTOTransforms
+  ptobc_lib
 
   # === MLIR 基础设施 ===
   MLIRMlirOptMain  # [重要] 包含了 main 函数入口逻辑，通常必须链接
