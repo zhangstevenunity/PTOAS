@@ -528,10 +528,18 @@ int main(int argc, char **argv) {
   if (isPTOBC) {
     // Decode PTO bytecode directly into an MLIR module.
     llvm::ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(buf.data()), buf.size());
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
     try {
       module = ptobc::decodePTOBCToModule(bytes, context);
-    } catch (const std::exception &e) {
-      llvm::errs() << "Error: Failed to decode PTOBC: " << e.what() << "\n";
+    } catch (...) {
+      llvm::errs() << "Error: Failed to decode PTOBC.\n";
+      return 1;
+    }
+#else
+    module = ptobc::decodePTOBCToModule(bytes, context);
+#endif
+    if (!module) {
+      llvm::errs() << "Error: Failed to decode PTOBC.\n";
       return 1;
     }
   } else {

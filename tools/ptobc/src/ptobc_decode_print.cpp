@@ -799,7 +799,7 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
   opt.keepMLIRFloatPrinting = (std::getenv("PTOBC_PRINT_PRETTY") != nullptr);
   opt.printDebugInfo = (std::getenv("PTOBC_PRINT_LOC") != nullptr);
 
-  std::string out = printModuleCanonical(module, opt);
+  std::string out = printModuleCanonical(module.get(), opt);
 
   if (dbg) llvm::errs() << "[ptobc] writing output: " << outPath << "\n";
   std::ofstream ofs(outPath);

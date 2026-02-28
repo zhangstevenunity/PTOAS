@@ -6,9 +6,11 @@ BASE_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 # Allow overriding tool/python explicitly:
 #   PTOAS_BIN=/path/to/ptoas PYTHON_BIN=/path/to/python ./runop.sh all
 PTOAS_BIN="${PTOAS_BIN:-}"
+PTOBC_BIN="${PTOBC_BIN:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
+PTOAS_ENABLE_PTOBC_ROUNDTRIP="${PTOAS_ENABLE_PTOBC_ROUNDTRIP:-0}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
 PTO_PTO_DIRS="${PTO_PTO_DIRS:-InjectSync}"
 
@@ -20,10 +22,12 @@ Usage:
 
 Env:
   PTOAS_BIN   # path to ptoas executable (optional)
+  PTOBC_BIN   # path to ptobc executable (optional)
   PYTHON_BIN  # python executable to run samples (optional)
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
+  PTOAS_ENABLE_PTOBC_ROUNDTRIP  # 1 to run pto -> ptobc -> pto before ptoas (default: 0)
   PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: InjectSync)
 EOF
   exit 1
@@ -78,16 +82,41 @@ resolve_python_bin() {
   return 1
 }
 
+resolve_ptobc_bin() {
+  if [[ -n "${PTOBC_BIN}" ]]; then
+    echo "${PTOBC_BIN}"
+    return 0
+  fi
+
+  local cand
+  cand="${BASE_DIR}/../../build/tools/ptobc/ptobc"
+  [[ -x "$cand" ]] && { echo "$cand"; return 0; }
+  cand="${BASE_DIR}/../../build/bin/ptobc"
+  [[ -x "$cand" ]] && { echo "$cand"; return 0; }
+  cand="${BASE_DIR}/../../../../build/bin/ptobc"
+  [[ -x "$cand" ]] && { echo "$cand"; return 0; }
+  cand="$(command -v ptobc 2>/dev/null || true)"
+  [[ -n "$cand" && -x "$cand" ]] && { echo "$cand"; return 0; }
+
+  echo ""
+  return 1
+}
+
 process_one_dir() {
   local A="$1" # folder name (e.g. Abs)
   local out_dir="$2"
-  local dir ptoas python out_subdir
+  local dir ptoas ptobc python out_subdir
   dir="${BASE_DIR}/${A}"
   out_subdir="${out_dir}/${A}"
   mkdir -p "${out_subdir}"
 
   ptoas="$(resolve_ptoas_bin)"
+  ptobc="$(resolve_ptobc_bin)"
   python="$(resolve_python_bin)"
+  local use_ptobc_roundtrip=0
+  if [[ "${PTOAS_ENABLE_PTOBC_ROUNDTRIP}" == "1" ]]; then
+    use_ptobc_roundtrip=1
+  fi
   local -a ptoas_flags=()
   if [[ -n "${PTOAS_FLAGS}" ]]; then
     # shellcheck disable=SC2206
@@ -118,13 +147,17 @@ process_one_dir() {
     echo -e "${A}\tFAIL\tMissing python: PYTHON_BIN (python/python3 not found)"
     return 0
   fi
+  if [[ $use_ptobc_roundtrip -eq 1 ]] && [[ -z "$ptobc" || ! -x "$ptobc" ]]; then
+    echo -e "${A}\tFAIL\tMissing executable: PTOBC_BIN (searched common paths)"
+    return 0
+  fi
   if [[ ! -d "$dir" ]]; then
     echo -e "${A}\tSKIP\tMissing dir: $dir"
     return 0
   fi
 
   # Run every .py file in this directory (no requirement that name matches folder).
-  local f mlir cpp base overall=0
+  local f mlir ptobc_file decoded_pto cpp base overall=0
   for f in "$dir"/*.py; do
     [[ -f "$f" ]] || continue
     base="$(basename "$f" .py)"
@@ -145,8 +178,33 @@ process_one_dir() {
       continue
     fi
 
+    local pto_input="$mlir"
+    ptobc_file="${out_subdir}/${base}.ptobc"
+    decoded_pto="${out_subdir}/${base}-roundtrip.pto"
+    if [[ $use_ptobc_roundtrip -eq 1 ]]; then
+      if ! "$ptobc" encode "$mlir" -o "$ptobc_file" >/dev/null 2>&1; then
+        if [[ $expect_fail -eq 1 ]]; then
+          echo -e "${A}(${base}.py)\tXFAIL\tptobc encode failed as expected"
+          continue
+        fi
+        echo -e "${A}(${base}.py)\tFAIL\tptobc encode failed: $(basename "$mlir")"
+        overall=1
+        continue
+      fi
+      if ! "$ptobc" decode "$ptobc_file" -o "$decoded_pto" >/dev/null 2>&1; then
+        if [[ $expect_fail -eq 1 ]]; then
+          echo -e "${A}(${base}.py)\tXFAIL\tptobc decode failed as expected"
+          continue
+        fi
+        echo -e "${A}(${base}.py)\tFAIL\tptobc decode failed: $(basename "$ptobc_file")"
+        overall=1
+        continue
+      fi
+      pto_input="$decoded_pto"
+    fi
+
     # Write output via -o to avoid mixing debug prints with generated C++.
-    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$mlir" -o "$cpp")
+    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
     if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
       if [[ $expect_fail -eq 1 ]]; then
         echo -e "${A}(${base}.py)\tXFAIL\tptoas failed as expected"
@@ -225,9 +283,26 @@ process_one_dir() {
         *-pto-ir.pto) continue ;;
       esac
       base="$(basename "$f" .pto)"
+      local pto_input="$f"
+      ptobc_file="${out_subdir}/${base}.ptobc"
+      decoded_pto="${out_subdir}/${base}-roundtrip.pto"
       cpp="${out_subdir}/${base}.cpp"
 
-      local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$f" -o "$cpp")
+      if [[ $use_ptobc_roundtrip -eq 1 ]]; then
+        if ! "$ptobc" encode "$f" -o "$ptobc_file" >/dev/null 2>&1; then
+          echo -e "${A}(${base}.pto)\tFAIL\tptobc encode failed: $(basename "$f")"
+          overall=1
+          continue
+        fi
+        if ! "$ptobc" decode "$ptobc_file" -o "$decoded_pto" >/dev/null 2>&1; then
+          echo -e "${A}(${base}.pto)\tFAIL\tptobc decode failed: $(basename "$ptobc_file")"
+          overall=1
+          continue
+        fi
+        pto_input="$decoded_pto"
+      fi
+
+      local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
       if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
         echo -e "${A}(${base}.pto)\tFAIL\tptoas failed: $(basename "$f")"
         overall=1
