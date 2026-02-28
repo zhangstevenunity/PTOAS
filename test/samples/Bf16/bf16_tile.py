@@ -37,7 +37,7 @@ def build():
 
         fn_ty = func.FunctionType.get([ptr_bf16], [])
         with InsertionPoint(module.body):
-            fn = func.FuncOp("issue152_bf16", fn_ty)
+            fn = func.FuncOp("bf16_tile", fn_ty)
             entry = fn.add_entry_block()
 
         with InsertionPoint(entry):
@@ -62,4 +62,3 @@ def build():
 
 if __name__ == "__main__":
     print(build())
-

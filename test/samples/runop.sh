@@ -267,16 +267,15 @@ process_one_dir() {
       fi
     fi
 
-    # Regression guard for Issue #152:
-    # bf16 tiles must lower to `__bf16` in Tile<> / GlobalTensor<> templates.
-    if [[ "$base" == "issue152_bf16" ]]; then
+    # Regression guard: bf16 tiles must lower to `__bf16` in Tile<> / GlobalTensor<> templates.
+    if [[ "$base" == "bf16_tile" ]]; then
       if ! grep -Fq "GlobalTensor<__bf16" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tbf16 GlobalTensor element type is not __bf16 (issue #152)"
+        echo -e "${A}(${base}.py)\tFAIL\tbf16 GlobalTensor element type is not __bf16"
         overall=1
         continue
       fi
       if ! grep -Eq "Tile<[^>]*, __bf16," "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tbf16 Tile element type is not __bf16 (issue #152)"
+        echo -e "${A}(${base}.py)\tFAIL\tbf16 Tile element type is not __bf16"
         overall=1
         continue
       fi
