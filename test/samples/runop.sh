@@ -207,7 +207,20 @@ process_one_dir() {
     fi
 
     # Write output via -o to avoid mixing debug prints with generated C++.
-    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
+    local -a ptoas_cmd=("${ptoas_cmd_base[@]}")
+    if [[ "$base" == "syncHigh_event_thread" ]]; then
+      # This sample is a regression check for emitting manual high-level sync
+      # (record_event/wait_event) as typed Event<> + event-threading. Isolate it
+      # from auto insert-sync to keep the output stable.
+      local -a filtered=()
+      for f in "${ptoas_cmd[@]}"; do
+        [[ "$f" == "--enable-insert-sync" ]] && continue
+        filtered+=("$f")
+      done
+      ptoas_cmd=("${filtered[@]}")
+      ptoas_cmd+=(--emit-manual-sync-as-event)
+    fi
+    ptoas_cmd+=("$pto_input" -o "$cpp")
     if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
       if [[ $expect_fail -eq 1 ]]; then
         echo -e "${A}(${base}.py)\tXFAIL\tptoas failed as expected"
@@ -276,6 +289,41 @@ process_one_dir() {
       fi
       if ! grep -Eq "Tile<[^>]*, __bf16," "$cpp"; then
         echo -e "${A}(${base}.py)\tFAIL\tbf16 Tile element type is not __bf16"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Regression guard: manual high sync can be emitted as typed Event<> and
+    # threaded into the following op call (no standalone TSYNC/set_flag/wait_flag).
+    if [[ "$base" == "syncHigh_event_thread" ]]; then
+      if ! grep -Fq "Event<Op::TLOAD, Op::VECTOR>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing Event<Op::TLOAD, Op::VECTOR> emission"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "Event<Op::VECTOR, Op::TSTORE_VEC>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing Event<Op::VECTOR, Op::TSTORE_VEC> emission"
+        overall=1
+        continue
+      fi
+      if grep -Eq "\\bset_flag\\(" "$cpp" || grep -Eq "\\bwait_flag\\(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected set_flag/wait_flag in event emission mode"
+        overall=1
+        continue
+      fi
+      if grep -Eq "\\bTSYNC\\(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected standalone TSYNC in event emission mode"
+        overall=1
+        continue
+      fi
+      if grep -Fq "PTOAS__MANUAL_EVENT_WAIT" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\twait marker was not threaded into following op call"
+        overall=1
+        continue
+      fi
+      if grep -Eq "\\.Wait\\(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\texplicit Event.Wait() found (expected wait to be threaded into op call)"
         overall=1
         continue
       fi

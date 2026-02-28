@@ -80,9 +80,20 @@ struct RecordEventLowering : public OpRewritePattern<RecordEventOp> {
     if (srcPipe == PIPE::PIPE_UNASSIGNED || dstPipe == PIPE::PIPE_UNASSIGNED)
       return op.emitError("Failed to map SyncOpType to hardware pipe during lowering.");
 
-    rewriter.replaceOpWithNewOp<SetFlagOp>(
-        op, PipeAttr::get(op.getContext(), srcPipe),
+    auto setFlag = rewriter.create<SetFlagOp>(
+        op.getLoc(), PipeAttr::get(op.getContext(), srcPipe),
         PipeAttr::get(op.getContext(), dstPipe), op.getEventIdAttr());
+    if (auto mod = op->getParentOfType<ModuleOp>();
+        mod && mod->hasAttr("ptoas.emit_manual_sync_as_event")) {
+      // Preserve high-level endpoints so later codegen can choose a typed
+      // Event<Op::Src, Op::Dst> representation if desired.
+      setFlag->setAttr("src_op", op.getSrcOpAttr());
+      setFlag->setAttr("dst_op", op.getDstOpAttr());
+      // Mark as originating from manual high-level record/wait events.
+      setFlag->setAttr("ptoas.manual_event_sync",
+                       UnitAttr::get(op.getContext()));
+    }
+    rewriter.replaceOp(op, setFlag);
     return success();
   }
 };
@@ -106,9 +117,20 @@ struct WaitEventLowering : public OpRewritePattern<WaitEventOp> {
     if (srcPipe == PIPE::PIPE_UNASSIGNED || dstPipe == PIPE::PIPE_UNASSIGNED)
       return op.emitError("Failed to map SyncOpType to hardware pipe during lowering.");
 
-    rewriter.replaceOpWithNewOp<WaitFlagOp>(
-        op, PipeAttr::get(op.getContext(), srcPipe),
+    auto waitFlag = rewriter.create<WaitFlagOp>(
+        op.getLoc(), PipeAttr::get(op.getContext(), srcPipe),
         PipeAttr::get(op.getContext(), dstPipe), op.getEventIdAttr());
+    if (auto mod = op->getParentOfType<ModuleOp>();
+        mod && mod->hasAttr("ptoas.emit_manual_sync_as_event")) {
+      // Preserve high-level endpoints so later codegen can choose a typed
+      // Event<Op::Src, Op::Dst> representation if desired.
+      waitFlag->setAttr("src_op", op.getSrcOpAttr());
+      waitFlag->setAttr("dst_op", op.getDstOpAttr());
+      // Mark as originating from manual high-level record/wait events.
+      waitFlag->setAttr("ptoas.manual_event_sync",
+                        UnitAttr::get(op.getContext()));
+    }
+    rewriter.replaceOp(op, waitFlag);
     return success();
   }
 };

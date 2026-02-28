@@ -107,6 +107,11 @@ static llvm::cl::opt<bool> emitAddPtrTrace(
     llvm::cl::desc("Emit addptr trace comments in generated C++ output"),
     llvm::cl::init(false));
 
+static llvm::cl::opt<bool> emitManualSyncAsEvent(
+    "emit-manual-sync-as-event",
+    llvm::cl::desc("Emit manual pto.record_event/pto.wait_event sync as typed Event<> (no set_flag/wait_flag)"),
+    llvm::cl::init(false));
+
 // --------------------------------------------------------------------------
 // Post-process C++ output: rewrite marker calls into Tile member calls.
 //
@@ -215,6 +220,188 @@ static void rewriteTileGetSetValueMarkers(std::string &cpp) {
     changed |= rewriteMarkerCallToMember(
         cpp, "PTOAS__TILE_DATA", "data", /*expectedNumArgs=*/1);
   }
+}
+
+// --------------------------------------------------------------------------
+// Manual sync-as-Event lowering: thread waits into the following op call.
+//
+// We intentionally emit a marker call in EmitC IR:
+//   PTOAS__MANUAL_EVENT_WAIT(ev);
+// and then rewrite it in the emitted C++ into:
+//   <next-op-call>(..., ev);
+//
+// This avoids generating standalone TSYNC(ev) statements while keeping the
+// generated code compatible with pto-isa's event-driven sync style.
+// --------------------------------------------------------------------------
+static size_t skipSpaceAndComments(llvm::StringRef cpp, size_t pos) {
+  auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+  while (pos < cpp.size()) {
+    // Whitespace
+    if (isSpace(cpp[pos])) {
+      ++pos;
+      continue;
+    }
+    // Line comment
+    if (cpp.substr(pos).starts_with("//")) {
+      pos = cpp.find('\n', pos);
+      if (pos == llvm::StringRef::npos)
+        return cpp.size();
+      ++pos;
+      continue;
+    }
+    // Block comment
+    if (cpp.substr(pos).starts_with("/*")) {
+      size_t end = cpp.find("*/", pos + 2);
+      if (end == llvm::StringRef::npos)
+        return cpp.size();
+      pos = end + 2;
+      continue;
+    }
+    break;
+  }
+  return pos;
+}
+
+static bool rewriteManualEventWaitMarkers(std::string &cpp) {
+  static constexpr llvm::StringRef kMarker = "PTOAS__MANUAL_EVENT_WAIT";
+  bool changed = false;
+  size_t searchPos = 0;
+
+  while (true) {
+    size_t markerPos = cpp.find(kMarker.str(), searchPos);
+    if (markerPos == std::string::npos)
+      break;
+
+    size_t lparenPos = markerPos + kMarker.size();
+    if (lparenPos >= cpp.size() || cpp[lparenPos] != '(') {
+      searchPos = markerPos + kMarker.size();
+      continue;
+    }
+
+    // Find the matching ')' for this marker call, tracking nested parentheses.
+    size_t argsBegin = lparenPos + 1;
+    int parenDepth = 0;
+    size_t rparenPos = std::string::npos;
+    for (size_t i = argsBegin; i < cpp.size(); ++i) {
+      char c = cpp[i];
+      if (c == '(') {
+        ++parenDepth;
+      } else if (c == ')') {
+        if (parenDepth == 0) {
+          rparenPos = i;
+          break;
+        }
+        --parenDepth;
+      }
+    }
+    if (rparenPos == std::string::npos) {
+      searchPos = markerPos + kMarker.size();
+      continue;
+    }
+
+    // Expect exactly one argument: the Event variable expression.
+    llvm::StringRef argRef(cpp.data() + argsBegin, rparenPos - argsBegin);
+    llvm::StringRef evExpr = argRef.trim();
+    if (evExpr.empty()) {
+      searchPos = rparenPos + 1;
+      continue;
+    }
+
+    // Only rewrite standalone marker statements: "...);"
+    // (do not match the helper function definition "...){").
+    size_t afterCall = skipSpaceAndComments(llvm::StringRef(cpp), rparenPos + 1);
+    if (afterCall >= cpp.size() || cpp[afterCall] != ';') {
+      searchPos = rparenPos + 1;
+      continue;
+    }
+    size_t semiPos = afterCall;
+
+    auto replaceWithWait = [&]() {
+      std::string replacement;
+      replacement.reserve(evExpr.size() + 16);
+      replacement.append(evExpr.data(), evExpr.size());
+      replacement.append(".Wait();");
+      cpp.replace(markerPos, (semiPos - markerPos) + 1, replacement);
+      changed = true;
+      searchPos = markerPos + replacement.size();
+    };
+
+    // Find the next statement after the marker.
+    size_t nextStmtBegin =
+        skipSpaceAndComments(llvm::StringRef(cpp), semiPos + 1);
+    if (nextStmtBegin >= cpp.size()) {
+      // Nothing to thread into; lower to an explicit wait.
+      replaceWithWait();
+      continue;
+    }
+
+    // Heuristic: skip control keywords like 'if', 'for', etc.
+    llvm::StringRef tail(cpp.data() + nextStmtBegin, cpp.size() - nextStmtBegin);
+    llvm::StringRef trimmedTail = tail.ltrim();
+    for (llvm::StringRef kw : {"if", "for", "while", "switch", "return"}) {
+      if (trimmedTail.starts_with(kw) &&
+          (trimmedTail.size() == kw.size() ||
+           !std::isalnum(static_cast<unsigned char>(trimmedTail[kw.size()])))) {
+        // Do not attempt to thread into control flow; lower to an explicit wait.
+        replaceWithWait();
+        goto continue_outer;
+      }
+    }
+
+    // Find the first '(' in the next statement and inject the event expression
+    // into that call's argument list.
+    {
+      size_t callLParen = cpp.find('(', nextStmtBegin);
+      if (callLParen == std::string::npos) {
+        replaceWithWait();
+        continue;
+      }
+
+      // Find matching ')' for this call.
+      size_t callArgsBegin = callLParen + 1;
+      parenDepth = 0;
+      size_t callRParen = std::string::npos;
+      for (size_t i = callArgsBegin; i < cpp.size(); ++i) {
+        char c = cpp[i];
+        if (c == '(') {
+          ++parenDepth;
+        } else if (c == ')') {
+          if (parenDepth == 0) {
+            callRParen = i;
+            break;
+          }
+          --parenDepth;
+        }
+      }
+      if (callRParen == std::string::npos) {
+        replaceWithWait();
+        continue;
+      }
+
+      llvm::StringRef existingArgs(cpp.data() + callArgsBegin,
+                                   callRParen - callArgsBegin);
+      std::string insertion;
+      if (existingArgs.trim().empty()) {
+        insertion = evExpr.str();
+      } else {
+        insertion = ", ";
+        insertion += evExpr.str();
+      }
+
+      cpp.insert(callRParen, insertion);
+
+      // Remove the marker statement only after successful injection.
+      cpp.erase(markerPos, (semiPos - markerPos) + 1);
+      changed = true;
+      searchPos = markerPos;
+      continue;
+    }
+
+  continue_outer:
+    continue;
+  }
+
+  return changed;
 }
 
 // --------------------------------------------------------------------------
@@ -553,6 +740,10 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (emitManualSyncAsEvent)
+    module->getOperation()->setAttr("ptoas.emit_manual_sync_as_event",
+                                    UnitAttr::get(&context));
+
   // [Fix] ToolOutputFile Usage
   std::error_code ec;
   llvm::ToolOutputFile outputFile(outputFilename, ec, llvm::sys::fs::OF_None);
@@ -625,6 +816,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   cppOS.flush();
+  rewriteManualEventWaitMarkers(cppOutput);
   rewriteTileGetSetValueMarkers(cppOutput);
   rewritePtrScalarMarkers(cppOutput);
   rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);

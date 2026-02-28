@@ -34,6 +34,7 @@
 #include "mlir/Target/Cpp/CppEmitter.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
@@ -3514,13 +3515,160 @@ static LogicalResult extractSyncTokens(SyncOpT op,
 
   return extractSyncTripletTokens(op.getOperation(), srcTok, dstTok, evtTok, rewriter);
 }
+
+//===----------------------------------------------------------------------===//
+// Optional manual-sync emission as typed Event<> + TSYNC().
+//
+// This is only used for SetFlag/WaitFlag ops that originate from
+// pto.record_event/pto.wait_event (tagged by the lowering pass).
+//===----------------------------------------------------------------------===//
+
+struct ManualEventSyncState {
+  llvm::StringMap<Value> eventVars;
+};
+
+static bool isManualEventSyncEnabled(Operation *op) {
+  auto mod = op->getParentOfType<ModuleOp>();
+  return mod && mod->hasAttr("ptoas.emit_manual_sync_as_event");
+}
+
+static bool isManualEventSyncTagged(Operation *op) {
+  return op && op->hasAttr("ptoas.manual_event_sync");
+}
+
+static FailureOr<SyncOpType> getSyncOpTypeFromAnyAttr(Attribute attr) {
+  if (auto a = attr.dyn_cast<PipeEventTypeAttr>())
+    return a.getOpType();
+  if (auto a = attr.dyn_cast<SyncOpTypeAttr>())
+    return a.getOpType();
+  return failure();
+}
+
+static FailureOr<std::string> mapSyncOpTypeToPtoOpToken(SyncOpType opType) {
+  switch (opType) {
+  case SyncOpType::TLOAD:
+    return std::string("TLOAD");
+  case SyncOpType::TSTORE_VEC:
+    return std::string("TSTORE_VEC");
+  case SyncOpType::TSTORE_ACC:
+    return std::string("TSTORE_ACC");
+  case SyncOpType::TMOV_M2L:
+    return std::string("TMOV_M2L");
+  case SyncOpType::TMOV_M2S:
+    return std::string("TMOV_M2S");
+  case SyncOpType::TMOV_M2B:
+    return std::string("TMOV_M2B");
+  case SyncOpType::TMOV_M2V:
+    // PTO ISA has no dedicated "TMOV_M2V" op code today. Model it as a vector
+    // endpoint for sync purposes.
+    return std::string("VECTOR");
+  case SyncOpType::TMOV_V2M:
+    return std::string("TMOV_V2M");
+  case SyncOpType::TMATMUL:
+    return std::string("TMATMUL");
+  case SyncOpType::TVEC:
+  case SyncOpType::TVECWAIT_EVENT:
+    return std::string("VECTOR");
+  default:
+    return failure();
+  }
+}
+
+static bool isCrossCoreSrcOpToken(StringRef tok) {
+  // Cross-core events require an explicit CrossCoreId and cannot use AutoToken.
+  return tok == "TMOV_A2V" || tok == "TMOV_V2M" || tok == "TEXTRACT_V2M";
+}
+
+static Value getOrCreateManualEventVar(Operation *anchorOp,
+                                       ConversionPatternRewriter &rewriter,
+                                       ManualEventSyncState &state,
+                                       StringRef srcTok, StringRef dstTok,
+                                       StringRef evtTok) {
+  std::string key;
+  key.reserve(srcTok.size() + dstTok.size() + evtTok.size() + 4);
+  key.append(srcTok.data(), srcTok.size());
+  key.append("->");
+  key.append(dstTok.data(), dstTok.size());
+  key.append(":");
+  key.append(evtTok.data(), evtTok.size());
+
+  if (auto it = state.eventVars.find(key); it != state.eventVars.end())
+    return it->second;
+
+  auto *ctx = rewriter.getContext();
+  std::string eventTypeStr;
+  eventTypeStr.reserve(srcTok.size() + dstTok.size() + 32);
+  eventTypeStr.append("Event<Op::");
+  eventTypeStr.append(srcTok.data(), srcTok.size());
+  eventTypeStr.append(", Op::");
+  eventTypeStr.append(dstTok.data(), dstTok.size());
+  eventTypeStr.append(">");
+
+  auto eventTy = emitc::OpaqueType::get(ctx, eventTypeStr);
+
+  Block *entryBlock = anchorOp->getBlock();
+  Location declLoc = anchorOp->getLoc();
+  if (auto f = anchorOp->getParentOfType<func::FuncOp>()) {
+    entryBlock = &f.getBody().front();
+    declLoc = f.getLoc();
+  } else if (auto f = anchorOp->getParentOfType<emitc::FuncOp>()) {
+    entryBlock = &f.getBody().front();
+    declLoc = f.getLoc();
+  }
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(entryBlock);
+  auto varOp = rewriter.create<emitc::VariableOp>(
+      declLoc, eventTy, emitc::OpaqueAttr::get(ctx, ""));
+
+  Value var = varOp.getResult();
+  state.eventVars.try_emplace(key, var);
+  return var;
+}
+
 struct PTOSetFlagToEmitC : public OpConversionPattern<mlir::pto::SetFlagOp> {
-  using OpConversionPattern<mlir::pto::SetFlagOp>::OpConversionPattern;
+  PTOSetFlagToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                    ManualEventSyncState *state)
+      : OpConversionPattern<mlir::pto::SetFlagOp>(typeConverter, ctx),
+        state(state) {}
+
+  ManualEventSyncState *state = nullptr;
 
   LogicalResult matchAndRewrite(mlir::pto::SetFlagOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
     auto *ctx = rewriter.getContext();
+
+    if (state && isManualEventSyncEnabled(op) &&
+        isManualEventSyncTagged(op.getOperation())) {
+      auto srcOpAttr = op->getAttr("src_op");
+      auto dstOpAttr = op->getAttr("dst_op");
+      auto eventIdAttr = op.getEventIdAttr();
+
+      if (srcOpAttr && dstOpAttr) {
+        auto srcTypeOr = getSyncOpTypeFromAnyAttr(srcOpAttr);
+        auto dstTypeOr = getSyncOpTypeFromAnyAttr(dstOpAttr);
+        if (succeeded(srcTypeOr) && succeeded(dstTypeOr)) {
+          auto srcTokOr = mapSyncOpTypeToPtoOpToken(*srcTypeOr);
+          auto dstTokOr = mapSyncOpTypeToPtoOpToken(*dstTypeOr);
+          if (succeeded(srcTokOr) && succeeded(dstTokOr)) {
+            StringRef srcTok = *srcTokOr;
+            StringRef dstTok = *dstTokOr;
+            std::string evtTok = evtTokFromEventAttr(eventIdAttr);
+
+            if (!isCrossCoreSrcOpToken(srcTok) && srcTok != dstTok) {
+              Value ev = getOrCreateManualEventVar(op.getOperation(), rewriter,
+                                                   *state, srcTok, dstTok,
+                                                   evtTok);
+              rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+                  op, TypeRange{}, "ptoas_record_event", ArrayAttr{},
+                  ArrayAttr{}, ValueRange{ev});
+              return success();
+            }
+          }
+        }
+      }
+    }
 
     std::string srcTok, dstTok, evtTok;
     if (failed(extractSyncTokens(op, srcTok, dstTok, evtTok, rewriter)))
@@ -3542,12 +3690,49 @@ struct PTOSetFlagToEmitC : public OpConversionPattern<mlir::pto::SetFlagOp> {
 };
 
 struct PTOWaitFlagToEmitC : public OpConversionPattern<mlir::pto::WaitFlagOp> {
-  using OpConversionPattern<mlir::pto::WaitFlagOp>::OpConversionPattern;
+  PTOWaitFlagToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                     ManualEventSyncState *state)
+      : OpConversionPattern<mlir::pto::WaitFlagOp>(typeConverter, ctx),
+        state(state) {}
+
+  ManualEventSyncState *state = nullptr;
 
   LogicalResult matchAndRewrite(mlir::pto::WaitFlagOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
     auto *ctx = rewriter.getContext();
+
+    if (state && isManualEventSyncEnabled(op) &&
+        isManualEventSyncTagged(op.getOperation())) {
+      auto srcOpAttr = op->getAttr("src_op");
+      auto dstOpAttr = op->getAttr("dst_op");
+      auto eventIdAttr = op.getEventIdAttr();
+
+      if (srcOpAttr && dstOpAttr) {
+        auto srcTypeOr = getSyncOpTypeFromAnyAttr(srcOpAttr);
+        auto dstTypeOr = getSyncOpTypeFromAnyAttr(dstOpAttr);
+        if (succeeded(srcTypeOr) && succeeded(dstTypeOr)) {
+          auto srcTokOr = mapSyncOpTypeToPtoOpToken(*srcTypeOr);
+          auto dstTokOr = mapSyncOpTypeToPtoOpToken(*dstTypeOr);
+          if (succeeded(srcTokOr) && succeeded(dstTokOr)) {
+            StringRef srcTok = *srcTokOr;
+            StringRef dstTok = *dstTokOr;
+            std::string evtTok = evtTokFromEventAttr(eventIdAttr);
+
+            if (!isCrossCoreSrcOpToken(srcTok) && srcTok != dstTok) {
+              Value ev = getOrCreateManualEventVar(op.getOperation(), rewriter,
+                                                   *state, srcTok, dstTok,
+                                                   evtTok);
+              rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+                  op, TypeRange{}, "PTOAS__MANUAL_EVENT_WAIT", ArrayAttr{},
+                  ArrayAttr{},
+                  ValueRange{ev});
+              return success();
+            }
+          }
+        }
+      }
+    }
 
     std::string srcTok, dstTok, evtTok;
     if (failed(extractSyncTokens(op, srcTok, dstTok, evtTok, rewriter)))
@@ -6854,14 +7039,15 @@ struct CFSwitchToCondBr : public OpRewritePattern<cf::SwitchOp> {
 static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
                                        TypeConverter &typeConverter,
                                        MLIRContext *ctx,
-                                       DataFlowSolver &solver) {
+                                       DataFlowSolver &solver,
+                                       ManualEventSyncState *manualEventState) {
   (void)solver;
   patterns.add<ArithCmpIToEmitC>(typeConverter, ctx);
   patterns.add<PTOBindTileToEmitC>(typeConverter, ctx);
-  patterns.add<PTOSetFlagToEmitC>(typeConverter, ctx);
+  patterns.add<PTOSetFlagToEmitC>(typeConverter, ctx, manualEventState);
   patterns.add<PTOSubSCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubCSToEmitC>(typeConverter, ctx);
-  patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx);
+  patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx, manualEventState);
   patterns.add<PTOXORSToEmitC>(typeConverter, ctx);
   patterns.add<PTOSYNCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubSToEmitC>(typeConverter, ctx);
@@ -7087,6 +7273,33 @@ struct EmitPTOManualPass
 		)cpp"));
 	    }
 
+	    // Manual high-level sync can optionally be emitted using typed Event<>
+	    // objects (auto token allocation) instead of explicit set_flag/wait_flag.
+	    // The lowering is opt-in and only applies to sync ops tagged by the
+	    // record_event/wait_event lowering pass.
+	    if (mop->hasAttr("ptoas.emit_manual_sync_as_event")) {
+	      bool needsManualEventHelper = false;
+	      mop.walk([&](Operation *op) {
+	        if (!op->hasAttr("ptoas.manual_event_sync"))
+	          return WalkResult::advance();
+	        if (isa<mlir::pto::SetFlagOp, mlir::pto::WaitFlagOp>(op)) {
+	          needsManualEventHelper = true;
+	          return WalkResult::interrupt();
+	        }
+	        return WalkResult::advance();
+	      });
+
+	      if (needsManualEventHelper) {
+	        builder.create<emitc::VerbatimOp>(
+	            loc, builder.getStringAttr(R"cpp(
+template <typename EventT>
+static inline void ptoas_record_event(EventT &event) {
+  event.Record();
+}
+)cpp"));
+	      }
+	    }
+
 	    // 1.5 Pre-lower SCF constructs not handled by SCFToEmitC.
 	    {
 	      // scf.while / scf.index_switch are lowered via CFG blocks. This is not
@@ -7184,7 +7397,9 @@ struct EmitPTOManualPass
       return signalPassFailure();
 
     RewritePatternSet patterns(ctx);
-    populatePTOToEmitCPatterns(patterns, typeConverter, ctx, *solver);
+    ManualEventSyncState manualEventState;
+    populatePTOToEmitCPatterns(patterns, typeConverter, ctx, *solver,
+                               &manualEventState);
     populateCallOpTypeConversionPattern(patterns, typeConverter);
 
     // 3. 执行转换
