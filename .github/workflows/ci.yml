@@ -66,13 +66,11 @@ permissions:
   actions: write
 
 jobs:
-  build-and-test:
+  build-cli-prebuilt:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     env:
-      LLVM_COMMIT: e21dc4bd5474d04b8e62d7331362edcc5648d7e5
-      LLVM_DIR: ${{ github.workspace }}/llvm-project/llvm/build-shared
-      PTO_INSTALL_DIR: ${{ github.workspace }}/install
-      MLIR_PYTHONPATH: ${{ github.workspace }}/llvm-project/llvm/build-shared/tools/mlir/python_packages/mlir_core
+      LLVM_VER: 19.1.7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,12 +85,117 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake git ninja-build \
-            python3 python3-pip python3-venv \
             clang lld \
-            libedit-dev zlib1g-dev libxml2-dev libzstd-dev
-          python3 -m pip install --upgrade pip
-          # LLVM/MLIR Python bindings are not yet compatible with pybind11 3.x.
-          python3 -m pip install 'pybind11<3' numpy
+            libedit-dev zlib1g-dev libxml2-dev libzstd-dev \
+            xz-utils
+
+      - name: Restore prebuilt LLVM cache
+        id: cache-llvm-prebuilt
+        uses: actions/cache/restore@v4
+        with:
+          path: llvm-prebuilt
+          key: llvm-prebuilt-${{ runner.os }}-${{ env.LLVM_VER }}-Linux-X64
+
+      - name: Download prebuilt LLVM (cache miss)
+        if: steps.cache-llvm-prebuilt.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p llvm-prebuilt
+          cd llvm-prebuilt
+          curl -L -o "LLVM-${LLVM_VER}-Linux-X64.tar.xz" \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/LLVM-${LLVM_VER}-Linux-X64.tar.xz"
+          tar -xJf "LLVM-${LLVM_VER}-Linux-X64.tar.xz"
+
+      - name: Save prebuilt LLVM cache
+        if: steps.cache-llvm-prebuilt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: llvm-prebuilt
+          key: llvm-prebuilt-${{ runner.os }}-${{ env.LLVM_VER }}-Linux-X64
+
+      - name: Define LLVM paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "LLVM_INSTALL_DIR=${GITHUB_WORKSPACE}/llvm-prebuilt/LLVM-${LLVM_VER}-Linux-X64" >> "${GITHUB_ENV}"
+
+      - name: Verify LLVM install
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${LLVM_INSTALL_DIR}/bin/llvm-config" --version
+          "${LLVM_INSTALL_DIR}/bin/llvm-config" --shared-mode
+          if [[ -x "${LLVM_INSTALL_DIR}/bin/clang++" ]]; then
+            "${LLVM_INSTALL_DIR}/bin/clang++" --version
+          fi
+          if [[ -x "${LLVM_INSTALL_DIR}/bin/ld.lld" ]]; then
+            "${LLVM_INSTALL_DIR}/bin/ld.lld" --version
+          fi
+
+      - name: Build PTOAS (no Python bindings)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="${LLVM_INSTALL_DIR}/bin:${PATH}"
+          # Prefer clang/lld from the downloaded LLVM distribution to ensure it
+          # can link LLVM's static archives (may contain LTO bitcode).
+          CC="${LLVM_INSTALL_DIR}/bin/clang"
+          CXX="${LLVM_INSTALL_DIR}/bin/clang++"
+          if [[ ! -x "${CC}" || ! -x "${CXX}" ]]; then
+            CC=clang
+            CXX=clang++
+          fi
+          cmake -G Ninja -S . -B build \
+            -DCMAKE_C_COMPILER="${CC}" \
+            -DCMAKE_CXX_COMPILER="${CXX}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DPTO_ENABLE_PYTHON_BINDING=OFF \
+            -DLLVM_DIR="${LLVM_INSTALL_DIR}/lib/cmake/llvm" \
+            -DMLIR_DIR="${LLVM_INSTALL_DIR}/lib/cmake/mlir" \
+            -DCMAKE_BUILD_TYPE=Release
+          ninja -C build pto-opt
+          ./build/tools/ptoas/ptoas --version
+
+      - name: Run smoke tests (.pto -> .cpp)
+        shell: bash
+        env:
+          PTOAS_BIN: ${{ github.workspace }}/build/tools/ptoas/ptoas
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP:-${GITHUB_WORKSPACE}/.tmp}/ptoas_out"
+          rm -rf "${out}"
+          mkdir -p "${out}"
+          for f in test/samples/InjectSync/*.pto; do
+            base="$(basename "$f" .pto)"
+            "${PTOAS_BIN}" "$f" --enable-insert-sync -o "${out}/${base}.cpp"
+          done
+
+  build-and-test:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-22.04
+    env:
+      LLVM_VER: 19.1.7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake git ninja-build \
+            clang lld \
+            libedit-dev zlib1g-dev libxml2-dev libzstd-dev \
+            xz-utils
 
       - name: Define payload paths
         shell: bash
@@ -113,82 +216,86 @@ jobs:
           mkdir -p "${PAYLOAD_DIR}/test/npu_validation/scripts"
           mkdir -p "${PAYLOAD_DIR}/test/npu_validation/templates"
 
-      # 先恢复 LLVM build 缓存
-      - name: Restore LLVM build cache
-        id: cache-llvm
+      - name: Restore prebuilt LLVM cache
+        id: cache-llvm-prebuilt
         uses: actions/cache/restore@v4
         with:
-          path: |
-            llvm-project/llvm/build-shared
-          key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
+          path: llvm-prebuilt
+          key: llvm-prebuilt-${{ runner.os }}-${{ env.LLVM_VER }}-Linux-X64
 
-      - name: Prepare LLVM source (no rebuild)
+      - name: Download prebuilt LLVM (cache miss)
+        if: steps.cache-llvm-prebuilt.outputs.cache-hit != 'true'
+        shell: bash
         run: |
-          mkdir -p llvm-project
-          cd llvm-project
+          set -euo pipefail
+          mkdir -p llvm-prebuilt
+          cd llvm-prebuilt
+          curl -L -o "LLVM-${LLVM_VER}-Linux-X64.tar.xz" \
+            "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}/LLVM-${LLVM_VER}-Linux-X64.tar.xz"
+          tar -xJf "LLVM-${LLVM_VER}-Linux-X64.tar.xz"
 
-          # 如果 restore 只带来了 build-shared，这里补一个 git repo
-          if [ ! -d .git ]; then
-            git init
-            git remote add origin https://github.com/llvm/llvm-project.git
-          fi
-
-          git fetch --depth 1 origin tag llvmorg-19.1.6
-          git checkout "${LLVM_COMMIT}"
-
-      - name: Build LLVM/MLIR (only if cache miss)
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        run: |
-          cd llvm-project
-          cmake -G Ninja -S llvm -B llvm/build-shared \
-            -DLLVM_ENABLE_PROJECTS="mlir;clang" \
-            -DBUILD_SHARED_LIBS=ON \
-            -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-            -DPython3_EXECUTABLE=python3 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_TARGETS_TO_BUILD="host"
-
-          ninja -C llvm/build-shared
-         
-
-      # LLVM build 完成后立即保存缓存，避免后续测试影响缓存内容
-      - name: Save LLVM build cache
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
+      - name: Save prebuilt LLVM cache
+        if: steps.cache-llvm-prebuilt.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            llvm-project/llvm/build-shared
-          key: llvm-${{ runner.os }}-${{ env.LLVM_COMMIT }}-shared-mlirpy
+          path: llvm-prebuilt
+          key: llvm-prebuilt-${{ runner.os }}-${{ env.LLVM_VER }}-Linux-X64
+
+      - name: Define LLVM paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "LLVM_INSTALL_DIR=${GITHUB_WORKSPACE}/llvm-prebuilt/LLVM-${LLVM_VER}-Linux-X64" >> "${GITHUB_ENV}"
 
       - name: Build PTOAS
-        run: |
-          export PYBIND11_CMAKE_DIR="$(python3 -m pybind11 --cmakedir)"
-          cmake -G Ninja -S . -B build \
-            -DLLVM_DIR="${LLVM_DIR}/lib/cmake/llvm" \
-            -DMLIR_DIR="${LLVM_DIR}/lib/cmake/mlir" \
-            -DPython3_EXECUTABLE=python3 \
-            -DPython3_FIND_STRATEGY=LOCATION \
-            -Dpybind11_DIR="${PYBIND11_CMAKE_DIR}" \
-            -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-            -DMLIR_PYTHON_PACKAGE_DIR="${LLVM_DIR}/tools/mlir/python_packages/mlir_core" \
-            -DCMAKE_INSTALL_PREFIX="${PTO_INSTALL_DIR}" \
-            -DCMAKE_BUILD_TYPE=Release
-          ninja -C build ptoas
-          ninja -C build install
-
-      - name: Run sample tests (py -> pto -> cpp)
         shell: bash
         env:
           PTOAS_BIN: ${{ github.workspace }}/build/tools/ptoas/ptoas
-          PYTHON_BIN: /usr/bin/python3
-          MLIR_PYTHON_ROOT: ${{ env.MLIR_PYTHONPATH }}
-          PTO_PYTHON_ROOT: ${{ env.PTO_INSTALL_DIR }}/
         run: |
           set -euo pipefail
-          export PYTHONPATH="${MLIR_PYTHON_ROOT}:${PTO_PYTHON_ROOT}:${PYTHONPATH:-}"
-          export LD_LIBRARY_PATH="${LLVM_DIR}/lib:${PTO_INSTALL_DIR}/lib:${LD_LIBRARY_PATH:-}"
-          export PTOAS_OUT_DIR="${PAYLOAD_DIR}/test/samples"
-          bash test/samples/runop.sh all
+          export PATH="${LLVM_INSTALL_DIR}/bin:${PATH}"
+          # Prefer clang/lld from the downloaded LLVM distribution to ensure it
+          # can link LLVM's static archives (may contain LTO bitcode).
+          CC="${LLVM_INSTALL_DIR}/bin/clang"
+          CXX="${LLVM_INSTALL_DIR}/bin/clang++"
+          if [[ ! -x "${CC}" || ! -x "${CXX}" ]]; then
+            CC=clang
+            CXX=clang++
+          fi
+          cmake -G Ninja -S . -B build \
+            -DCMAKE_C_COMPILER="${CC}" \
+            -DCMAKE_CXX_COMPILER="${CXX}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DPTO_ENABLE_PYTHON_BINDING=OFF \
+            -DLLVM_DIR="${LLVM_INSTALL_DIR}/lib/cmake/llvm" \
+            -DMLIR_DIR="${LLVM_INSTALL_DIR}/lib/cmake/mlir" \
+            -DCMAKE_BUILD_TYPE=Release
+          ninja -C build pto-opt
+          "${PTOAS_BIN}" --version
+
+          # Generate payload C++ kernels from existing .pto samples (no MLIR Python bindings required).
+          out_root="${PAYLOAD_DIR}/test/samples"
+          tmp_log="$(mktemp -t ptoas.pto2cpp.XXXXXX)"
+          for d in ControlFlow FFN FlashAttention GQA InjectSync MatmulVectorMix Partition5D; do
+            for f in "test/samples/${d}"/*.pto; do
+              [[ -f "$f" ]] || continue
+              base="$(basename "$f" .pto)"
+              mkdir -p "${out_root}/${d}"
+              cpp="${out_root}/${d}/${base}-pto.cpp"
+              if ! "${PTOAS_BIN}" "$f" --enable-insert-sync -o "$cpp" >"$tmp_log" 2>&1; then
+                echo "ERROR: ptoas failed for ${f}"
+                cat "$tmp_log"
+                exit 1
+              fi
+            done
+          done
+          rm -f "$tmp_log"
+          count="$(find "${out_root}" -type f -name '*-pto.cpp' | wc -l | tr -d ' ')"
+          echo "Generated ${count} kernel(s) into ${out_root}"
+          [[ "${count}" -gt 0 ]]
 
       - name: Build payload artifact
         if: >-

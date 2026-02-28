@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# 开启 Python 绑定选项（需在 add_subdirectory(lib) 前定义）
+option(PTO_ENABLE_PYTHON_BINDING "Enable Python bindings" ON)
+
 # =========================================================
 # 1. 显式寻找 LLVM (这是解决 tablegen 报错的关键)
 # =========================================================
@@ -59,9 +62,6 @@ add_definitions(${LLVM_DEFINITIONS})
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
-
-# 开启 Python 绑定选项
-option(PTO_ENABLE_PYTHON_BINDING "Enable Python bindings" ON)
 
 if(PTO_ENABLE_PYTHON_BINDING)
   find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)

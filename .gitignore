@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-*/
 install/
 cmake-build-*/
 CMakeFiles/
