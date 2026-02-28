@@ -833,7 +833,7 @@ LogicalResult LoadOp::verify() {
   return success();
 }
 
-LogicalResult AllocTileOp::verify() {
+ LogicalResult AllocTileOp::verify() {
   auto ty = getResult().getType(); // TileBufType
 
   // op 上有没有传 operands
