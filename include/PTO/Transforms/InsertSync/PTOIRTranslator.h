@@ -2,12 +2,12 @@
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H
  
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/Support/raw_ostream.h"
-#include "PTO/Transforms/MemoryDependentAnalyzer.h"
  
 namespace mlir {
 namespace pto {

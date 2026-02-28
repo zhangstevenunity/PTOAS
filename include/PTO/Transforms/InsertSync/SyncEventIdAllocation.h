@@ -1,7 +1,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_SYNCEVENTIDALLOCATION_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_SYNCEVENTIDALLOCATION_H
  
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include <cstdint>

@@ -1,5 +1,5 @@
-#include "PTO/Transforms/BlockSyncAnalysis.h"
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/Support/Casting.h"
@@ -9,7 +9,7 @@
 #include <optional>
 #include <utility>
 
-#define DEBUG_TYPE "pto-block-sync-analysis"
+#define DEBUG_TYPE "pto-insert-sync-analysis"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -27,7 +27,7 @@ static bool isValidPipeIndex(PipelineType pipe) {
 // 1. Entry Point
 // ==============================================================================
 
-void BlockSyncAnalysis::Run(bool insertBarAllAtLast) {
+void InsertSyncAnalysis::Run(bool insertBarAllAtLast) {
   syncIndex_ = syncOperations_.size();
 
   for (auto &nowElement : syncIR_) {
@@ -53,15 +53,16 @@ void BlockSyncAnalysis::Run(bool insertBarAllAtLast) {
 // 2. High-Level Traversal
 // ==============================================================================
 
-void BlockSyncAnalysis::DealWithCompoundSync(CompoundInstanceElement *nowCompound) {
+void InsertSyncAnalysis::DealWithCompoundSync(
+    CompoundInstanceElement *nowCompound) {
   SyncRecordList syncRecordList;
   InsertSeqSync(nowCompound, syncIR_, 0, nowCompound->GetIndex(), syncRecordList,
                 std::nullopt);
 }
 
-void BlockSyncAnalysis::DealWithLoopSync(LoopInstanceElement *nowElement) {
+void InsertSyncAnalysis::DealWithLoopSync(LoopInstanceElement *nowElement) {
   // Insert backward sync by copying the loop body slice and running the same
-  // sequential insertion on the copied structure (AscendNPU-IR style).
+  // sequential insertion on the copied structure.
   if (nowElement->getLoopKind() != KindOfLoop::LOOP_END) {
     return;
   }
@@ -86,9 +87,9 @@ void BlockSyncAnalysis::DealWithLoopSync(LoopInstanceElement *nowElement) {
   }
 }
 
-void BlockSyncAnalysis::InsertBackForSync(CompoundInstanceElement *nowCompound,
-                                         SyncIRs &backSyncIr,
-                                         const LoopInstanceElement *loopElement) {
+void InsertSyncAnalysis::InsertBackForSync(
+    CompoundInstanceElement *nowCompound, SyncIRs &backSyncIr,
+    const LoopInstanceElement *loopElement) {
   SyncRecordList syncRecordList;
 
   auto backCompound = std::make_unique<CompoundInstanceElement>(
@@ -114,7 +115,7 @@ void BlockSyncAnalysis::InsertBackForSync(CompoundInstanceElement *nowCompound,
 // 3. Sequential Sync Insertion (Core Logic)
 // ==============================================================================
 
-bool BlockSyncAnalysis::IsNoNeedToInsertSync(
+bool InsertSyncAnalysis::IsNoNeedToInsertSync(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound, bool isBackwardDep) const {
   const PipelineType frontPipe = frontCompound->kPipeValue;
@@ -136,10 +137,10 @@ bool BlockSyncAnalysis::IsNoNeedToInsertSync(
   return false;
 }
 
-void BlockSyncAnalysis::InsertSeqSync(CompoundInstanceElement *nowCompound,
-                                      SyncIRs &syncElement, int begin, int end,
-                                      SyncRecordList &syncRecordList,
-                                      const std::optional<unsigned> &forEndIndex) {
+void InsertSyncAnalysis::InsertSeqSync(
+    CompoundInstanceElement *nowCompound, SyncIRs &syncElement, int begin,
+    int end, SyncRecordList &syncRecordList,
+    const std::optional<unsigned> &forEndIndex) {
   const PipelineType nowPipeValue = nowCompound->kPipeValue;
 
   checkSyncIRIndex(syncElement, begin);
@@ -177,7 +178,7 @@ void BlockSyncAnalysis::InsertSeqSync(CompoundInstanceElement *nowCompound,
   }
 }
 
-unsigned BlockSyncAnalysis::InsertLoopSync(
+unsigned InsertSyncAnalysis::InsertLoopSync(
     unsigned index, CompoundInstanceElement *nowCompound, unsigned begin,
     LoopInstanceElement *loopElement, SyncIRs &syncElement,
     SyncRecordList &syncRecordList,
@@ -196,7 +197,7 @@ unsigned BlockSyncAnalysis::InsertLoopSync(
   return 0;
 }
 
-unsigned BlockSyncAnalysis::InsertBranchSync(
+unsigned InsertSyncAnalysis::InsertBranchSync(
     unsigned index, CompoundInstanceElement *nowCompound, unsigned begin,
     BranchInstanceElement *branchElement, SyncIRs &syncElement,
     SyncRecordList &syncRecordList,
@@ -235,9 +236,9 @@ unsigned BlockSyncAnalysis::InsertBranchSync(
   return 0;
 }
 
-void BlockSyncAnalysis::MergeAlreadySync(SyncRecordList &syncRecordList,
-                                         const SyncRecordList &syncRecordIfList,
-                                         const SyncRecordList &syncRecordElseList) {
+void InsertSyncAnalysis::MergeAlreadySync(
+    SyncRecordList &syncRecordList, const SyncRecordList &syncRecordIfList,
+    const SyncRecordList &syncRecordElseList) {
   for (size_t bufferIdx = 0; bufferIdx < syncRecordList.size(); bufferIdx++) {
     for (size_t pipeIdx = 0; pipeIdx < kPipeStateSize; pipeIdx++) {
       if (syncRecordIfList[bufferIdx].alreadySync[pipeIdx] &&
@@ -252,20 +253,20 @@ void BlockSyncAnalysis::MergeAlreadySync(SyncRecordList &syncRecordList,
 // 4. Dependency Analysis & Operation Insertion
 // ==============================================================================
 
-void BlockSyncAnalysis::InsertSync(CompoundInstanceElement *nowCompound,
-                                   CompoundInstanceElement *frontCompound,
-                                   SyncRecordList &syncRecordList,
-                                   const std::optional<unsigned> &forEndIndex) {
+void InsertSyncAnalysis::InsertSync(
+    CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList,
+    const std::optional<unsigned> &forEndIndex) {
   if (IsNoNeedToInsertSync(nowCompound, frontCompound, forEndIndex.has_value())) {
     return;
   }
   MemAnalyze(nowCompound, frontCompound, syncRecordList, forEndIndex);
 }
 
-void BlockSyncAnalysis::MemAnalyze(CompoundInstanceElement *nowCompound,
-                                   CompoundInstanceElement *frontCompound,
-                                   SyncRecordList &syncRecordList,
-                                   const std::optional<unsigned> &forEndIndex) {
+void InsertSyncAnalysis::MemAnalyze(
+    CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList,
+    const std::optional<unsigned> &forEndIndex) {
   if (isAlreadySync(nowCompound, frontCompound, syncRecordList, 0)) {
     return;
   }
@@ -305,7 +306,7 @@ void BlockSyncAnalysis::MemAnalyze(CompoundInstanceElement *nowCompound,
   UpdateSyncRecordInfo(frontCompound, syncRecordList);
 }
 
-bool BlockSyncAnalysis::IsMemInfoHasDependency(
+bool InsertSyncAnalysis::IsMemInfoHasDependency(
     CompoundInstanceElement *nowCompound,
     CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
@@ -337,7 +338,7 @@ bool BlockSyncAnalysis::IsMemInfoHasDependency(
   return hasDependency;
 }
 
-void BlockSyncAnalysis::InsertSyncOperation(
+void InsertSyncAnalysis::InsertSyncOperation(
     CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
     DepBaseMemInfoPairVec &depBaseMemInfosVec,
     const std::optional<unsigned> &forEndIndex) {
@@ -388,10 +389,9 @@ void BlockSyncAnalysis::InsertSyncOperation(
 // 5. Sync Record Maintenance
 // ==============================================================================
 
-bool BlockSyncAnalysis::isAlreadySync(CompoundInstanceElement *nowCompound,
-                                      CompoundInstanceElement *frontCompound,
-                                      SyncRecordList &syncRecordList,
-                                      unsigned recordListIndex) {
+bool InsertSyncAnalysis::isAlreadySync(
+    CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList, unsigned recordListIndex) {
   (void)nowCompound;
   const PipelineType frontPipe = frontCompound->kPipeValue;
   if (recordListIndex >= syncRecordList.size()) return false;
@@ -400,9 +400,9 @@ bool BlockSyncAnalysis::isAlreadySync(CompoundInstanceElement *nowCompound,
       .alreadySync[static_cast<unsigned>(frontPipe)];
 }
 
-void BlockSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
-                                         SyncRecordList &syncRecordList,
-                                         const PipelineType nowPipeValue) {
+void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
+                                           SyncRecordList &syncRecordList,
+                                           const PipelineType nowPipeValue) {
   for (auto *sync : syncVector) {
     for (size_t bufferIdx = 0; bufferIdx < syncRecordList.size(); bufferIdx++) {
       if (bufferIdx == 0 && sync->eventIdNum > 1 &&
@@ -414,9 +414,9 @@ void BlockSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
   }
 }
 
-void BlockSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
-                                        SyncRecord &syncRecord,
-                                        PipelineType nowPipeValue) {
+void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
+                                          SyncRecord &syncRecord,
+                                          PipelineType nowPipeValue) {
   PipelineType setPipeValue = sync->GetSrcPipe();
   PipelineType waitPipeValue = sync->GetDstPipe();
 
@@ -459,8 +459,8 @@ void BlockSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
   }
 }
 
-void BlockSyncAnalysis::UpdateSyncRecordInfo(CompoundInstanceElement *frontCompound,
-                                             SyncRecordList &syncRecordList) {
+void InsertSyncAnalysis::UpdateSyncRecordInfo(
+    CompoundInstanceElement *frontCompound, SyncRecordList &syncRecordList) {
   (void)frontCompound;
   assert(!syncOperations_.empty());
   auto &syncPair = syncOperations_.back();
@@ -481,7 +481,7 @@ void BlockSyncAnalysis::UpdateSyncRecordInfo(CompoundInstanceElement *frontCompo
 // 6. Final Barrier
 // ==============================================================================
 
-void BlockSyncAnalysis::InsertLastPipeAll() {
+void InsertSyncAnalysis::InsertLastPipeAll() {
   for (auto it = syncIR_.rbegin(); it != syncIR_.rend(); ++it) {
     auto *element = it->get();
     if (isa<PlaceHolderInstanceElement>(element)) continue;
@@ -505,12 +505,12 @@ void BlockSyncAnalysis::InsertLastPipeAll() {
 // 7. Helpers
 // ==============================================================================
 
-bool BlockSyncAnalysis::IsMemAllocOp(Operation *op) const {
+bool InsertSyncAnalysis::IsMemAllocOp(Operation *op) const {
   return isa<memref::AllocOp>(op) || isa<pto::PointerCastOp>(op);
 }
 
-SmallVector<Value>
-BlockSyncAnalysis::GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+SmallVector<Value> InsertSyncAnalysis::GetMemInfoBuffers(
+    const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   llvm::DenseSet<Value> touchedBuffer;
   SmallVector<Value> result;
   for (auto &pair : depBaseMemInfosVec) {
@@ -524,7 +524,7 @@ BlockSyncAnalysis::GetMemInfoBuffers(const DepBaseMemInfoPairVec &depBaseMemInfo
   return result;
 }
 
-int BlockSyncAnalysis::GetEventIdNum(
+int InsertSyncAnalysis::GetEventIdNum(
     const DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   for (const auto &pair : depBaseMemInfosVec) {
     bool isLocalA =
@@ -538,8 +538,9 @@ int BlockSyncAnalysis::GetEventIdNum(
   return 1;
 }
 
-bool BlockSyncAnalysis::IsGMHazard(const CompoundInstanceElement *nowCompound,
-                                  const CompoundInstanceElement *frontCompound) const {
+bool InsertSyncAnalysis::IsGMHazard(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound) const {
   auto hasGM = [](const SmallVector<const BaseMemInfo *> &vec) {
     for (const auto *info : vec) {
       if (info->scope == pto::AddressSpace::GM) return true;

@@ -1,4 +1,4 @@
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"

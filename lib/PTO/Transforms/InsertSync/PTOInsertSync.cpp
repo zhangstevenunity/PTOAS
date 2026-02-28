@@ -7,19 +7,20 @@
 //===----------------------------------------------------------------------===//
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
-#include "PTO/Transforms/SyncCommon.h"
-#include "PTO/Transforms/MemoryDependentAnalyzer.h"
-#include "PTO/Transforms/PTOIRTranslator.h"
-#include "PTO/Transforms/BlockSyncAnalysis.h"
-#include "PTO/Transforms/MoveSyncState.h"
-#include "PTO/Transforms/RemoveRedundantSync.h"
-#include "PTO/Transforms/SyncEventIdAllocation.h"
-#include "PTO/Transforms/SyncCodegen.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
+#include "PTO/Transforms/InsertSync/MoveSyncState.h"
+#include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
+#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
+#include "PTO/Transforms/InsertSync/SyncCodegen.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h" // [FIX] 确保 FuncOp 定义可见
 
 // [CRITICAL FIX] 必须在包含 .inc 之前设置好命名空间环境
-// NPU-IR 也是这样做的：将 .inc 包裹在 namespace mlir 中
+// 将 Passes.h.inc 生成的声明包裹在 namespace mlir 中
 // 此外，为了确保 Passes.h.inc 中生成的 func::FuncOp 能被解析，
 // 我们需要在 pto 命名空间内给 func 做一个别名。
 
@@ -44,39 +45,6 @@ namespace {
  
 struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSyncPass> {
   
-  // Debug 工具：打印 SyncIR
-  static void printSyncIRDebug(const SyncIRs &syncIR, llvm::StringRef phase) {
-    llvm::errs() << "\n// === [PTOInsertSync Debug] " << phase << " === //\n";
-    for (const auto &e : syncIR) {
-       llvm::errs() << "Node " << e->GetIndex() << ": ";
-       if (auto *comp = dyn_cast<CompoundInstanceElement>(e.get())) {
-           llvm::errs() << comp->opName.getStringRef() << " (Pipe " << static_cast<int>(comp->kPipeValue) << ")";
-       } else if (isa<LoopInstanceElement>(e.get())) {
-           llvm::errs() << "Loop";
-       }
-       llvm::errs() << "\n";
- 
-       auto printOp = [](const char* prefix, SyncOperation *op) {
-          if (op->uselessSync) return;
-          llvm::errs() << "  " << prefix << ": " << SyncOperation::TypeName(op->GetType());
-          // [NEW] 打印 Pipe 方向
-          llvm::errs() << " (" << static_cast<int>(op->GetSrcPipe()) << "->" 
-                       << static_cast<int>(op->GetDstPipe()) << ")";
-          // [NEW] 打印分配到的 Event ID
-          if (!op->GetEventIDs().empty()) {
-              llvm::errs() << " [ID:";
-              for (auto id : op->GetEventIDs()) llvm::errs() << id << ",";
-              llvm::errs() << "]";
-          }
-          llvm::errs() << "\n";
-       };
- 
-       for(auto *op : e->pipeBefore) printOp("PRE", op);
-       for(auto *op : e->pipeAfter)  printOp("POST", op);
-    }
-    llvm::errs() << "// ========================================= //\n";
-  }
- 
   void runOnOperation() override {
     llvm::errs() << "\n// === [PTOInsertSync] Start === //\n";
     func::FuncOp func = getOperation();
@@ -113,33 +81,38 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     // 如果 IR 太简单，直接跳过
     if (syncIR.size() <= 1) return;
     
-    // Debug Print
-    // printSyncIRDebug(syncIR, "After Translator");
+    dumpInsertSyncPhase("After Translator", syncIR, syncOpsStorage,
+                        func.getOperation());
  
     // 2. Analyzer: 依赖分析与插入逻辑 Sync
-    BlockSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func, SyncAnalysisMode::NORMALSYNC);
+    InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func,
+                                SyncAnalysisMode::NORMALSYNC);
     analyzer.Run(/*insertBarAllAtLast=*/true);
  
-    printSyncIRDebug(syncIR, "After Analysis");
+    dumpInsertSyncPhase("After Analysis", syncIR, syncOpsStorage,
+                        func.getOperation());
  
     // [NEW] 3. Optimization: Sync Motion
     // 将不必要的 Wait 提至 Loop 外，将不必要的 Set 沉降到 Loop 后
     MoveSyncState syncMove(syncIR, syncOpsStorage);
     syncMove.Run(); // 执行优化
  
-    printSyncIRDebug(syncIR, "After Sync Motion"); // 打印优化后的图，方便对比
+    dumpInsertSyncPhase("After Sync Motion", syncIR, syncOpsStorage,
+                        func.getOperation());
  
     // 4. [NEW] Optimization 2: Remove Redundant Sync
     // 消除由于 Motion 或 Analysis 产生的冗余同步对
     RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
     removeRedundant.Run();
  
-    printSyncIRDebug(syncIR, "After Optimization");
+    dumpInsertSyncPhase("After Remove Redundant Sync", syncIR, syncOpsStorage,
+                        func.getOperation());
     
     SyncEventIdAllocation eventIdAllocation(syncIR, syncOpsStorage);
     eventIdAllocation.Allocate();
  
-    printSyncIRDebug(syncIR, "After EventId Allocation");
+    dumpInsertSyncPhase("After EventId Allocation", syncIR, syncOpsStorage,
+                        func.getOperation());
  
     SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
     codegen.Run();

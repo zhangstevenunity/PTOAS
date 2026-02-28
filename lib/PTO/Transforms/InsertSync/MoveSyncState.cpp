@@ -1,4 +1,4 @@
-#include "PTO/Transforms/MoveSyncState.h"
+#include "PTO/Transforms/InsertSync/MoveSyncState.h"
 #include "llvm/ADT/STLExtras.h" // For llvm::reverse
  
 #define DEBUG_TYPE "pto-inject-sync"
@@ -60,7 +60,7 @@ void MoveSyncState::PlanMoveOutBranchSync(
   e->pipeBefore = newPipeBefore;
  
   // 处理 PipeAfter (Set) - Sink Set out of If/Else when the matched Wait is
-  // outside the branch region (AscendNPU-IR behavior).
+  // outside the branch region.
   //
   // This avoids patterns like:
   //   if (...) { set_flag(A) } else { set_flag(B) }

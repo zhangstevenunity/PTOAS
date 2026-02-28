@@ -2,7 +2,8 @@ add_mlir_dialect_library(PTOTransforms
   InsertLoadStoreForMixCV.cpp
   PTOInsertCVMov.cpp
   PTOConvertToDPS.cpp
-  PTOInsertSync.cpp
+  InsertSync/PTOInsertSync.cpp
+  InsertSync/InsertSyncDebug.cpp
   PTOViewToMemref.cpp
   PTOToEmitC.cpp
   Utils.cpp
@@ -16,14 +17,14 @@ add_mlir_dialect_library(PTOTransforms
   ConvertToPTOOp.cpp
   PTOHighDimLowering.cpp
   PTOVFloopGather.cpp
-  PTOIRTranslator.cpp
-  SyncCommon.cpp
-  BlockSyncAnalysis.cpp
-  MemoryDependentAnalyzer.cpp
-  MoveSyncState.cpp
-  RemoveRedundantSync.cpp
-  SyncEventIdAllocation.cpp
-  SyncCodegen.cpp
+  InsertSync/PTOIRTranslator.cpp
+  InsertSync/SyncCommon.cpp
+  InsertSync/InsertSyncAnalysis.cpp
+  InsertSync/MemoryDependentAnalyzer.cpp
+  InsertSync/MoveSyncState.cpp
+  InsertSync/RemoveRedundantSync.cpp
+  InsertSync/SyncEventIdAllocation.cpp
+  InsertSync/SyncCodegen.cpp
   LoweringSyncToPipe.cpp
 
   ADDITIONAL_HEADER_DIRS

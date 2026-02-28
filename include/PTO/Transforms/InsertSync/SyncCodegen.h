@@ -1,7 +1,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_SYNCCODEGEN_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_SYNCCODEGEN_H
  
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
