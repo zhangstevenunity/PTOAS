@@ -837,6 +837,7 @@ LogicalResult AllocTileOp::verify() {
   auto ty = getResult().getType(); // TileBufType
 
   // op 上有没有传 operands
+  bool hasAddr = getAddr() != nullptr;
   bool hasVR = getValidRow() != nullptr;
   bool hasVC = getValidCol() != nullptr;
 

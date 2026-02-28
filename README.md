@@ -193,6 +193,12 @@ ptoas tests/input.pto
 # 运行 AutoSyncInsert Pass
 ptoas tests/input.pto --enable-insert-sync -o outputfile.cpp
 
+# 指定目标硬件架构（A3 / A5）
+ptoas tests/input.pto --pto-arch=a3 -o outputfile.cpp
+
+# 指定构建 Level（level3 会禁用 PlanMemory/InsertSync）
+ptoas tests/input.pto --pto-level=level3 -o outputfile.cpp
+
 ```
 
 ### 5.2 Python 接口 (Python API)

@@ -218,6 +218,7 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   let summary = "Allocates a tile buffer (logical buffer).";
 
   let arguments = (ins
+    Optional<I64>:$addr,
     Optional<Index>:$valid_row,
     Optional<Index>:$valid_col
   );
@@ -225,6 +226,7 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   let results = (outs TileBufType:$result);
 
   let assemblyFormat = [{
+    (`addr` `=` $addr^)?
     (`valid_row` `=` $valid_row^)? 
     (`valid_col` `=` $valid_col^)?
      attr-dict `:` qualified(type($result))

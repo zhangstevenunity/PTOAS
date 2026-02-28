@@ -195,6 +195,18 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   
   auto tileType = dyn_cast<pto::TileBufType>(res.getType());
   uint64_t sizeInBytes = 0;
+  uint64_t baseAddr = 0;
+
+  // If alloc_tile carries an explicit address, record it when it's a constant.
+  if (Value addr = op.getAddr()) {
+    llvm::APInt apIntValue;
+    if (matchPattern(addr, m_ConstantInt(&apIntValue))) {
+        // 将 APInt 转换为 int64_t，再转为 uint64_t
+        int64_t c = apIntValue.getSExtValue();  // 有符号扩展转换
+        // 如果确定是无符号值，也可以用：apIntValue.getZExtValue()
+        baseAddr = static_cast<uint64_t>(c);
+    }
+  }
 
   // 1. 计算大小
   if (tileType) {
@@ -233,7 +245,7 @@ LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
       res,                  
       res,                  
       space, // 使用解析出的 space                 
-      SmallVector<uint64_t>{0}, 
+      SmallVector<uint64_t>{baseAddr},
       sizeInBytes             
   );
 
