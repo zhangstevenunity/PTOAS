@@ -579,15 +579,25 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (effectiveLevel == PTOBuildLevel::Level3) {
-    bool missing = false;
+  {
+    bool hasAllocTileError = false;
     module->walk([&](pto::AllocTileOp op) {
-      if (!op.getAddr()) {
-        op.emitError("requires 'addr' operand when --pto-level=level3");
-        missing = true;
+      if (effectiveLevel == PTOBuildLevel::Level3) {
+        if (!op.getAddr()) {
+          op.emitError("requires 'addr' operand when --pto-level=level3");
+          hasAllocTileError = true;
+        }
+        return;
+      }
+
+      // `addr` is only meaningful for Level-3 IR where tile addresses are
+      // user-managed and explicit.
+      if (op.getAddr()) {
+        op.emitError("unexpected 'addr' operand: only supported when --pto-level=level3");
+        hasAllocTileError = true;
       }
     });
-    if (missing)
+    if (hasAllocTileError)
       return 1;
   }
 

@@ -220,8 +220,7 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
   let arguments = (ins
     Optional<I64>:$addr,
     Optional<Index>:$valid_row,
-    Optional<Index>:$valid_col,
-    Optional<I64>:$addr
+    Optional<Index>:$valid_col
   );
 
   let results = (outs TileBufType:$result);
@@ -230,7 +229,6 @@ def AllocTileOp : PTO_Op<"alloc_tile", [AttrSizedOperandSegments]> {
     (`addr` `=` $addr^)?
     (`valid_row` `=` $valid_row^)? 
     (`valid_col` `=` $valid_col^)?
-    (`addr` `=` $addr^)?
      attr-dict `:` qualified(type($result))
   }];
 
