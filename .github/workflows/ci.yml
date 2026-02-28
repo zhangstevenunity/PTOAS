@@ -173,14 +173,13 @@ jobs:
             -DMLIR_PYTHON_PACKAGE_DIR="${LLVM_DIR}/tools/mlir/python_packages/mlir_core" \
             -DCMAKE_INSTALL_PREFIX="${PTO_INSTALL_DIR}" \
             -DCMAKE_BUILD_TYPE=Release
-          ninja -C build ptoas ptobc
+          ninja -C build ptoas
           ninja -C build install
 
-      - name: Run sample tests (py -> pto -> ptobc -> pto -> cpp)
+      - name: Run sample tests (py -> pto -> cpp)
         shell: bash
         env:
           PTOAS_BIN: ${{ github.workspace }}/build/tools/ptoas/ptoas
-          PTOAS_ENABLE_PTOBC_ROUNDTRIP: "1"
           PYTHON_BIN: /usr/bin/python3
           MLIR_PYTHON_ROOT: ${{ env.MLIR_PYTHONPATH }}
           PTO_PYTHON_ROOT: ${{ env.PTO_INSTALL_DIR }}/

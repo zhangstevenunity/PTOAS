@@ -10,15 +10,16 @@ PTOBC_BIN="${PTOBC_BIN:-}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 PTOAS_OUT_DIR="${PTOAS_OUT_DIR:-}"
 PTOAS_ENABLE_INSERT_SYNC="${PTOAS_ENABLE_INSERT_SYNC:-1}"
-PTOAS_ENABLE_PTOBC_ROUNDTRIP="${PTOAS_ENABLE_PTOBC_ROUNDTRIP:-0}"
 PTOAS_FLAGS="${PTOAS_FLAGS:-}"
 PTO_PTO_DIRS="${PTO_PTO_DIRS:-InjectSync}"
+ENABLE_BC=0
 
 usage() {
   cat <<EOF
 Usage:
-  $0 -t <name>   # e.g. -t Shls  -> run all .py in folder Shls
-  $0 all         # traverse every subfolder, run all .py under each
+  $0 [--enablebc] -t <name>   # e.g. -t Shls  -> run all .py in folder Shls
+  $0 [--enablebc] all         # traverse every subfolder, run all .py under each
+  $0 --enablebc               # alias for: $0 --enablebc all
 
 Env:
   PTOAS_BIN   # path to ptoas executable (optional)
@@ -27,8 +28,10 @@ Env:
   PTOAS_OUT_DIR  # where generated *.mlir/*.cpp go (optional; defaults to a temp dir)
   PTOAS_FLAGS  # extra flags passed to ptoas (e.g. --enable-insert-sync)
   PTOAS_ENABLE_INSERT_SYNC  # 1 to append --enable-insert-sync to PTOAS_FLAGS (default: 1)
-  PTOAS_ENABLE_PTOBC_ROUNDTRIP  # 1 to run pto -> ptobc -> pto before ptoas (default: 0)
   PTO_PTO_DIRS  # space-separated dirs to run .pto directly (default: InjectSync)
+
+Flags:
+  --enablebc  # enable: python -> .pto -> ptobc -> .pto -> ptoas
 EOF
   exit 1
 }
@@ -114,7 +117,7 @@ process_one_dir() {
   ptobc="$(resolve_ptobc_bin)"
   python="$(resolve_python_bin)"
   local use_ptobc_roundtrip=0
-  if [[ "${PTOAS_ENABLE_PTOBC_ROUNDTRIP}" == "1" ]]; then
+  if [[ "${ENABLE_BC}" == "1" ]]; then
     use_ptobc_roundtrip=1
   fi
   local -a ptoas_flags=()
@@ -264,6 +267,21 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard for Issue #152:
+    # bf16 tiles must lower to `__bf16` in Tile<> / GlobalTensor<> templates.
+    if [[ "$base" == "issue152_bf16" ]]; then
+      if ! grep -Fq "GlobalTensor<__bf16" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tbf16 GlobalTensor element type is not __bf16 (issue #152)"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "Tile<[^>]*, __bf16," "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tbf16 Tile element type is not __bf16 (issue #152)"
+        overall=1
+        continue
+      fi
+    fi
+
     echo -e "${A}(${base}.py)\tOK\tgenerated: $(basename "$cpp")"
   done
 
@@ -360,6 +378,23 @@ run_all() {
       exit (fail==0 ? 0 : 1);
     }'
 }
+
+# -----------------------------------------------------------------------------
+# CLI flags
+# -----------------------------------------------------------------------------
+positional_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --enablebc) ENABLE_BC=1 ;;
+    -h|--help) usage ;;
+    *) positional_args+=("$arg") ;;
+  esac
+done
+set -- "${positional_args[@]}"
+
+if [[ "${ENABLE_BC}" == "1" ]] && [[ $# -eq 0 ]]; then
+  set -- all
+fi
 
 if [[ $# -eq 1 && "$1" == "all" ]]; then
   run_all

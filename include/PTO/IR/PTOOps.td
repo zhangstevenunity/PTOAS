@@ -134,7 +134,7 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr)
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
   }];
 }
 

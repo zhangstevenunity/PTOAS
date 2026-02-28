@@ -2116,6 +2116,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto elemTypeToString = [&](Type elemTy) -> std::string {
       if (elemTy.isF16())
         return "half";
+      if (elemTy.isBF16())
+        return "__bf16";
       if (elemTy.isF32())
         return "float";
       if (elemTy.isF64())
@@ -2326,6 +2328,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     
     if (elemTy.isF16()) {
         elemTypeStr = "half";
+    } else if (elemTy.isBF16()) {
+        elemTypeStr = "__bf16";
     } else if (elemTy.isF32()) {
         elemTypeStr = "float";
     } else if (elemTy.isInteger(8)) {
@@ -2481,7 +2485,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // 推导规则与 InferPTOLayout 保持一致
     int layoutTag = 0; // ND
     auto elemBytes = 4; // default float
-    if (elemTypeStr.find("half") != std::string::npos || elemTypeStr.find("f16") != std::string::npos)
+    if (elemTypeStr.find("half") != std::string::npos || elemTypeStr.find("f16") != std::string::npos ||
+        elemTypeStr.find("bf16") != std::string::npos)
         elemBytes = 2;
     else if (elemTypeStr.find("double") != std::string::npos || elemTypeStr.find("f64") != std::string::npos)
         elemBytes = 8;
@@ -2593,6 +2598,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
 static std::string getElemTypeStringForGT(Type elemTy) {
   if (elemTy.isF16()) return "half";
+  if (elemTy.isBF16()) return "__bf16";
   if (elemTy.isF32()) return "float";
   if (elemTy.isF64()) return "double";
   if (elemTy.isInteger(8)) {
@@ -2720,7 +2726,8 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   }
   int layoutTag = 0; // ND
   int elemBytes = 4;
-  if (elemTypeStr.find("half") != std::string::npos)
+  if (elemTypeStr.find("half") != std::string::npos ||
+      elemTypeStr.find("bf16") != std::string::npos)
     elemBytes = 2;
   else if (elemTypeStr.find("double") != std::string::npos)
     elemBytes = 8;
@@ -2872,6 +2879,7 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     // 2. 类型字符串生成 (elemTypeStr, dimStr)
     std::string elemTypeStr = "T";
     if (elemType.isF16()) elemTypeStr = "half";
+    else if (elemType.isBF16()) elemTypeStr = "__bf16";
     else if (elemType.isF32()) elemTypeStr = "float";
     else if (elemType.isInteger(8)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint8_t" : "int8_t";
     else if (elemType.isInteger(16)) elemTypeStr = cast<IntegerType>(elemType).isUnsigned() ? "uint16_t" : "int16_t";
@@ -3891,6 +3899,9 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     if (elemTy.isF16())
       elemBytes = 2,
       elemTok = "half";
+    else if (elemTy.isBF16())
+      elemBytes = 2,
+      elemTok = "__bf16";
     else if (elemTy.isF32())
       elemBytes = 4,
       elemTok = "float";
