@@ -295,36 +295,22 @@ static Value computeSubsetValidDim(IRRewriter &rewriter, Location loc,
   int64_t pvConst = 0, offConst = 0;
   if (getConstIndexValue(parentValid, pvConst) &&
       getConstIndexValue(offset, offConst)) {
-    int64_t diff = 0;
-    if (pvConst > 0) {
-      int64_t offMod = offConst % pvConst;
-      if (offMod < 0)
-        offMod += pvConst;
-      diff = pvConst - offMod; // in [1, pvConst] when pvConst>0
+    if (pvConst >= 0) {
+      int64_t diff = 0;
+      if (pvConst > 0) {
+        int64_t offMod = offConst % pvConst;
+        if (offMod < 0)
+          offMod += pvConst;
+        diff = pvConst - offMod; // in [1, pvConst] when pvConst>0
+      }
+      if (diff < 0)
+        diff = 0;
+      int64_t clipped = std::min<int64_t>(size, diff);
+      return rewriter.create<arith::ConstantIndexOp>(loc, clipped);
     }
-    if (diff < 0)
-      diff = 0;
-    int64_t clipped = std::min<int64_t>(size, diff);
-    return rewriter.create<arith::ConstantIndexOp>(loc, clipped);
   }
-
-  Value pv = ensureIndex(rewriter, loc, parentValid, anchorOp);
-  Value off = ensureIndex(rewriter, loc, offset, anchorOp);
-
-  // Use the same "periodic valid dims" rule as SubsetOp::inferReturnTypes:
-  // diff = pv - (off % pv), so offsets that land on the next tile (off == pv)
-  // still produce a full valid dim (diff == pv), instead of 0.
-  Type i64Ty = rewriter.getI64Type();
-  Value pvI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, pv);
-  Value offI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, off);
-  Value remI64 = rewriter.create<arith::RemUIOp>(loc, offI64, pvI64);
-  Value diffI64 = rewriter.create<arith::SubIOp>(loc, pvI64, remI64);
-  Value diff = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
-                                                   diffI64);
-
-  Value lt = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, diff,
-                                            sizeVal);
-  return rewriter.create<arith::SelectOp>(loc, lt, diff, sizeVal);
+  // Keep static valid dims when runtime values are not constant.
+  return sizeVal;
 }
 
 static void dumpPretty(Operation *op, llvm::raw_ostream &os) {
@@ -833,7 +819,12 @@ struct PTOViewToMemrefPass
 
         // 1. Source must be memref already
         Value src = op->getOperand(0);
-        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+        // If the source is a bound tile, subview the underlying memref to avoid
+        // materializing a tile->pointer cast in later lowering.
+        Value subviewSrc = src;
+        if (auto bind = src.getDefiningOp<pto::BindTileOp>())
+          subviewSrc = bind.getSource();
+        auto srcMrTy = dyn_cast<MemRefType>(subviewSrc.getType());
         if (!srcMrTy) {
           op.emitError("pto.subset source must be lowered to memref first");
           signalPassFailure();
@@ -854,6 +845,8 @@ struct PTOViewToMemrefPass
 
         // 3. Offsets (mixed)
         SmallVector<OpFoldResult> mixedOffsets;
+        SmallVector<int64_t> staticOffsets;
+        staticOffsets.reserve(op.getOffsets().size());
         for (Value o : op.getOffsets()) {
           IntegerAttr constAttr;
           bool isStatic = false;
@@ -864,10 +857,13 @@ struct PTOViewToMemrefPass
             constAttr = rewriter.getIndexAttr(cInt.value());
             isStatic = true;
           }
-          if (isStatic)
+          if (isStatic) {
             mixedOffsets.push_back(constAttr);
-          else
+            staticOffsets.push_back(constAttr.getInt());
+          } else {
             mixedOffsets.push_back(ensureIndex(rewriter, loc, o, op));
+            staticOffsets.push_back(ShapedType::kDynamic);
+          }
         }
 
         // 3.1 Layout-aware checks for boxed tiles (SLayout != NoneBox)
@@ -969,7 +965,26 @@ struct PTOViewToMemrefPass
         }
         (void)srcOffset;
 
-        auto resultLayout = StridedLayoutAttr::get(ctx, ShapedType::kDynamic, srcStrides);
+        // If source offset/strides and subset offsets are all static, preserve
+        // a static offset in the result type to satisfy memref.subview verifier.
+        int64_t resultOffset = ShapedType::kDynamic;
+        bool allOffsetsStatic = (srcOffset != ShapedType::kDynamic);
+        if (allOffsetsStatic) {
+          int64_t totalOffset = srcOffset;
+          for (size_t i = 0; i < staticSizes.size(); ++i) {
+            if (i >= static_cast<size_t>(srcStrides.size()) ||
+                srcStrides[i] == ShapedType::kDynamic ||
+                staticOffsets[i] == ShapedType::kDynamic) {
+              allOffsetsStatic = false;
+              break;
+            }
+            totalOffset += staticOffsets[i] * srcStrides[i];
+          }
+          if (allOffsetsStatic)
+            resultOffset = totalOffset;
+        }
+
+        auto resultLayout = StridedLayoutAttr::get(ctx, resultOffset, srcStrides);
         auto resultMemRefType =
             MemRefType::get(staticSizes, srcMrTy.getElementType(), resultLayout,
                             srcMrTy.getMemorySpace());
@@ -981,7 +996,7 @@ struct PTOViewToMemrefPass
           mixedStrides.push_back(rewriter.getIndexAttr(1));
 
         auto sv = rewriter.create<memref::SubViewOp>(
-            loc, resultMemRefType, src, mixedOffsets, mixedSizes, mixedStrides);
+            loc, resultMemRefType, subviewSrc, mixedOffsets, mixedSizes, mixedStrides);
 
         // 6. Re-bind tile metadata (config + valid dims)
         Value parentVRow;

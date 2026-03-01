@@ -2248,8 +2248,13 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     }
     if (auto ot = dyn_cast<emitc::OpaqueType>(tileCandidate.getType())) {
       auto tyStr = ot.getValue();
-      if (tyStr.find("Tile<") != std::string::npos ||
-          tyStr.find("ConvTile<") != std::string::npos) {
+      const bool isPtrLike = tyStr.ends_with("*");
+      bool isTileLike = tyStr.find("Tile<") != std::string::npos ||
+                        tyStr.find("ConvTile<") != std::string::npos;
+      if (!isTileLike && !isPtrLike && tyStr.find("Tile") != std::string::npos)
+        isTileLike = true;
+
+      if (isTileLike && !isPtrLike) {
         std::string elemTok = elemTypeToString(srcType.getElementType());
         std::string qualifier = "__gm__";
         if (auto asAttr =
