@@ -6196,7 +6196,7 @@ struct PTOPrintOpToEmitC : public OpConversionPattern<pto::PrintOp> {
         {emitc::OpaqueAttr::get(ctx, quoted),
          IntegerAttr::get(IndexType::get(ctx), 0)});
     rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "cce::printf",
+        loc, TypeRange{}, "bisheng::cce::printf",
         /*args=*/argsAttr,
         /*templateArgs=*/ArrayAttr{},
         /*operands=*/ValueRange{scalar});
