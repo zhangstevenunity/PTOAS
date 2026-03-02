@@ -33,11 +33,20 @@ INCLUDE_REPLACEMENT = (
     "#endif\n"
     "#include <stdint.h>\n"
     "\n"
-    "// Some PTO-ISA types (e.g. TMRGSORT's MrgSortExecutedNumList) are defined\n"
-    "// only in the CCE/AICore compilation path. The `bisheng -xcce` frontend\n"
-    "// still performs a host-side pass that needs to parse kernel signatures.\n"
-    "// Provide a minimal fallback so `launch.cpp` and host-side wrappers compile.\n"
-    "#if !defined(__CCE_AICORE__)\n"
+    "// AICore printf support is gated behind `--cce-enable-print` on some\n"
+    "// toolchains. When enabled, include the CCE print header so `cce::printf`\n"
+    "// resolves in device compilation.\n"
+    "#if defined(__CCE_AICORE__) && defined(PTOAS_ENABLE_CCE_PRINT)\n"
+    "#include <ccelib/print/print.h>\n"
+    "#endif\n"
+    "#include <pto/pto-inst.hpp>\n"
+    "#include <pto/common/constants.hpp>\n"
+    "\n"
+    "// Some PTO-ISA types are only available in the __CCE_AICORE__ compilation\n"
+    "// path, but `bisheng -xcce` still performs a host-side parse pass.\n"
+    "// Provide minimal fallbacks only when the corresponding header wasn't\n"
+    "// pulled in by the selected arch implementation.\n"
+    "#if !defined(__CCE_AICORE__) && !defined(TMRGSORT_HPP)\n"
     "namespace pto {\n"
     "struct MrgSortExecutedNumList {\n"
     "    uint16_t mrgSortList0;\n"
@@ -47,8 +56,6 @@ INCLUDE_REPLACEMENT = (
     "};\n"
     "} // namespace pto\n"
     "#endif\n"
-    "#include <pto/pto-inst.hpp>\n"
-    "#include <pto/common/constants.hpp>\n"
     "#ifndef __CPU_SIM\n"
     "#include \"acl/acl.h\"\n"
     "#endif\n"
@@ -235,6 +242,12 @@ def _cpp_host_type(cpp_type: str) -> str:
     return cpp_type
 
 
+def _rewrite_host_unsupported_types(text: str) -> str:
+    # `bisheng -xcce` performs a host-side pass that parses kernel launch code.
+    # Some device-only builtin types (e.g. `__bf16`) are rejected there.
+    return text.replace("__bf16", "bfloat16_t")
+
+
 def _default_eps_for_cpp_type(cpp_type: str) -> float:
     # CPU golden vs NPU results may have small floating-point differences.
     if cpp_type in {"half", "aclFloat16"}:
@@ -342,6 +355,10 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     needs_cube = any(m in kernel_text for m in cube_markers)
 
     sv = (soc_version or "").lower()
+    if "950" in sv or "a5" in sv:
+        # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
+        # kernels with dav-c310-{vec|cube}.
+        return "dav-c310-cube" if needs_cube else "dav-c310-vec"
     if "910b" in sv:
         # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
@@ -821,7 +838,12 @@ def generate_testcase(
         # section macros instead.
         if has_dav_cube or has_dav_vec:
             sv = (soc_version or "").lower()
-            aicore_arch = "dav-c310-vec" if "910b" in sv else "dav-c220-vec"
+            if "950" in sv or "a5" in sv:
+                aicore_arch = "dav-c310-vec"
+            elif "910b" in sv:
+                aicore_arch = "dav-c310-vec"
+            else:
+                aicore_arch = "dav-c220-vec"
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
 
@@ -1024,12 +1046,12 @@ def generate_testcase(
     input_generate = []
     elem_count = logical_elem_count
     # Some kernels use an integer tensor as "indices". The safe in-range domain
-    # depends on the op semantics. For the pto-isa a2a3 implementations:
-    # - TSCATTER: indices are linear indices in [0, rows*cols)
+    # depends on the op semantics (see pto-isa docs):
+    # - TSCATTER: indices are row indices in [0, rows)
     # - TGATHER/TGATHERB: indices are linear indices in [0, rows*cols)
     index_mod = None
     if "TSCATTER" in raw_kernel:
-        index_mod = max(elem_count, 1)
+        index_mod = max(rows, 1)
     elif any(m in raw_kernel for m in ("TGATHER", "TGATHERB")):
         index_mod = max(elem_count, 1)
     mrgsort_packed = "TMRGSORT" in raw_kernel
@@ -1141,26 +1163,49 @@ def generate_testcase(
     kernel_out.write_text(_replace_includes(kernel_text_out), encoding="utf-8")
 
     launch_fn_params = ", ".join(launch_decl_params + ["void *stream"])
-    kernel_call_args = []
+    kernel_call_args_device = []
+    kernel_call_args_host = []
     for p in params:
         if p["kind"] == "ptr":
-            kernel_call_args.append(f"({_strip_param_name(p['raw'], p['name'])}){p['name']}")
+            cast_ty = _strip_param_name(p["raw"], p["name"])
+            kernel_call_args_device.append(f"({cast_ty}){p['name']}")
+            kernel_call_args_host.append(f"({_rewrite_host_unsupported_types(cast_ty)}){p['name']}")
         else:
-            kernel_call_args.append(p["name"])
-    kernel_call_args = ", ".join(kernel_call_args)
+            kernel_call_args_device.append(p["name"])
+            kernel_call_args_host.append(p["name"])
+    kernel_call_args_device = ", ".join(kernel_call_args_device)
+    kernel_call_args_host = ", ".join(kernel_call_args_host)
+    raw_params_host = [_rewrite_host_unsupported_types(p) for p in raw_params]
     launch_cpp = (
         INCLUDE_REPLACEMENT
         + "\n"
-        f"__global__ AICORE void {kernel_name}({', '.join(raw_params)});\n\n"
+        "#if defined(__CCE_AICORE__)\n"
+        f"__global__ AICORE void {kernel_name}({', '.join(raw_params)});\n"
+        "#else\n"
+        f"__global__ AICORE void {kernel_name}({', '.join(raw_params_host)});\n"
+        "#endif\n\n"
         f"void {launch_name}({launch_fn_params}) {{\n"
-        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args});\n"
+        "#if defined(__CCE_AICORE__)\n"
+        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_device});\n"
+        "#else\n"
+        f"    {kernel_name}<<<1, nullptr, stream>>>({kernel_call_args_host});\n"
+        "#endif\n"
         f"}}\n"
     )
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
+    # pto-isa selects instruction implementations based on MEMORY_BASE vs
+    # REGISTER_BASE. Ascend A5 (e.g. Ascend950) and Ascend910B use REGISTER_BASE.
     mem_base_define = "MEMORY_BASE"
-    if "910b" in (soc_version or "").lower():
+    sv = (soc_version or "").lower()
+    if "910b" in sv or "950" in sv or "a5" in sv:
         mem_base_define = "REGISTER_BASE"
+
+    # CCE printing support is gated behind `--cce-enable-print` on some bisheng
+    # toolchains. Only enable it for kernels that actually emit printf.
+    needs_cce_print = bool(re.search(r"\b(?:bisheng::)?cce::printf\s*\(", raw_kernel_for_analysis))
+    cce_enable_print_opt = "    --cce-enable-print" if needs_cce_print else ""
+    cce_print_define_opt = "    -DPTOAS_ENABLE_CCE_PRINT=1" if needs_cce_print else ""
 
     cce_stack_size_opt = ""
     # `-mllvm -cce-aicore-stack-size=...` is rejected on some targets (e.g.
@@ -1224,15 +1269,17 @@ add_link_options(
     -Wl,-z,now
 )
 
-set(CMAKE_CCE_COMPILE_OPTIONS
-    -xcce
-    -fenable-matrix
-    --cce-aicore-enable-tl
-    -fPIC
-    -Xhost-start -Xhost-end
-{cce_stack_size_opt}\
-    "SHELL:-mllvm -cce-aicore-function-stack-size=0x8000"
-    "SHELL:-mllvm -cce-aicore-record-overflow=true"
+	set(CMAKE_CCE_COMPILE_OPTIONS
+	    -xcce
+	    -fenable-matrix
+	    --cce-aicore-enable-tl
+	{cce_enable_print_opt}
+	{cce_print_define_opt}
+	    -fPIC
+	    -Xhost-start -Xhost-end
+	{cce_stack_size_opt}\
+	    "SHELL:-mllvm -cce-aicore-function-stack-size=0x8000"
+	    "SHELL:-mllvm -cce-aicore-record-overflow=true"
     "SHELL:-mllvm -cce-aicore-addr-transform"
     "SHELL:-mllvm -cce-aicore-dcci-insert-for-scalar=false"
 )

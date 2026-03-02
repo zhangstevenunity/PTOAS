@@ -1,5 +1,5 @@
-#include "PTO/Transforms/SyncEventIdAllocation.h"
-#include "PTO/Transforms/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
  
 #define DEBUG_TYPE "pto-inject-sync"
  
@@ -263,7 +263,6 @@ void SyncEventIdAllocation::FindUseEventID(unsigned int begin, unsigned int end,
                                            const SyncOperation *s,
                                            SmallVector<bool> &eventId) {
   const auto eventIdSize = eventId.size();
-  if (begin < end) llvm::errs() << "begin: " << begin << " end: " << end << "\n";
   assert(begin < end);
   int scopePair = ScopePair(s);
   eventCyclePool.try_emplace(scopePair, EventCyclePool(eventIdSize));

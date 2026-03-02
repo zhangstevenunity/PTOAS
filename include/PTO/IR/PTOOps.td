@@ -114,9 +114,7 @@ def LoadScalarOp : PTO_Op<"load_scalar", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $ptr `,` $offset `:` type($ptr) `,` type($offset) `)`
-    `outs` `:` type($value)
-    attr-dict
+    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
   }];
 }
 
@@ -136,8 +134,7 @@ def StoreScalarOp : PTO_Op<"store_scalar", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    `ins` `(` $ptr `,` $offset `,` $value `:` type($ptr) `,` type($offset) `,` type($value) `)`
-    attr-dict
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
   }];
 }
 

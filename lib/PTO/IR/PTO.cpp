@@ -4367,6 +4367,7 @@ void TMatmulOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEff
   // Singleton -> 直接取地址
   addEffect(effects, &getLhsMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getRhsMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
 // === TMatmulAccOp ===

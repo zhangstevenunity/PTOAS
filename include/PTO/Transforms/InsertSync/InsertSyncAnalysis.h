@@ -1,8 +1,8 @@
-#ifndef MLIR_DIALECT_PTO_TRANSFORMS_BLOCKSYNCANALYSIS_H
-#define MLIR_DIALECT_PTO_TRANSFORMS_BLOCKSYNCANALYSIS_H
+#ifndef MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNCANALYSIS_H
+#define MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNCANALYSIS_H
  
-#include "PTO/Transforms/SyncCommon.h"
-#include "PTO/Transforms/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <array>
  
@@ -23,20 +23,20 @@ struct SyncRecord {
  
 using SyncRecordList = std::array<SyncRecord, MAX_MULTI_BUFFER_NUM>;
  
-class BlockSyncAnalysis {
+class InsertSyncAnalysis {
 public:
-  BlockSyncAnalysis(SyncIRs &syncIR, 
-                    MemoryDependentAnalyzer &memDepAnalyzer,
-                    SyncOperations &syncOperations, 
-                    func::FuncOp func,
-                    SyncAnalysisMode syncAnalysisMode = SyncAnalysisMode::NORMALSYNC)
+  InsertSyncAnalysis(SyncIRs &syncIR,
+                     MemoryDependentAnalyzer &memDepAnalyzer,
+                     SyncOperations &syncOperations, func::FuncOp func,
+                     SyncAnalysisMode syncAnalysisMode =
+                         SyncAnalysisMode::NORMALSYNC)
       : syncIR_(syncIR), 
         memAnalyzer_(memDepAnalyzer),
         syncOperations_(syncOperations), 
         func_(func),
         syncAnalysisMode_(syncAnalysisMode) {}
  
-  ~BlockSyncAnalysis() = default;
+  ~InsertSyncAnalysis() = default;
  
   /// 入口函数：执行分析并注入同步
   /// insertBarAllAtLast: 是否在最后插入一个全局 Barrier (通常需要)
@@ -165,4 +165,4 @@ private:
 } // namespace pto
 } // namespace mlir
  
-#endif // MLIR_DIALECT_PTO_TRANSFORMS_BLOCKSYNCANALYSIS_H
+#endif // MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNCANALYSIS_H

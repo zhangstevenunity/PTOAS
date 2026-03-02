@@ -1,4 +1,4 @@
-#include "PTO/Transforms/RemoveRedundantSync.h"
+#include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 #include <vector>
@@ -22,7 +22,7 @@ void RemoveRedundantSync::Run() {
  
   // 2. 排序：优先处理范围较小的或者是 Loop 内部的，
   // 这样如果它们被保留，可以用来消除外部更大的。
-  // (NPU-IR 的排序逻辑比较复杂，主要为了确定处理顺序的稳定性)
+  // (这里采用简单且稳定的排序策略，确保处理顺序可预测)
   std::sort(syncOps.begin(), syncOps.end(),
        [](std::pair<SyncOperation *, SyncOperation *> syncPair1,
           std::pair<SyncOperation *, SyncOperation *> syncPair2) {
@@ -95,7 +95,7 @@ bool RemoveRedundantSync::CheckAllSync(SyncOperation *setFlag,
     checkCondition(ptr != nullptr, "Invalid loop element for sync");
     
     // 分两段检查：只要任意一段路径上有覆盖，或者两段组合覆盖？
-    // NPU-IR 逻辑是 ||，这意味着只要有一段路径被覆盖，就认为冗余？
+    // 注意：这里使用 OR（任意一段覆盖即认为冗余），属于更激进的策略。
     // 对回边来说，这通常意味着只要循环体内有更强的回边同步，或者...
     // 这是一个激进的策略。
     return CheckRepeatSync(begin, ptr->endId, syncFinder, setFlag) ||
@@ -200,7 +200,7 @@ bool RemoveRedundantSync::CheckBranchBetween(
 bool RemoveRedundantSync::CheckLoopBetween(LoopInstanceElement *loopElement,
                                            SyncOperation *setFlag,
                                            unsigned &i) {
-  // NPU-IR 策略：对于循环，保守起见暂时不深入检查内部是否覆盖外部。
+  // 对于循环，保守起见暂时不深入检查内部是否覆盖外部。
   // 因为循环可能执行 0 次，如果循环内有同步，但循环不执行，外部依赖就没法满足。
   // 除非通过 Range Analysis 证明循环至少执行一次，否则这里返回 false 是安全的。
   i = loopElement->endId;
@@ -215,8 +215,7 @@ bool RemoveRedundantSync::CanMatchedSync(SmallVector<bool> &syncFinder,
   // - 不能是自己 (Index 相同)
   // - Pipe 必须完全一致 (Src->Dst)
   // - EventIdNum: 内部的同步能力必须强于外部 (related.eventIdNum >= set.eventIdNum ???) 
-  //   NPU-IR 写的是 related > set ? No, related.eventIdNum > set.eventIdNum 表示 related 需要更多 buffer，
-  //   如果 related 很大，说明它是细粒度？ 不，这里简单起见，假设 Single Buffer (IdNum=1)
+  //   这里暂时假设 Single Buffer (eventIdNum=1) 场景即可覆盖主流程
   
   bool isWait = (relatedSync->GetType() == SyncOperation::TYPE::WAIT_EVENT);
   bool isSet = (relatedSync->GetType() == SyncOperation::TYPE::SET_EVENT);

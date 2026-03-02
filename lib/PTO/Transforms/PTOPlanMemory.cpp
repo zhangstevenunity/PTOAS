@@ -756,7 +756,8 @@ void MemPlan::PrintSuccessfulAllocatedMaxBits() {
     for (auto& child : it->second->mergedChildren) {
       ubAllocBits = std::max(ubAllocBits, child->bitsOffset + child->alignedConstBits);
     }
-    llvm::outs() << "[AscendNPU IR] Allocated UB size = " << ubAllocBits << " bits "<< "\n";
+    llvm::outs() << "[PTOPlanMemory] Allocated UB size = " << ubAllocBits
+                 << " bits\n";
   }
 }
 

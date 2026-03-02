@@ -1,4 +1,5 @@
-#include "PTO/Transforms/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/Support/Debug.h"
@@ -7,9 +8,15 @@
  
 using namespace mlir;
 using namespace mlir::pto;
+
+static bool isTraceEnabled() {
+  return isInsertSyncDebugEnabled(InsertSyncDebugLevel::Trace);
+}
  
 // [Debug] 打印 Value 详细信息
 static void printValueDebug(const char* tag, Value v) {
+  if (!isTraceEnabled())
+    return;
   llvm::errs() << tag << ": ";
   if (!v) {
     llvm::errs() << "NULL\n";
@@ -26,8 +33,11 @@ static void printValueDebug(const char* tag, Value v) {
  
 // [Fix & Debug] 增强版 GetRealRoot
 static Value GetRealRoot(Value v) {
-  llvm::errs() << "  [Trace] GetRealRoot Start:\n";
-  printValueDebug("    Current", v);
+  const bool trace = isTraceEnabled();
+  if (trace) {
+    llvm::errs() << "  [Trace] GetRealRoot Start:\n";
+    printValueDebug("    Current", v);
+  }
   
   int depth = 0;
   const int maxDepth = 20;
@@ -35,27 +45,32 @@ static Value GetRealRoot(Value v) {
   while (v && depth++ < maxDepth) {
     Operation *defOp = v.getDefiningOp();
     if (!defOp) {
-        llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
+        if (trace)
+          llvm::errs() << "    -> Reached BlockArgument. Stop.\n";
         break; 
     }
  
     if (auto op = dyn_cast<memref::CollapseShapeOp>(defOp)) {
-        llvm::errs() << "    -> Hit CollapseShapeOp. Peel off.\n";
+        if (trace)
+          llvm::errs() << "    -> Hit CollapseShapeOp. Peel off.\n";
         v = op.getSrc();
         continue;
     }
     if (auto op = dyn_cast<memref::ExpandShapeOp>(defOp)) {
-        llvm::errs() << "    -> Hit ExpandShapeOp. Peel off.\n";
+        if (trace)
+          llvm::errs() << "    -> Hit ExpandShapeOp. Peel off.\n";
         v = op.getSrc();
         continue;
     }
     if (auto op = dyn_cast<memref::ViewOp>(defOp)) {
-        llvm::errs() << "    -> Hit ViewOp. Peel off.\n";
+        if (trace)
+          llvm::errs() << "    -> Hit ViewOp. Peel off.\n";
         v = op.getSource();
         continue;
     }
     if (auto view = dyn_cast<ViewLikeOpInterface>(defOp)) {
-        llvm::errs() << "    -> Hit ViewLikeInterface. Peel off.\n";
+        if (trace)
+          llvm::errs() << "    -> Hit ViewLikeInterface. Peel off.\n";
         v = view.getViewSource();
         continue;
     }
@@ -68,7 +83,10 @@ static Value GetRealRoot(Value v) {
         continue;
     }
  
-    llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName() << "]. Stop.\n";
+    if (trace) {
+      llvm::errs() << "    -> Hit Alloc/Other [" << defOp->getName()
+                   << "]. Stop.\n";
+    }
     break;
   }
   return v;
@@ -80,9 +98,11 @@ bool MemoryDependentAnalyzer::DepBetween(
     DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   
   // [Debug Log] 关键入口信息
-  llvm::errs() << "\n[DepBetween] Checking dependency...\n";
-  llvm::errs() << "  Vec A Size: " << a.size() << "\n";
-  llvm::errs() << "  Vec B Size: " << b.size() << "\n";
+  if (isTraceEnabled()) {
+    llvm::errs() << "\n[DepBetween] Checking dependency...\n";
+    llvm::errs() << "  Vec A Size: " << a.size() << "\n";
+    llvm::errs() << "  Vec B Size: " << b.size() << "\n";
+  }
  
   bool hasAlias = false;
   for (auto &i : a) {
@@ -102,13 +122,17 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   pto::AddressSpace bs = b->scope;
  
   // [Debug Log] 打印比较对象
-  llvm::errs() << "  [MemAlias Check]\n";
-  printValueDebug("    Root A", a->rootBuffer);
-  printValueDebug("    Root B", b->rootBuffer);
-  llvm::errs() << "    Scope A: " << (int)as << ", Scope B: " << (int)bs << "\n";
+  if (isTraceEnabled()) {
+    llvm::errs() << "  [MemAlias Check]\n";
+    printValueDebug("    Root A", a->rootBuffer);
+    printValueDebug("    Root B", b->rootBuffer);
+    llvm::errs() << "    Scope A: " << (int)as << ", Scope B: " << (int)bs
+                 << "\n";
+  }
  
   if (as != bs) {
-    llvm::errs() << "    -> Scope Mismatch. False.\n";
+    if (isTraceEnabled())
+      llvm::errs() << "    -> Scope Mismatch. False.\n";
     return false;
   }
  
@@ -128,15 +152,19 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   Value realRootA = GetRealRoot(a->rootBuffer);
   Value realRootB = GetRealRoot(b->rootBuffer);
  
-  llvm::errs() << "    [Deep Check] Surface Roots differ. Digging deeper...\n";
-  printValueDebug("      Real Root A", realRootA);
-  printValueDebug("      Real Root B", realRootB);
+  if (isTraceEnabled()) {
+    llvm::errs() << "    [Deep Check] Surface Roots differ. Digging deeper...\n";
+    printValueDebug("      Real Root A", realRootA);
+    printValueDebug("      Real Root B", realRootB);
+  }
  
   if (realRootA == realRootB && realRootA != nullptr) {
-      llvm::errs() << "      -> MATCH! Real roots are the same.\n";
+      if (isTraceEnabled())
+        llvm::errs() << "      -> MATCH! Real roots are the same.\n";
       return true;
   } else {
-      llvm::errs() << "      -> Mismatch. Real roots differ.\n";
+      if (isTraceEnabled())
+        llvm::errs() << "      -> Mismatch. Real roots differ.\n";
   }
  
   return false;
