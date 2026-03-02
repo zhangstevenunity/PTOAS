@@ -77,7 +77,7 @@ A pointer to global memory.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `elementType` | `element-type(i1/i8/i16/i32/f16/f32...)` | Element type pointed to |
+| `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element type pointed to |
 
 **Syntax:** `!pto.ptr<f16>`
 
@@ -90,7 +90,7 @@ A descriptor for a global memory tensor. Does not own data - represents a view w
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `shape` | `ArrayRef<int64_t>` | Tensor shape `[d0, d1]` (each dim may be `?` for dynamic) |
-| `elementType` | `element-type(i1/i8/i16/i32/f16/f32...)` | Element data type |
+| `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element data type |
 
 **Syntax:** `!pto.tensor_view<1024x512xf16>`
 
@@ -103,7 +103,7 @@ A logical partition (slice) of a `tensor_view`. Holds shape and stride informati
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `shape` | `ArrayRef<int64_t>` | Partition shape `[d0, d1]` |
-| `elementType` | `element-type(i1/i8/i16/i32/f16/f32...)` | Element data type |
+| `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element data type |
 
 **Syntax:** `!pto.partition_tensor_view<16x16xf16>`
 
@@ -116,7 +116,7 @@ A logical partition (slice) of a `tensor_view`. Holds shape and stride informati
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `loc` | keyword (`vec/mat/left/right/acc/bias`) | Local memory domain (`vec` maps to UB; use `vec` in textual IR) |
-| `dtype` | `element-type(i1/i8/i16/i32/f16/f32...)` | Element data type |
+| `dtype` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element data type |
 | `rows` | `int64` | Physical row count |
 | `cols` | `int64` | Physical column count |
 | `v_row` | `int64` or `?` | Valid row count |
@@ -252,6 +252,40 @@ Global tensor layout inference for [`tensor_view` (Section 2.3)](#23-ptotensor_v
 
 ### 4.1 Pointer & View Operations
 
+##### `pto.addptr` - Add Element Offset to Pointer
+
+**Summary:** Computes a new pointer by adding an element offset to the base pointer.
+
+**Semantics:**
+
+```
+result = ptr + offset   // offset is in elements, not bytes
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `ptr` | `!pto.ptr<elementType>` | Base pointer |
+| `offset` | `index` | Element offset (not byte offset) |
+
+**Results:** `!pto.ptr<elementType>` — the same pointer type as the input.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier; result type must match the input pointer type
+- The operation is pure (no side effects)
+
+**Hardware Mapping:**
+
+- No hardware pipeline (pointer arithmetic only)
+
+**Basic Example:**
+
+```mlir
+%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32> -> !pto.ptr<f32>
+```
+
 ##### `pto.make_tensor_view` - Create Tensor View
 
 **Summary:** Constructs a global tensor view from a pointer, declaring the physical base and strides (no allocation, no data movement).
@@ -293,7 +327,7 @@ This operation defines the physical "base" and stride rules for global memory. I
 **Basic Example:**
 
 ```mlir
-%tv = pto.make_tensor_view %ptr, [%m, %n], [%s0, %s1] : !pto.ptr<f16> -> !pto.tensor_view<? x ? x f16>
+%tv = pto.make_tensor_view %ptr, shape = [%m, %n], strides = [%s0, %s1] : !pto.tensor_view<?x?xf32>
 ```
 
 ---
@@ -416,13 +450,12 @@ result = alloc_tile(base_addr, valid_row, valid_col)   // operands are optional
 ```mlir
 %tb = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 %tb2 = pto.alloc_tile valid_row = %vr valid_col = %vc : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%tb3 = pto.alloc_tile addr = %ad : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
----
+##### `pto.subset` - Subview Tile View
 
-##### `pto.tile_subview` - Subview Tile View
-
-**Summary:** Creates a subview from a parent tile. The result tile buffer is a logical subset of the input tile buffer.
+**Summary:** Create a strided view from a parent tile. The result tile buffer is a logical subset of the input tile buffer.
 
 **Semantics:**
 
@@ -452,12 +485,92 @@ result = source[offsets] with static sizes
 **Basic Example:**
 
 ```mlir
-%sub = pto.tile_subview %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+%sub = pto.subset %src[%i, %j] sizes [32, 32] : !pto.tile_buf<loc=vec, dtype=f16, rows=64, cols=64, v_row=64, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 ```
 
 ---
 
-### 4.2 DMA Data Movement Operations
+### 4.2 Buffer-ID Token Operations (A5)
+
+The following operations implement a **buffer-id based ordering model** for the A5 architecture: acquire and release a buffer-id token on a given pipeline so that operations guarded by the same buffer-id execute in program order across pipes. They lower to the CCEC builtins `get_buf` and `rls_buf`.
+
+##### `pto.get_buf` - Acquire Buffer-ID Token (A5)
+
+**Summary:** Acquires a buffer-id token on a given pipeline. Used in a buffer-id based ordering model: operations on the same pipe that share the same buffer-id are enforced to execute in program order relative to other pipes using the same buffer-id.
+
+**Semantics:**
+
+```
+get_buf(pipe, buf_id [, mode])
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `pipe` | `PipeAttr` | Pipeline on which to acquire the token |
+| `buf_id` | `I32Attr` | Buffer ID (token identifier) |
+| `mode` | `I32Attr` (default: 0) | Optional mode (attribute) |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier
+
+**Hardware Mapping:**
+
+- Intended for **A5**; lowered to the CCEC builtin intrinsic `get_buf`
+
+**Basic Example:**
+
+```mlir
+pto.get_buf [#pto.pipe<PIPE_V>, 0]
+pto.get_buf [#pto.pipe<PIPE_M>, 1] { mode = 0 }
+```
+
+---
+
+##### `pto.rls_buf` - Release Buffer-ID Token (A5)
+
+**Summary:** Releases a previously acquired buffer-id token on a given pipeline. Used in conjunction with `pto.get_buf`: after operations that were ordered under the same buffer-id complete, `rls_buf` releases the token for that pipe and buffer-id.
+
+**Semantics:**
+
+```
+rls_buf(pipe, buf_id [, mode])
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `pipe` | `PipeAttr` | Pipeline on which to release the token |
+| `buf_id` | `I32Attr` | Buffer ID (must match a prior `pto.get_buf`) |
+| `mode` | `I32Attr` (default: 0) | Optional mode (attribute) |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier
+
+**Hardware Mapping:**
+
+- Intended for **A5**; lowered to the CCEC builtin intrinsic `rls_buf`
+
+**Basic Example:**
+
+```mlir
+pto.get_buf [#pto.pipe<PIPE_V>, 0]
+// ... operations under buffer-id 0 ...
+pto.rls_buf [#pto.pipe<PIPE_V>, 0]
+pto.rls_buf [#pto.pipe<PIPE_M>, 1] { mode = 0 }
+```
+
+---
+
+### 4.3 DMA Data Movement Operations
 
 #### PadMode
 
@@ -559,6 +672,79 @@ pto.tstore ins(%tb : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=1
 
 ---
 
+##### `pto.load_scalar` - Load Single Scalar Element
+
+**Summary:** Loads a single scalar element from a pointer or memref at the given offset.
+
+**Semantics:**
+
+```
+value = ptr[offset]
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `ptr` | `!pto.ptr<...>` or `memref<...>` | Source pointer or memref |
+| `offset` | `index` | Element offset |
+
+**Results:** `AnyType` — the element type of the pointed-to memory.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier
+- `ptr` element type must match the result type
+
+**Hardware Mapping:**
+
+- Scalar load from global or local memory
+
+**Basic Example:**
+
+```mlir
+%val = pto.load_scalar %ptr[%offset] : !pto.ptr<f32> -> f32
+```
+
+---
+
+##### `pto.store_scalar` - Store Single Scalar Element
+
+**Summary:** Stores a single scalar element to a pointer or memref at the given offset.
+
+**Semantics:**
+
+```
+ptr[offset] = value
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `value` | `AnyType` | Value to store |
+| `ptr` | `!pto.ptr<...>` or `memref<...>` | Destination pointer or memref |
+| `offset` | `index` | Element offset |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier
+- `value` type must match the element type of `ptr`
+
+**Hardware Mapping:**
+
+- Scalar store to global or local memory
+
+**Basic Example:**
+
+```mlir
+pto.store_scalar %val, %ptr[%offset] : !pto.ptr<f32>, f32
+```
+
+---
+
 ##### `pto.tmov` - Tile Move Between Local Domains
 
 **Summary:** Moves data between local memory domains (e.g., ACC <-> VEC) using tile buffers.
@@ -639,7 +825,7 @@ pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, 
            outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 ```
 
-### 4.3 Matrix Compute Operations
+### 4.4 Matrix Compute Operations
 
 ##### `pto.tmatmul` - Matrix Multiply (Tile World)
 
@@ -1000,7 +1186,7 @@ pto.tgemv.bias ins(%a, %b, %bias : !pto.tile_buf<...>, !pto.tile_buf<...>, !pto.
 
 ---
 
-### 4.4 Vector Arithmetic Operations
+### 4.5 Vector Arithmetic Operations
 
 All vector arithmetic operations execute on the **Vector pipeline** (`PIPE_V`) and use `ins`/`outs` with tile buffers in the **VEC (UB)** memory space.
 
@@ -2708,7 +2894,7 @@ pto.tlrelu ins(%a, %slope : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### 4.5 Reduction Operations
+### 4.6 Reduction Operations
 
 Reduce along rows or columns of a tile. All execute on the **Vector pipeline** (`PIPE_V`).
 
@@ -3023,7 +3209,7 @@ pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### 4.6 Broadcast Operations
+### 4.7 Broadcast Operations
 
 Broadcast values across rows or columns. All execute on the **Vector pipeline** (`PIPE_V`).
 
@@ -3341,7 +3527,7 @@ pto.texpands ins(%scalar : f32)
 
 ---
 
-### 4.7 Compare & Select Operations
+### 4.8 Compare & Select Operations
 
 #### CmpMode
 
@@ -3563,7 +3749,7 @@ pto.tsels ins(%a, %b, %mode : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16
 
 ---
 
-### 4.8 Bitwise Operations
+### 4.9 Bitwise Operations
 
 All bitwise operations execute on the **Vector pipeline** (`PIPE_V`) and operate on data in the **VEC (UB)** memory space.
 
@@ -4093,7 +4279,7 @@ pto.tshrs ins(%a, %s : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
 
 ---
 
-### 4.9 Data Rearrangement Operations
+### 4.10 Data Rearrangement Operations
 
 #### MaskPattern
 
@@ -4406,7 +4592,7 @@ pto.tfillpad ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
 
 ---
 
-### 4.10 Sorting Operations
+### 4.11 Sorting Operations
 
 ##### `pto.tsort32` - Sort Fixed 32-Element Blocks
 
@@ -4483,7 +4669,7 @@ pto.tmrgsort ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>) bloc
 
 ---
 
-### 4.11 Type Conversion
+### 4.12 Type Conversion
 
 #### RoundMode
 
@@ -4541,7 +4727,7 @@ pto.tcvt ins(%src {rmode = #pto<round_mode FLOOR>} : !pto.tile_buf<loc=vec, dtyp
 
 ---
 
-### 4.12 Integer Sequence Generation Operations
+### 4.13 Integer Sequence Generation Operations
 
 ##### `pto.tci` - Contiguous Integer Sequence
 
@@ -4579,7 +4765,7 @@ pto.tci ins(%start : i32) outs(%dst : !pto.tile_buf<...>)
 
 ---
 
-### 4.13 Scalar Element Access
+### 4.14 Scalar Element Access
 
 ##### `pto.tgetval` - Read Single Element
 
@@ -4652,9 +4838,9 @@ pto.tsetval ins(%off, %val : index, f16) outs(%dst : !pto.tile_buf<loc=vec, dtyp
 
 ---
 
-### 4.14 MX Quantized Operations
+### 4.15 MX Quantized Operations
 
-##### `pto.tmov_fp` - Move/Convert with Scaling Tile
+##### `pto.tmov.fp` - Move/Convert with Scaling Tile
 
 **Summary:** Moves/converts from an accumulator tile using a scaling (`fp`) tile for quantization.
 
@@ -4685,7 +4871,7 @@ dst[i, j] = Convert(src[i, j]; fp)   // target-defined quantization/dequantizati
 **Basic Example:**
 
 ```mlir
-pto.tmov_fp ins(%acc, %fp : !pto.tile_buf<...>, !pto.tile_buf<...>)
+pto.tmov.fp ins(%acc, %fp : !pto.tile_buf<...>, !pto.tile_buf<...>)
            outs(%dst : !pto.tile_buf<...>)
 ```
 
@@ -4728,7 +4914,7 @@ pto.tstore_fp ins(%acc, %fp : !pto.tile_buf<...>, !pto.tile_buf<...>)
 
 ---
 
-### 4.15 Synchronization Operations
+### 4.16 Synchronization Operations
 
 ##### `pto.barrier`
 
@@ -4760,6 +4946,41 @@ barrier(pipe)
 
 ```mlir
 pto.barrier #pto.pipe<PIPE_V>
+```
+
+---
+
+##### `pto.barrier_sync`
+
+**Summary:** High-level barrier that specifies a `SyncOpType` instead of a concrete PIPE. The lowering pass maps the op type to the corresponding hardware pipe and emits `pto.barrier`.
+
+**Semantics:**
+
+```
+barrier_sync(op_type)
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `op_type` | `SyncOpTypeAttr` | High-level sync endpoint (e.g. `TLOAD`, `TSTORE_ACC`, `TMATMUL`, `TVEC`) |
+
+**Results:** None.
+
+**Constraints & Verification:**
+
+- No custom verifier beyond type consistency
+
+**Hardware Mapping:**
+
+- Pipeline barrier for the specified operation
+
+**Basic Example:**
+
+```mlir
+pto.barrier_sync [<TMATMUL>]
+pto.barrier_sync [<TVEC>]
 ```
 
 ---
@@ -4908,7 +5129,7 @@ pto.sync.wait #pto.pipe<PIPE_V>, 0
 
 ---
 
-### 4.16 CV-Related Operations
+### 4.17 CV-Related Operations
 
 ##### `pto.section.cube` - Core-Specific Section (Cube)
 
@@ -4976,7 +5197,7 @@ pto.section.vector {
 
 ---
 
-### 4.17 Runtime Intrinsics
+### 4.18 Runtime Intrinsics
 
 ##### `pto.get_block_idx`
 
@@ -5096,9 +5317,7 @@ result = subblock_num()
 %num = pto.get_subblock_num
 ```
 
----
-
-### 4.18 Debug Operations
+### 4.19 Debug Operations
 
 ##### `pto.tprint` - Print Tile
 

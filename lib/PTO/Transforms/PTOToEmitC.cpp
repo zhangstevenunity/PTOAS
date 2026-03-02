@@ -3812,10 +3812,10 @@ struct PTOSetValToSETVAL : public OpConversionPattern<pto::TSetValOp> {
     return success();
   }
 };
-struct PTOGetValToGETVAL : public OpConversionPattern<pto::GetValDpsOp> {
-  using OpConversionPattern<pto::GetValDpsOp>::OpConversionPattern;
+struct PTOGetValToGETVAL : public OpConversionPattern<pto::TGetValOp> {
+  using OpConversionPattern<pto::TGetValOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::GetValDpsOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::TGetValOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value src = peelUnrealized(adaptor.getSrc());
 

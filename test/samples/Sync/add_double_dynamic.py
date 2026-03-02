@@ -22,9 +22,9 @@ def main():
     %10 = arith.ceildivsi %9, %7 : index
     %11 = arith.muli %6, %10 : index
     pto.section.vector {
-      %12 = pto.make_tensor_view %arg0, shape = [%8] strides = [%c1] : !pto.tensor_view<?xf32>
-      %13 = pto.make_tensor_view %arg1, shape = [%8] strides = [%c1] : !pto.tensor_view<?xf32>
-      %14 = pto.make_tensor_view %arg2, shape = [%8] strides = [%c1] : !pto.tensor_view<?xf32>
+      %12 = pto.make_tensor_view %arg0, shape = [%8], strides = [%c1] : !pto.tensor_view<?xf32>
+      %13 = pto.make_tensor_view %arg1, shape = [%8], strides = [%c1] : !pto.tensor_view<?xf32>
+      %14 = pto.make_tensor_view %arg2, shape = [%8], strides = [%c1] : !pto.tensor_view<?xf32>
       %15 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8192, v_row=1, v_col=8192, blayout=row_major, slayout=none_box, fractal=512, pad=0>
       %16 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8192, v_row=1, v_col=8192, blayout=row_major, slayout=none_box, fractal=512, pad=0>
       %17 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8192, v_row=1, v_col=8192, blayout=row_major, slayout=none_box, fractal=512, pad=0>

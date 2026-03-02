@@ -10,7 +10,7 @@ When you change any user-visible behavior, keep these layers synchronized:
 2. **C++ implementation & verifiers**: `lib/PTO/IR`, `lib/PTO/Transforms`
 3. **CLI / tool behavior**: `tools/ptoas`
 4. **Python bindings / samples** (if affected): `python/`, `test/samples`
-5. **Docs**: `README.md`, `docs/`, `PTO_OPS_SPEC.md`
+5. **Docs**: `README.md`, `docs/`
 6. **Tests**: `test/`
 
 ## Rules

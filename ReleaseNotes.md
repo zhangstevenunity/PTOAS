@@ -34,4 +34,4 @@ PTOAS 主要面向：
 
 ## 如何使用PTOAS以及PTO IR的详细描述
 - 构建与环境配置：`README.md`
-- PTO Bytecode 定义：`PTO_OPS_SPEC.md`
+- PTO Bytecode 定义：`docs/PTO_IR_manual.md`

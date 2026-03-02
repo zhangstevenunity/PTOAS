@@ -6,10 +6,10 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
     %c256 = arith.constant 256 : index
     %c8 = arith.constant 8 : index
 
-    %tvA = pto.make_tensor_view %arg1, shape = [%c32, %c256] strides = [%c256, %c1] : !pto.tensor_view<?x?xf32>
-    %tvB = pto.make_tensor_view %arg2, shape = [%c256, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %tvOut = pto.make_tensor_view %arg0, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
-    %tvBias = pto.make_tensor_view %arg3, shape = [%c1, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %tvA = pto.make_tensor_view %arg1, shape = [%c32, %c256], strides = [%c256, %c1] : !pto.tensor_view<?x?xf32>
+    %tvB = pto.make_tensor_view %arg2, shape = [%c256, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %tvOut = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %tvBias = pto.make_tensor_view %arg3, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
 
     %aMat = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
     %bMat = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>

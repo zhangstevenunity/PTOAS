@@ -23,7 +23,7 @@ MLIR_TEXT = r'''module {
     %c1024_4 = arith.constant 1024 : index
     %c1_5 = arith.constant 1 : index
 
-    %base = pto.make_tensor_view %arg0, shape = [%c1, %c1_0, %c16, %c1024, %c1024_1] strides = [%c1048576, %c1048576_2, %c1048576_3, %c1024_4, %c1_5]
+    %base = pto.make_tensor_view %arg0, shape = [%c1, %c1_0, %c16, %c1024, %c1024_1], strides = [%c1048576, %c1048576_2, %c1048576_3, %c1024_4, %c1_5]
            : !pto.tensor_view<1x1x16x1024x1024xf32>
 
     %part = pto.partition_view %base,
@@ -41,7 +41,7 @@ MLIR_TEXT = r'''module {
     pto.tload ins(%part : !pto.partition_tensor_view<?x?x?x?x?xf32>)
             outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=256, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
-    %dst_view = pto.make_tensor_view %arg1, shape = [%c1, %c1_0, %c16, %c1024, %c1024_1] strides = [%c1048576, %c1048576_2, %c1048576_3, %c1024_4, %c1_5]
+    %dst_view = pto.make_tensor_view %arg1, shape = [%c1, %c1_0, %c16, %c1024, %c1024_1], strides = [%c1048576, %c1048576_2, %c1048576_3, %c1024_4, %c1_5]
                : !pto.tensor_view<1x1x16x1024x1024xf32>
 
     %dst_part = pto.partition_view %dst_view,

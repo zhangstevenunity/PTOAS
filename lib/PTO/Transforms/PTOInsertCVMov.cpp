@@ -57,7 +57,7 @@ public:
           if (movCache.count(cacheKey)) {
             operand.set(movCache[cacheKey]);
           } else {
-            auto movOp = builder.create<pto::MovOp>(
+            auto movOp = builder.create<pto::TMovOp>(
                 op->getLoc(), 
                 producerVal.getType(), 
                 producerVal

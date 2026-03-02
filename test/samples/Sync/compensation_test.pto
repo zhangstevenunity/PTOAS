@@ -5,7 +5,7 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
     %c1 = arith.constant 1 : index
     
     // 1. 创建 Tensor View (Global Memory Handle)
-    %view = pto.make_tensor_view %arg0, shape = [%c32, %c32] strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %view = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
     %pt = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
     
     // 2. 分配 Tile (Unified Buffer)

@@ -114,7 +114,7 @@ void PTOIRTranslator::UpdateKernelArgMemInfo() {
 // ============================================================================
 void PTOIRTranslator::RecursionIR(Region *region) {
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    
+
     // --- Case A: 内存分配 (AllocTile) ---
     if (auto allocOp = dyn_cast<pto::AllocTileOp>(op)) {
       if (failed(UpdateAllocTileOpMemInfo(allocOp))) {
@@ -146,9 +146,6 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     }
     else if (auto castOp = dyn_cast<memref::ReinterpretCastOp>(op)) {
       UpdateAliasBufferInfo(castOp.getResult(), castOp.getSource());
-    }
-    else if (auto movOp = dyn_cast<pto::MovOp>(op)) {
-      UpdateAliasBufferInfo(movOp.getResult(), movOp.getSrc());
     }
     // [Fix] 添加 CollapseShape 和 ExpandShape 的支持
     else if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(op)) {
@@ -495,6 +492,7 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
 // 8. 辅助函数
 // ============================================================================
 void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
+  if (!result || !source) return;
   if (!buffer2MemInfoMap_.contains(source)) return;
  
   int64_t deltaOffset = 0;

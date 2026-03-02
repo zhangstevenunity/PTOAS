@@ -14,7 +14,7 @@ module {
         %is0 = arith.cmpi eq, %i, %c0 : index
         %vcol = arith.select %is0, %c32, %c33 : index
 
-        %tv0 = pto.make_tensor_view %arg0, shape = [%n] strides = [%c1] : !pto.tensor_view<?xf32>
+        %tv0 = pto.make_tensor_view %arg0, shape = [%n], strides = [%c1] : !pto.tensor_view<?xf32>
         %ptv0 = pto.partition_view %tv0, offsets = [%c0], sizes = [%c32] : !pto.tensor_view<?xf32> -> !pto.partition_tensor_view<32xf32>
 
         // v_row is static (1) but v_col is dynamic (?) and provided at runtime.

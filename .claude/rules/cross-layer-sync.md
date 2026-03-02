@@ -17,7 +17,7 @@ PTOAS changes often span multiple layers. **All relevant layers must be updated 
    - Flag parsing, validation gating (`--pto-level`, `--pto-arch`, etc.)
 5. **Python bindings** (`python/`)
    - Op bindings generation inputs (TableGen wrapper `.td`), python API, samples
-6. **Docs & specs** (`README.md`, `PTO_OPS_SPEC.md`, `docs/`)
+6. **Docs & specs** (`README.md`, `docs/`)
 7. **Tests** (`test/`)
 
 ## Typical examples

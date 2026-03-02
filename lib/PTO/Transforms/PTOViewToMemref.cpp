@@ -1096,8 +1096,8 @@ struct PTOViewToMemrefPass
       func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
 
       for (auto op : reshapes) {
-        Value src = op.getSrc();
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+        Value src = op->getOperand(0);
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
         if (!tbTy) {
           op.emitError("treshape result must be tile_buf type");
           signalPassFailure();
@@ -1114,8 +1114,8 @@ struct PTOViewToMemrefPass
       func.walk([&](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
 
       for (auto op : bitcasts) {
-        Value src = op.getSrc();
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+        Value src = op->getOperand(0);
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
         if (!tbTy) {
           op.emitError("bitcast result must be tile_buf type");
           signalPassFailure();
@@ -1988,7 +1988,7 @@ struct PTOViewToMemrefPass
           return;
         }
 
-        auto newOp = rewriter.create<pto::GetValDpsOp>(
+        auto newOp = rewriter.create<pto::TGetValOp>(
             op.getLoc(),
             dstType,
             src,

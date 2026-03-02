@@ -962,40 +962,6 @@ def TMovOp  : PTO_TOp<"tmov", [
   }];
 }
 
-// -------------------------
-// non-DPS versions (no suffix)
-//   NOTE: here we keep them permissive so that:
-//     - old IR: tile_view -> tile
-//     - new IR: memref -> tensor
-//   can BOTH parse. Strict checks are done in PTO.cpp only for memref/tensor case.
-// -------------------------
-
-def LoadOp : PTO_Op<"load", [
-    DeclareOpInterfaceMethods<InferTypeOpInterface>
-  ]> {
-  let summary = "PTO load (polymorphic): tile_view->tile OR memref->tensor.";
-  
-  let arguments = (ins 
-    AnyType:$src);
-  
-  let results   = (outs AnyType:$result);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
-
-}
-
-def StoreOp : PTO_Op<"store"> {
-  let summary = "PTO store (polymorphic): (tile_view,tile)->() OR (tensor,memref)->().";
-  
-  let arguments = (ins 
-    AnyType:$src, // Value to store
-    AnyType:$dst // Destination memory
-  );
-  
-  let results = (outs);
-  let hasVerifier = 1;
-  let hasCustomAssemblyFormat = 1;
-}
 
 //===----------------------------------------------------------------------===//
 // Pointer Cast Op (existing)
@@ -1287,18 +1253,6 @@ def BarrierOp : PTO_Op<"barrier"> {
   let assemblyFormat = "$pipe attr-dict";
 }
 
-// High-Level Mov: 值语义
-def MovOp : PTO_Op<"mov", [
-    SameOperandsAndResultType, // 输入输出类型相同 (!pto.tile -> !pto.tile)
-    DeclareOpInterfaceMethods<InferTypeOpInterface>
-  ]> {
-  let summary = "Move data between Cube and Vector domains.";
-  
-  let arguments = (ins AnyType:$src);
-  let results = (outs AnyType:$result);
-
-  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
-}
 
 //===----------------------------------------------------------------------===//
 // FFT Configuration Operation
@@ -1371,44 +1325,7 @@ def MGatherOp : PTO_TOp<"mgather", [
   }];
 }
 
-//===----------------------------------------------------------------------===//
-// MSCATTER (DPS)  +  TMSCATTER (tile world TOp)
-//===----------------------------------------------------------------------===//
 
-//===----------------------------------------------------------------------===//
-// GETVAL (DPS)  +  TGETVAL (tile world TOp)
-//   Read a single element into a scalar.
-//===----------------------------------------------------------------------===//
-
-// ---- DPS version ----
-// pto.getval_dps ins(%src, %offset) outs(%dst) : memref<...>, index -> T
-def GetValDpsOp : PTO_Op<"getval_dps", []> {
-  let summary = "Read a single element from src at offset into a scalar (ins/outs).";
-
-  let arguments = (ins
-    AnyMemRef:$src,
-    Index:$offset
-  );
-
-  let results = (outs AnyType:$dst);
-
-  let hasVerifier = 1;
-
-
-  let assemblyFormat = [{
-    `ins` `(` $src `,` $offset `:` qualified(type($src)) `,` type($offset) `)`
-    `outs` `:` qualified(type($dst) )
-    attr-dict
-  }];
-
-  let extraClassDeclaration = [{
-    static StringRef getIntrinsicName() { return "GETVAL"; }
-  }];
-}
-//===----------------------------------------------------------------------===//
-// SETVAL (DPS) + TSETVAL (tile world TOp)
-//   Write a scalar into a single element at offset.
-//===----------------------------------------------------------------------===//
 
 // ---- tile-world TOp version ----
 // pto.tsetval ins(%offset, %val) outs(%dst) : PTODpsType, index, T
