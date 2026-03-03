@@ -13,7 +13,6 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "AllocToPointerCast.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "PTO/Transforms/DeviceSpec.h"
 
 #include "llvm/Support/Debug.h"
 
@@ -1774,24 +1773,55 @@ LogicalResult MemPlan::InitMemSpecsFromModule(func::FuncOp funcOp) {
   scalingSpaceSize = 1572864;
 
   auto moduleOp = getTopLevelModuleOp(funcOp);
-  if (!moduleOp)
+  StringAttr strAttr = moduleOp->getAttrOfType<StringAttr>("pto.device-spec");
+  if (!strAttr) {
     return success();
-
-  // Determine the effective arch for memory specs. Prefer explicit module
-  // attribute "pto.target-arch" (set by drivers), otherwise infer from
-  // "pto.device-spec" when available. Default to A3.
-  PTOArch effectiveArch = PTOArch::A3;
-  if (auto archAttr = moduleOp->getAttrOfType<StringAttr>("pto.target-arch")) {
-    if (auto parsed = parsePTOArch(archAttr.getValue()))
-      effectiveArch = parsed.value();
-  } else if (auto specAttr =
-                 moduleOp->getAttrOfType<StringAttr>("pto.device-spec")) {
-    if (auto inferred = inferPTOArchFromDeviceSpec(specAttr.getValue()))
-      effectiveArch = inferred.value();
   }
 
-  // A3 uses the defaults above. A5 has a different local memory spec.
-  if (effectiveArch == PTOArch::A5) {
+  if (strAttr.getValue().str() == "Ascend910B1" ||
+      strAttr.getValue().str() == "Ascend910B2" ||
+      strAttr.getValue().str() == "Ascend910B3" ||
+      strAttr.getValue().str() == "Ascend910B4" ||
+      strAttr.getValue().str() == "Ascend910_9362" ||
+      strAttr.getValue().str() == "Ascend910_9372" ||
+      strAttr.getValue().str() == "Ascend910_9381" ||
+      strAttr.getValue().str() == "Ascend910_9382" ||
+      strAttr.getValue().str() == "Ascend910_9391" ||
+      strAttr.getValue().str() == "Ascend910_9392") {
+    return success();
+  }
+
+  if (strAttr.getValue().str() == "Ascend310B1" ||
+      strAttr.getValue().str() == "Ascend310B2" ||
+      strAttr.getValue().str() == "Ascend310B3" ||
+      strAttr.getValue().str() == "Ascend310B4") {
+    ubSpaceSize = 2097152;
+    l1SpaceSize = 8388608;
+    l0aSpaceSize = 524288;
+    l0bSpaceSize = 524288;
+    l0cSpaceSize = 1048576;
+    ubAlignSize = 256;
+    l1AlignSize = 256;
+    l0cAlignSize = 4096;
+    l0aAlignSize = 4096;
+    l0bAlignSize = 4096;
+    biasAlignSize = 256;
+    biasSpaceSize = 524288;
+    scalingAlignSize = 256;
+    scalingSpaceSize = 2097152;
+    return success();
+  }
+
+  if (strAttr.getValue().str() == "Ascend910_950z" ||
+      strAttr.getValue().str() == "Ascend910_9579" ||
+      strAttr.getValue().str() == "Ascend910_957b" ||
+      strAttr.getValue().str() == "Ascend910_957d" ||
+      strAttr.getValue().str() == "Ascend910_950z" ||
+      strAttr.getValue().str() == "Ascend910_9581" ||
+      strAttr.getValue().str() == "Ascend910_9589" ||
+      strAttr.getValue().str() == "Ascend910_958a" ||
+      strAttr.getValue().str() == "Ascend910_958b" ||
+      strAttr.getValue().str() == "Ascend910_9599") {
     ubSpaceSize = 2031616;
     l1SpaceSize = 4194304;
     l0aSpaceSize = 524288;

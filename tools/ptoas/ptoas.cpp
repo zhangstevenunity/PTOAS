@@ -8,7 +8,6 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
-#include "PTO/Transforms/DeviceSpec.h"
 #include "PTO/Transforms/BufferizableOpInterfaceImpl.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -125,16 +124,6 @@ enum class PTOBuildLevel {
   Level2,
   Level3,
 };
-
-static std::optional<pto::PTOArch>
-inferArchFromModuleDeviceSpec(mlir::ModuleOp module) {
-  if (!module)
-    return std::nullopt;
-  if (auto spec = module.getOperation()->getAttrOfType<mlir::StringAttr>(
-          "pto.device-spec"))
-    return pto::inferPTOArchFromDeviceSpec(spec.getValue());
-  return std::nullopt;
-}
 
 static PTOBuildLevel defaultBuildLevel() {
   return PTOBuildLevel::Level2;
@@ -605,39 +594,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Resolve target arch from:
-  //   - explicit --pto-arch (highest priority)
-  //   - otherwise module attribute "pto.device-spec" (if present)
-  //   - otherwise default (A3)
-  const bool archFlagExplicit = (ptoTargetArch.getNumOccurrences() > 0);
-  auto flagArch = pto::parsePTOArch(ptoTargetArch);
-  if (!flagArch.has_value()) {
-    llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
-                 << "'. Expected 'a3' or 'a5'.\n";
-    return 1;
-  }
-  auto deviceArch = inferArchFromModuleDeviceSpec(*module);
-
-  pto::PTOArch effectiveArch = flagArch.value();
-  if (archFlagExplicit) {
-    if (auto spec = module->getOperation()->getAttrOfType<mlir::StringAttr>(
-            "pto.device-spec")) {
-      if (deviceArch.has_value() && deviceArch.value() != effectiveArch) {
-        llvm::errs() << "Error: --pto-arch='" << ptoTargetArch
-                     << "' conflicts with module attribute pto.device-spec='"
-                     << spec.getValue() << "'.\n";
-        return 1;
-      }
-    }
-  } else if (deviceArch.has_value()) {
-    effectiveArch = deviceArch.value();
-  }
-
-  // Make the resolved arch visible to passes.
-  module->getOperation()->setAttr(
-      "pto.target-arch",
-      mlir::StringAttr::get(&context, pto::toString(effectiveArch)));
-
   PTOBuildLevel effectiveLevel = defaultBuildLevel();
   if (!parseBuildLevel(ptoBuildLevel, effectiveLevel)) {
     llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
@@ -713,12 +669,16 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
 
   pm.addPass(createCSEPass());
-  if (effectiveArch == pto::PTOArch::A3) {
+  std::string arch = ptoTargetArch;
+  for (char &c : arch)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else if (effectiveArch == pto::PTOArch::A5) {
+  } else if (arch == "a5") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
   } else {
-    llvm::errs() << "Error: internal: unexpected effectiveArch.\n";
+    llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
+                 << "'. Expected 'a3' or 'a5'.\n";
     return 1;
   }
   pm.addPass(emitc::createFormExpressionsPass());
