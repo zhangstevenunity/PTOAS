@@ -1,0 +1,50 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for PTOAS
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please describe the feature and the user-facing behavior clearly.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: e.g. "Add --emit-addptr-trace to annotate generated C++"
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / use case
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed API / behavior
+      placeholder: |
+        - CLI flags:
+        - IR changes:
+        - Backward compatibility considerations:
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+    validations:
+      required: false
+

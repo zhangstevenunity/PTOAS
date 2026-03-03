@@ -1,0 +1,38 @@
+name: Documentation Issue
+description: Report missing, incorrect, or unclear documentation
+title: "[Docs] "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve PTOAS documentation!
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Which file/section needs improvement?
+      placeholder: e.g. "README.md section 5. CLI usage", "docs/..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's wrong or missing?
+      placeholder: |
+        - Incorrect command
+        - Outdated flag behavior
+        - Missing example
+        - Unclear description
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+    validations:
+      required: false
+

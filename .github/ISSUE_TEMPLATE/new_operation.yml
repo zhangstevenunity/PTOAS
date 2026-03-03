@@ -1,0 +1,78 @@
+name: New Operation Request
+description: Propose a new PTO Dialect op / semantic extension
+title: "[New Op] "
+labels: ["enhancement", "new-operation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a new op! Please describe semantics precisely so we can implement it consistently across ODS, verifiers, lowering, codegen, and Python bindings (if any).
+
+  - type: textarea
+    id: proposed_name
+    attributes:
+      label: Proposed op name & signature
+      description: Prefer ODS-like or MLIR assembly-like form.
+      placeholder: |
+        - ODS: `pto.my_new_op` (operands...) -> (results...)
+        - MLIR:
+        ```mlir
+        %y = pto.my_new_op %x, %k {attr = ...} : (...) -> (...)
+        ```
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Semantics (what does it do?)
+      description: Include shape rules, constraints, and edge cases.
+      placeholder: |
+        - Inputs:
+        - Outputs:
+        - Valid shapes/dtypes:
+        - Side effects / memory effects:
+        - Failure modes / verifier rules:
+    validations:
+      required: true
+
+  - type: textarea
+    id: lowering
+    attributes:
+      label: Lowering/codegen expectations
+      description: How should this lower (e.g. to memref/emitc), and any arch/level specifics.
+      placeholder: |
+        - Lowering path: PTO -> memref -> EmitC
+        - Arch differences: a3 vs a5
+        - Level gating: level1/2/3 differences
+    validations:
+      required: false
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example IR usage
+      placeholder: |
+        ```mlir
+        // Example module showing the op in context
+        ```
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / use case
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Git commit (optional)
+      description: If proposing against a specific revision, provide `git rev-parse HEAD`
+    validations:
+      required: false
+

@@ -1,0 +1,123 @@
+name: Bug Report
+description: Report a general bug in PTOAS
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please provide enough info for us to reproduce and fix it.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part is affected?
+      options:
+        - PTO Dialect / ODS (include/PTO/IR)
+        - Verifier / IR semantics (lib/PTO/IR)
+        - Passes / Transforms (lib/PTO/Transforms)
+        - EmitC / Codegen (lib/PTO/Transforms/PTOToEmitC.cpp)
+        - CLI / Tooling (tools/ptoas)
+        - Python bindings (python/)
+        - Tests (test/)
+        - Build / CMake / Packaging
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear description of the bug
+      placeholder: e.g. "ptoas crashes when lowering pto.bind_tile after memref.subview"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction (minimal)
+      description: |
+        Provide either:
+        - A minimal `.pto` / MLIR snippet, or
+        - A Python script that prints MLIR, plus the `ptoas` command you run.
+      placeholder: |
+        ```mlir
+        // Paste minimal MLIR here
+        ```
+        ```bash
+        # Command you ran
+        ./build/tools/ptoas/ptoas input.pto -o out.cpp
+        ```
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: e.g. "ptoas should emit valid C++ without type errors"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / error logs
+      placeholder: |
+        ```text
+        Paste the error message / stack trace / bad output here
+        ```
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Git commit
+      description: Run `git rev-parse HEAD` to get the exact commit id
+      placeholder: e.g. f04cde8a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host_platform
+    attributes:
+      label: Host platform
+      options:
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - macOS (arm64)
+        - macOS (x86_64)
+        - Other
+    validations:
+      required: false
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Target Ascend arch (if relevant)
+      options:
+        - N/A
+        - a3
+        - a5
+    validations:
+      required: false
+
+  - type: dropdown
+    id: pto_level
+    attributes:
+      label: PTOAS build level (if relevant)
+      options:
+        - N/A
+        - level1
+        - level2
+        - level3
+    validations:
+      required: false
+
