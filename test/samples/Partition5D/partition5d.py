@@ -27,12 +27,12 @@ def build_module():
         pto.register_dialect(ctx, load=True)
 
         f32 = builtin.F32Type.get()
-        mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+        vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
         tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 1024, 1024], f32)
         part_view_ty = pto.PartitionTensorViewType.get([1, 1, 16, 16, 16], f32)
         tile_buf_ty = pto.TileBufType.get(
-            [256, 16], f32, mat, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
+            [256, 16], f32, vec, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
         )
 
         ptr_f32 = pto.PtrType.get(f32)
@@ -75,4 +75,3 @@ def build_module():
 if __name__ == "__main__":
     module = build_module()
     print(module)
-

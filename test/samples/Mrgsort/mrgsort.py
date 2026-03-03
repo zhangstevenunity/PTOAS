@@ -23,6 +23,8 @@ def build():
 
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
+            tile_buf_32x32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
+            # NOTE: pto.tmrgsort (format1) expects a rank-2 tile with rows == 1.
             tile_buf_1x1024 = pto.TileBufType.get([1, 1024], f32, vec, [1, 1024], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
@@ -49,20 +51,25 @@ def build():
                 # %3/%4/%8 = pto.partition_view %tv, offsets=[%c0,%c0], sizes=[%c32,%c32]
                 sv0 = pto.PartitionViewOp(part_view_32x32, tv0, offsets=[c0, c0], sizes=[c32, c32]).result
 
-                # %5/%6/%7 = pto.alloc_tile : <1x1024xf32>
-                tb0 = pto.AllocTileOp(tile_buf_1x1024).result
-                tb1 = pto.AllocTileOp(tile_buf_1x1024).result
+                # A5 pto-isa does not allow collapsing a static 32x32 GlobalTensor
+                # directly into a 1x1024 Vec tile via TLOAD. Load as 32x32 first,
+                # then alias as 1x1024 for TMRGSORT.
+                tb_load_32x32 = pto.AllocTileOp(tile_buf_32x32).result
+                tb_sort_in_1x1024 = pto.AllocTileOp(tile_buf_1x1024).result
+                tb_sort_out_1x1024 = pto.AllocTileOp(tile_buf_1x1024).result
 
-                pto.TLoadOp(None, sv0, tb0)  # result=None
+                pto.TLoadOp(None, sv0, tb_load_32x32)  # result=None
+                pto.TReshapeOp(tb_load_32x32, tb_sort_in_1x1024)
 
                 # Format1: ins(%src, %blockLen : tile_buf, i32) outs(%dst : tile_buf)
-                pto.TMrgSortOp(srcs=[tb0], dsts=[tb1], blockLen=c64_i32)
+                pto.TMrgSortOp(srcs=[tb_sort_in_1x1024], dsts=[tb_sort_out_1x1024], blockLen=c64_i32)
+                pto.TReshapeOp(tb_sort_out_1x1024, tb_load_32x32)
 
                 # %8 = partition_view on output tensor_view
                 sv1 = pto.PartitionViewOp(part_view_32x32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # pto.store_dps_tb ins(%tb1) outs(%sv1)
-                pto.TStoreOp(None, tb1, sv1)
+                pto.TStoreOp(None, tb_load_32x32, sv1)
 
                 func.ReturnOp([])
 
