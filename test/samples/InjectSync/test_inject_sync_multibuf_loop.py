@@ -4,11 +4,10 @@ from mlir.ir import (
     Location,
     Module,
     InsertionPoint,
-    MemRefType,
-    F16Type,
+    F32Type,
     IndexType,
 )
-from mlir.dialects import func, arith, scf, memref, pto
+from mlir.dialects import func, arith, scf, pto
 from mlir.dialects.arith import CmpIPredicate
 
 
@@ -18,18 +17,30 @@ def build():
 
         with Location.unknown(ctx):
             m = Module.create()
-            f16 = F16Type.get(ctx)
+            f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
 
-            # A minimal loop that reuses the same UB buffer across iterations.
-            # This should trigger multi-buffer synchronization insertion on the
-            # loop back-edge (MTE3 -> MTE2) when `--enable-insert-sync` is on.
-            gm = pto.AddressSpaceAttr.get(pto.AddressSpace.GM, ctx)
+            # A minimal ping-pong (double-buffer) loop.
+            #
+            # This triggers multi-buffer synchronization insertion on the loop
+            # back-edge (MTE3 -> MTE2) when `--enable-insert-sync` is enabled:
+            # the inserted sync needs 2 event IDs (ping-pong) because the
+            # dependency touches local memory (VEC/UB), so the event id is
+            # selected by `iv % 2`.
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
-            mem_gm = MemRefType.get([16, 16, 16], f16, memory_space=gm)
-            mem_ub = MemRefType.get([16, 16, 16], f16, memory_space=vec)
+            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+            pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
-            fn_ty = func.FunctionType.get([mem_gm, mem_gm], [])
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
+
+            ptr_f32 = pto.PtrType.get(f32, ctx)
+            tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
+            tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
+            ws_type = pto.TileBufType.get([32, 64], f32, vec, [32, 32], cfg, ctx)
+
+            fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("test_inject_sync_multibuf_loop", fn_ty)
                 entry = fn.add_entry_block()
@@ -38,22 +49,38 @@ def build():
                 c0 = arith.ConstantOp(idx, 0).result
                 c1 = arith.ConstantOp(idx, 1).result
                 c2 = arith.ConstantOp(idx, 2).result
+                c4 = arith.ConstantOp(idx, 4).result
+                c32 = arith.ConstantOp(idx, 32).result
 
-                ub = memref.AllocOp(mem_ub, [], []).result
+                src_ptr, dst_ptr = entry.arguments
 
-                loop = scf.ForOp(c0, c2, c1, [])
+                tv_src = pto.MakeTensorViewOp(tv2_f32, src_ptr, [c32, c32], [c32, c1]).result
+                tv_dst = pto.MakeTensorViewOp(tv2_f32, dst_ptr, [c32, c32], [c32, c1]).result
+                sv_src = pto.PartitionViewOp(tile_view_32, tv_src, offsets=[c0, c0], sizes=[c32, c32]).result
+                sv_dst = pto.PartitionViewOp(tile_view_32, tv_dst, offsets=[c0, c0], sizes=[c32, c32]).result
+
+                # Allocate a single workspace and create two non-overlapping
+                # 32x32 subsets (ping/pong) to model double buffering.
+                workspace = pto.AllocTileOp(ws_type).result
+                ping = pto.SubsetOp(workspace, [c0, c0], sizes=[32, 32]).result
+                pong = pto.SubsetOp(workspace, [c0, c32], sizes=[32, 32]).result
+
+                loop = scf.ForOp(c0, c4, c1, [])
                 with InsertionPoint(loop.body):
                     iv = loop.induction_variable
 
-                    pto.TLoadOp(None, entry.arguments[0], ub)
-
-                    cond = arith.CmpIOp(CmpIPredicate.eq, iv, c0).result
-                    ifop = scf.IfOp(cond, [], hasElse=False)
+                    parity = arith.RemUIOp(iv, c2).result
+                    is_even = arith.CmpIOp(CmpIPredicate.eq, parity, c0).result
+                    ifop = scf.IfOp(is_even, [], hasElse=True)
                     with InsertionPoint(ifop.then_block):
-                        pto.TAddOp(ub, ub, ub)
+                        pto.TLoadOp(None, sv_src, ping)
+                        pto.TStoreOp(None, ping, sv_dst)
+                        scf.YieldOp([])
+                    with InsertionPoint(ifop.else_block):
+                        pto.TLoadOp(None, sv_src, pong)
+                        pto.TStoreOp(None, pong, sv_dst)
                         scf.YieldOp([])
 
-                    pto.TStoreOp(None, ub, entry.arguments[1])
                     scf.YieldOp([])
 
                 func.ReturnOp([])
