@@ -557,6 +557,86 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
+      // Stage 0.75: Canonicalize pto.treshape dst to alias src buffer
+      // ------------------------------------------------------------------
+      //
+      // On Ascend NPU, PTO-ISA `TRESHAPE` is implemented as a pointer reassignment
+      // (dst aliases src). If we model `treshape` as writing into an independently
+      // allocated dst buffer, MemPlan may legally reuse src's memory after src
+      // dies, while dst still points to src at runtime. This breaks memory reuse
+      // correctness and is a root cause of Issue #170.
+      //
+      // Here we fold the dedicated dst allocation into an alias bind:
+      //   %dst = pto.bind_tile(%alloc_dst, ...)
+      //   pto.treshape ins(%src) outs(%dst)
+      // =>
+      //   %dst = pto.bind_tile(%src_base, ...)
+      //   pto.treshape ins(%src) outs(%dst)
+      //
+      // This preserves the user-visible `treshape` op (and its downstream
+      // codegen/static checks) while eliminating the wasted buffer and making
+      // liveness/memory planning consistent with runtime aliasing.
+      SmallVector<mlir::pto::TReshapeOp, 8> reshapes;
+      func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
+
+      auto unwrapBindSource = [](Value v) -> Value {
+        if (auto bind = v.getDefiningOp<mlir::pto::BindTileOp>())
+          return bind.getSource();
+        return v;
+      };
+
+      for (auto op : reshapes) {
+        Value src = op.getSrc();
+        Value dst = op.getDst();
+
+        // Only handle the common case produced by Stage 0.5:
+        //   memref.alloc -> pto.bind_tile -> (dst)
+        auto dstBind = dst.getDefiningOp<mlir::pto::BindTileOp>();
+        if (!dstBind)
+          continue;
+
+        Value dstBase = dstBind.getSource();
+        if (!dstBase || !dstBase.hasOneUse())
+          continue;
+
+        // Only fold when dstBase is a freshly-allocated buffer (or an explicit
+        // address cast) owned by this bind_tile.
+        if (!dstBase.getDefiningOp<memref::AllocOp>() &&
+            !dstBase.getDefiningOp<mlir::pto::PointerCastOp>())
+          continue;
+
+        Value srcBase = unwrapBindSource(src);
+
+        // Keep it conservative: require matching memory space when both are
+        // typed memrefs (treshape is only valid within the same TileType/pipe).
+        if (auto srcMr = dyn_cast<MemRefType>(srcBase.getType())) {
+          if (auto dstMr = dyn_cast<MemRefType>(dstBind.getType())) {
+            if (srcMr.getMemorySpace() != dstMr.getMemorySpace())
+              continue;
+          }
+        }
+
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(dstBind);
+        auto aliasBind = rewriter.create<mlir::pto::BindTileOp>(
+            dstBind.getLoc(), dstBind.getType(), srcBase, dstBind.getValidRow(),
+            dstBind.getValidCol(), dstBind.getConfig());
+
+        rewriter.replaceAllUsesWith(dstBind.getResult(), aliasBind.getResult());
+        rewriter.eraseOp(dstBind);
+
+        // Drop the now-dead dst allocation/cast if possible.
+        if (auto alloc = dstBase.getDefiningOp<memref::AllocOp>()) {
+          if (alloc->use_empty())
+            rewriter.eraseOp(alloc);
+        } else if (auto pc =
+                       dstBase.getDefiningOp<mlir::pto::PointerCastOp>()) {
+          if (pc->use_empty())
+            rewriter.eraseOp(pc);
+        }
+      }
+
+      // ------------------------------------------------------------------
       // Stage 1: Lower pto.make_tensor_view -> memref.reinterpret_cast
       // ------------------------------------------------------------------
       SmallVector<mlir::pto::MakeTensorViewOp, 8> makeViews;
