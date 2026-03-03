@@ -129,10 +129,10 @@ bool InsertSyncAnalysis::IsNoNeedToInsertSync(
     return true;
   }
 
-  if (frontPipe == nowPipe && !isBackwardDep) {
-    // Only insert an intra-pipe barrier for real GM hazards.
-    return !IsGMHazard(nowCompound, frontCompound);
-  }
+  // Do not short-circuit same-pipe pairs here. If a real memory dependency is
+  // present, MemAnalyze will insert a PIPE_BARRIER to serialize that pipe,
+  // matching the "bar_v/bar_m" style intra-pipe synchronization expected by
+  // higher-level frontends.
 
   return false;
 }
@@ -274,22 +274,6 @@ void InsertSyncAnalysis::MemAnalyze(
   DepBaseMemInfoPairVec depVec;
   if (!IsMemInfoHasDependency(nowCompound, frontCompound, depVec)) {
     return;
-  }
-
-  // Intra-pipe dependencies that do not touch GM can be ignored to avoid
-  // over-synchronization on local memories.
-  if (nowCompound->kPipeValue == frontCompound->kPipeValue) {
-    bool touchesGM = false;
-    for (auto &pair : depVec) {
-      if ((pair.first && pair.first->scope == pto::AddressSpace::GM) ||
-          (pair.second && pair.second->scope == pto::AddressSpace::GM)) {
-        touchesGM = true;
-        break;
-      }
-    }
-    if (!touchesGM) {
-      return;
-    }
   }
 
   if (forEndIndex.has_value()) {

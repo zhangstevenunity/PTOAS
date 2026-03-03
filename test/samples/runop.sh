@@ -359,6 +359,16 @@ process_one_dir() {
         fi
       fi
 
+      # Regression guard: intra-pipe dependencies must be serialized by a
+      # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
+      if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
+        if ! grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
+          echo -e "${A}(${base}.pto)\tFAIL\tmissing pipe_barrier(PIPE_V) for intra-pipe dependency"
+          overall=1
+          continue
+        fi
+      fi
+
       # Smoke guard: A5 buffer-id sync ops must lower to get_buf/rls_buf calls.
       if [[ "$base" == "test_a5_buf_sync" ]]; then
         if ! grep -Fq "get_buf(" "$cpp" || ! grep -Fq "rls_buf(" "$cpp"; then
