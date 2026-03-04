@@ -305,6 +305,39 @@ def SubsetOp : PTO_Op<"subset", [
   }];
 }
 
+// ============================================================================
+// SSA TileBuf Config Ops (aliasing views)
+// ============================================================================
+
+def BitcastOp : PTO_Op<"bitcast", [
+    Pure,
+    ViewLikeOpInterface
+  ]> {
+  let summary = "SSA dtype reinterpretation of a tile buffer view (aliases src storage)";
+  let description = [{
+    Returns a tile buffer view with a different element type (dtype) while
+    reusing the same underlying storage as the source.
+
+    This op is a metadata/config rewrite only (no data movement).
+  }];
+
+  let arguments = (ins
+    TileBufType:$src
+  );
+
+  let results = (outs
+    TileBufType:$result
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
+
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSrc(); }
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // DMA Ops
 //===----------------------------------------------------------------------===//
@@ -2834,34 +2867,31 @@ def TRemSOp: PTO_TOp<"trems", [
   }];
 }
 //===----------------------------------------------------------------------===//
-// PTOOps.td  (add TRESHAPE TBDPS/tile buffer op)
+// PTOOps.td  (TRESHAPE: SSA view op; aliases src storage)
 //===----------------------------------------------------------------------===//
 
 def TReshapeOp: PTO_TOp<"treshape", [
-  PTO_DpsInitOpInterface,
   OpPipeInterface,
-  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  Pure,
+  ViewLikeOpInterface
 ]> {
-  let summary = "TRESHAPE: Elementwise remainder with a scalar";
+  let summary = "TRESHAPE: Reinterpret a tile buffer view (SSA; aliases src storage)";
 
   let arguments = (ins
-    PTODpsType:$src,
-    PTODpsType:$dst
+    PTODpsType:$src
   );
 
-  let results = (outs);
+  let results = (outs
+    PTODpsType:$result
+  );
 
   let hasVerifier = 1;
 
-  let assemblyFormat = [{
-    `ins` `(` $src `:` qualified(type($src)) `)`
-    `outs` `(` $dst `:` qualified(type($dst) ) `)`
-    attr-dict
-  }];
+  let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::Value getViewSource() { return getSrc(); }
   }];
 }
 //===----------------------------------------------------------------------===//

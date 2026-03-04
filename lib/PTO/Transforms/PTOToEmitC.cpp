@@ -5466,31 +5466,6 @@ struct PTORemSToEmitC : public OpConversionPattern<pto::TRemSOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// PTOConvert.cpp  (add lowering + patterns.add for TRESHAPE DPS/memref op)
-//===----------------------------------------------------------------------===//
-
-struct PTOReshapeToEmitC : public OpConversionPattern<pto::TReshapeOp> {
-  using OpConversionPattern<pto::TReshapeOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::TReshapeOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-
-    Value src = peelUnrealized(adaptor.getSrc());
-    Value dst = peelUnrealized(adaptor.getDst());
-
-    SmallVector<Value, 2> operands{dst, src};
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TRESHAPE",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/operands);
-
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
-
-//===----------------------------------------------------------------------===//
 // PTOConvert.cpp  (add lowering + patterns.add for TROWEXPAND DPS/memref op)
 //===----------------------------------------------------------------------===//
 
@@ -6980,7 +6955,6 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTODivSToEmitC>(typeConverter, ctx);
   patterns.add<PTOTDivSToEmitC>(typeConverter, ctx);
   patterns.add<PTORemToEmitC>(typeConverter, ctx);
-  patterns.add<PTOReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTORecipToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulsToEmitC>(typeConverter, ctx);
   patterns.add<PTOExpToEmitC>(typeConverter, ctx);

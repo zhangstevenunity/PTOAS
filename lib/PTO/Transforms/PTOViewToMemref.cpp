@@ -1029,6 +1029,106 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
+      // Stage 2.75: Lower SSA tile_buf view ops (pto.treshape / pto.bitcast)
+      // ------------------------------------------------------------------
+      auto lowerTileBufViewLike = [&](Operation *anchorOp, Value src,
+                                      mlir::pto::TileBufType tbTy) -> Value {
+        Location loc = anchorOp->getLoc();
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(anchorOp);
+
+        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+        if (!srcMrTy) {
+          anchorOp->emitError("tile_buf view op src must be lowered to memref first");
+          signalPassFailure();
+          return Value();
+        }
+
+        auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
+        if (!targetType) {
+          anchorOp->emitError("failed to convert tile_buf type to memref type");
+          signalPassFailure();
+          return Value();
+        }
+
+        // Require static shape for now (alloc_tile lowering also requires this).
+        for (int64_t d : targetType.getShape()) {
+          if (d == ShapedType::kDynamic) {
+            anchorOp->emitError("dynamic shapes are not supported for tile_buf view ops");
+            signalPassFailure();
+            return Value();
+          }
+        }
+
+        // Re-bind (possibly-updated) tile metadata.
+        Value parentVRow;
+        Value parentVCol;
+        lookupValidDims(src, parentVRow, parentVCol);
+
+        Value vRow = parentVRow;
+        Value vCol = parentVCol;
+        ArrayRef<int64_t> validShape = tbTy.getValidShape();
+        if (!tbTy.hasDynamicValid()) {
+          if (validShape.size() >= 1 && validShape[0] >= 0) {
+            vRow = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[0]))
+                       .getResult();
+          }
+          if (validShape.size() >= 2 && validShape[1] >= 0) {
+            vCol = rewriter
+                       .create<arith::ConstantOp>(loc, rewriter.getIndexType(),
+                                                  rewriter.getIndexAttr(validShape[1]))
+                       .getResult();
+          }
+        }
+
+        auto configAttr = tbTy.getConfigAttr();
+        if (!configAttr) configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+        auto bindOp = rewriter.create<pto::BindTileOp>(
+            loc, targetType, src,
+            vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        return bindOp.getResult();
+      };
+
+      SmallVector<mlir::pto::TReshapeOp, 8> reshapes;
+      func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
+
+      for (auto op : reshapes) {
+        Value src = op.getSrc();
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+        if (!tbTy) {
+          op.emitError("treshape result must be tile_buf type");
+          signalPassFailure();
+          return;
+        }
+        Value lowered = lowerTileBufViewLike(op, src, tbTy);
+        if (!lowered)
+          return;
+        IRRewriter rewriter(ctx);
+        rewriter.replaceOp(op, lowered);
+      }
+
+      SmallVector<mlir::pto::BitcastOp, 8> bitcasts;
+      func.walk([&](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
+
+      for (auto op : bitcasts) {
+        Value src = op.getSrc();
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
+        if (!tbTy) {
+          op.emitError("bitcast result must be tile_buf type");
+          signalPassFailure();
+          return;
+        }
+        Value lowered = lowerTileBufViewLike(op, src, tbTy);
+        if (!lowered)
+          return;
+        IRRewriter rewriter(ctx);
+        rewriter.replaceOp(op, lowered);
+      }
+
+      // ------------------------------------------------------------------
       // Stage 3: Rewrite Compute Ops 
       // [关键] 全面使用 op->getOperand(i) 避免 Typed Accessor Crash
       // ------------------------------------------------------------------

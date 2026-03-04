@@ -16,13 +16,16 @@ def build():
             tv2_f32 = pto.TensorViewType.get(2, f32, ctx)
             tile_view_32 = pto.PartitionTensorViewType.get([32, 32], f32, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
-            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            bl_row = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            bl_col = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
             sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
             pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
 
             fractal_ab_size = pto.TileConfig.fractalABSize
-            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
-            tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
+            cfg_row = pto.TileBufConfigAttr.get(bl_row, sl, fractal_ab_size, pd, ctx)
+            cfg_col = pto.TileBufConfigAttr.get(bl_col, sl, fractal_ab_size, pd, ctx)
+            tile_buf_32_row = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg_row, ctx)
+            tile_buf_32_col = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg_col, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
@@ -47,12 +50,12 @@ def build():
                 sv1 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result
 
                 # %5/%6/%7 = pto.alloc_tile : <32x32xf32>
-                tb0 = pto.AllocTileOp(tile_buf_32).result
-                tb1 = pto.AllocTileOp(tile_buf_32).result
+                tb0 = pto.AllocTileOp(tile_buf_32_row).result
 
                 pto.TLoadOp(None, sv0, tb0)  # result=None
 
-                pto.TReshapeOp(tb0, tb1)
+                # SSA view op: reinterpret the same underlying storage with a new config.
+                tb1 = pto.TReshapeOp(tile_buf_32_col, tb0).result
 
                 # %8 = subview on output tensor_view
                 sv2 = pto.PartitionViewOp(tile_view_32, tv1, offsets=[c0, c0], sizes=[c32, c32]).result

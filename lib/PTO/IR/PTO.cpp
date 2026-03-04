@@ -2750,15 +2750,120 @@ mlir::LogicalResult mlir::pto::TRemSOp::verify() {
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
-// PTO.cpp  (add verifier for TRESHAPE DPS/tilebuf op)
+// PTO.cpp  (verifiers for SSA treshape / bitcast)
 //===----------------------------------------------------------------------===//
+
+static std::optional<int64_t> getStaticNumElements(ArrayRef<int64_t> shape) {
+  int64_t numel = 1;
+  for (int64_t d : shape) {
+    if (d == ShapedType::kDynamic)
+      return std::nullopt;
+    if (d < 0)
+      return std::nullopt;
+    numel *= d;
+  }
+  return numel;
+}
+
+static std::optional<int64_t> getElemBytes(Type elemTy) {
+  if (!elemTy)
+    return std::nullopt;
+  if (auto ft = dyn_cast<FloatType>(elemTy)) {
+    if (ft.isF16() || ft.isBF16())
+      return 2;
+    if (ft.isF32())
+      return 4;
+    if (ft.isF64())
+      return 8;
+    return std::nullopt;
+  }
+  if (auto it = dyn_cast<IntegerType>(elemTy)) {
+    int64_t bits = it.getWidth();
+    if (bits <= 0)
+      return std::nullopt;
+    return std::max<int64_t>(1, bits / 8);
+  }
+  return std::nullopt;
+}
+
+static bool isTileBufOrMemref(Type ty) {
+  return ty.isa<MemRefType, pto::TileBufType>();
+}
 
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   Type ts = getSrc().getType();
-  Type td = getDst().getType();
-  if (!isPTOShapedLike(ts) || !isPTOShapedLike(td))
-    return emitOpError("expects src/dst to be memref/tensor/tile_buf/tile_view types");
-  return mlir::success();
+  Type tr = getResult().getType();
+  if (!isTileBufOrMemref(ts) || !isTileBufOrMemref(tr))
+    return emitOpError("expects src/result to be tile_buf or memref types");
+
+  // Memory space must match (treshape is an aliasing view).
+  Attribute srcSpace;
+  Attribute dstSpace;
+  if (auto tb = dyn_cast<pto::TileBufType>(ts))
+    srcSpace = tb.getMemorySpace();
+  else
+    srcSpace = cast<MemRefType>(ts).getMemorySpace();
+  if (auto tb = dyn_cast<pto::TileBufType>(tr))
+    dstSpace = tb.getMemorySpace();
+  else
+    dstSpace = cast<MemRefType>(tr).getMemorySpace();
+  if (srcSpace != dstSpace)
+    return emitOpError("expects src/result to have the same memorySpace");
+
+  // Reshape only changes shape/layout/config; dtype changes are modeled by
+  // pto.bitcast.
+  Type es = getElemTy(ts);
+  Type er = getElemTy(tr);
+  if (!es || !er)
+    return emitOpError("failed to get element type for operands");
+  if (es != er)
+    return emitOpError("expects src/result to have the same element type; use pto.bitcast for dtype changes");
+
+  auto srcNumel = getStaticNumElements(getShapeVec(ts));
+  auto dstNumel = getStaticNumElements(getShapeVec(tr));
+  if (!srcNumel.has_value() || !dstNumel.has_value())
+    return emitOpError("expects static shapes for treshape");
+  if (srcNumel.value() != dstNumel.value())
+    return emitOpError("expects src/result to have the same total element count");
+
+  return success();
+}
+
+mlir::LogicalResult mlir::pto::BitcastOp::verify() {
+  auto srcTy = llvm::dyn_cast<TileBufType>(getSrc().getType());
+  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  if (!srcTy || !dstTy)
+    return emitOpError("expects tile_buf src and tile_buf result");
+
+  if (srcTy.getMemorySpace() != dstTy.getMemorySpace())
+    return emitOpError("expects src/result to have the same memorySpace");
+
+  if (srcTy.getShape() != dstTy.getShape())
+    return emitOpError("expects src/result to have the same shape; use pto.treshape for shape changes");
+
+  if (srcTy.getValidShape() != dstTy.getValidShape())
+    return emitOpError("expects src/result to have the same validShape");
+
+  auto srcCfg = srcTy.getConfigAttr();
+  auto dstCfg = dstTy.getConfigAttr();
+  if (srcCfg != dstCfg)
+    return emitOpError("expects src/result to have the same tile config");
+
+  auto numel = getStaticNumElements(srcTy.getShape());
+  if (!numel.has_value())
+    return emitOpError("expects static shapes for bitcast");
+
+  auto srcBytes = getElemBytes(srcTy.getElementType());
+  auto dstBytes = getElemBytes(dstTy.getElementType());
+  if (!srcBytes.has_value() || !dstBytes.has_value())
+    return emitOpError("unsupported element type for bitcast");
+
+  int64_t srcTotalBytes = numel.value() * srcBytes.value();
+  int64_t dstTotalBytes = numel.value() * dstBytes.value();
+  if (dstTotalBytes > srcTotalBytes)
+    return emitOpError("bitcast result requires more bytes than source storage");
+
+  return success();
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWEXPAND DPS/tilebuf op)
@@ -4313,7 +4418,6 @@ PTO_DEFINE_UNARY_EFFECTS(TRecipOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TReluOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRemOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TRemSOp, getSrcMutable(), getDstMutable())
-PTO_DEFINE_UNARY_EFFECTS(TReshapeOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TRowExpandOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRowExpandDivOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
 PTO_DEFINE_BINARY_EFFECTS(TRowExpandMulOp, getSrc0Mutable(), getSrc1Mutable(), getDstMutable())
