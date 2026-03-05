@@ -2,6 +2,8 @@
 
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Affine/IR/AffineOps.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/IR/DialectRegistry.h>
 #include <mlir/IR/MLIRContext.h>
@@ -54,13 +56,22 @@ int main(int argc, char** argv) {
   try {
     if (cmd == "encode") {
       mlir::DialectRegistry registry;
-      registry.insert<mlir::func::FuncDialect, mlir::arith::ArithDialect, mlir::scf::SCFDialect, mlir::pto::PTODialect>();
+      // ptobc needs to parse sample .pto files that may include core MLIR
+      // dialects (affine/memref) in addition to PTO + a few basics.
+      registry.insert<mlir::func::FuncDialect,
+                      mlir::arith::ArithDialect,
+                      mlir::affine::AffineDialect,
+                      mlir::memref::MemRefDialect,
+                      mlir::scf::SCFDialect,
+                      mlir::pto::PTODialect>();
       mlir::MLIRContext ctx(registry);
       ctx.allowUnregisteredDialects(true);
 
       // Preload dialects so custom op/type parsing is available.
       (void)ctx.getOrLoadDialect<mlir::func::FuncDialect>();
       (void)ctx.getOrLoadDialect<mlir::arith::ArithDialect>();
+      (void)ctx.getOrLoadDialect<mlir::affine::AffineDialect>();
+      (void)ctx.getOrLoadDialect<mlir::memref::MemRefDialect>();
       (void)ctx.getOrLoadDialect<mlir::scf::SCFDialect>();
       (void)ctx.getOrLoadDialect<mlir::pto::PTODialect>();
 

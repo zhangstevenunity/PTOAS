@@ -23,11 +23,11 @@ for root in "${roots[@]}"; do
   while IFS= read -r -d '' f; do
     base=$(basename "$f" .pto)
     # avoid name collisions across directories
-    hash=$(python3 - <<PY
-import hashlib,sys
+    hash=$(python3 - "$f" <<'PY'
+import hashlib, sys
 print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:8])
 PY
-"$f")
+)
     base="${base}.${hash}"
 
   bc1="${OUT_DIR}/${base}.ptobc"

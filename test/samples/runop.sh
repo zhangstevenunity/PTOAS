@@ -220,7 +220,8 @@ process_one_dir() {
     ptobc_file="${out_subdir}/${base}.ptobc"
     decoded_pto="${out_subdir}/${base}-roundtrip.pto"
     if [[ $use_ptobc_roundtrip -eq 1 ]]; then
-      if ! "$ptobc" encode "$mlir" -o "$ptobc_file" >/dev/null 2>&1; then
+      # Allow generic escape for ops that are not yet in the compact v0 opcode table.
+      if ! PTOBC_ALLOW_GENERIC=1 "$ptobc" encode "$mlir" -o "$ptobc_file" >/dev/null 2>&1; then
         if [[ $expect_fail -eq 1 ]]; then
           echo -e "${A}(${base}.py)\tXFAIL\tptobc encode failed as expected"
           continue
@@ -392,7 +393,8 @@ process_one_dir() {
       cpp="${out_subdir}/${base}.cpp"
 
       if [[ $use_ptobc_roundtrip -eq 1 ]]; then
-        if ! "$ptobc" encode "$f" -o "$ptobc_file" >/dev/null 2>&1; then
+        # Allow generic escape for ops that are not yet in the compact v0 opcode table.
+        if ! PTOBC_ALLOW_GENERIC=1 "$ptobc" encode "$f" -o "$ptobc_file" >/dev/null 2>&1; then
           echo -e "${A}(${base}.pto)\tFAIL\tptobc encode failed: $(basename "$f")"
           overall=1
           continue

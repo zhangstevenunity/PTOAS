@@ -6,7 +6,9 @@
 #include "ptobc_opcodes_v0.h"
 
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 
 #include <PTO/IR/PTO.h>
@@ -786,7 +788,12 @@ void decodeFileToPTO(const std::string& inPath, const std::string& outPath) {
   auto data = readFile(inPath);
 
   mlir::DialectRegistry registry;
-  registry.insert<mlir::func::FuncDialect, mlir::arith::ArithDialect, mlir::scf::SCFDialect, mlir::pto::PTODialect>();
+  registry.insert<mlir::func::FuncDialect,
+                  mlir::arith::ArithDialect,
+                  mlir::affine::AffineDialect,
+                  mlir::memref::MemRefDialect,
+                  mlir::scf::SCFDialect,
+                  mlir::pto::PTODialect>();
   mlir::MLIRContext ctx(registry);
   ctx.allowUnregisteredDialects(true);
 
