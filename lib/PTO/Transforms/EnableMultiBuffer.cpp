@@ -17,8 +17,10 @@
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseSet.h"
@@ -120,19 +122,88 @@ struct PTOEnableMultiBufferPass
         return signalPassFailure();
       }
 
-      // Collect the enclosing loop for each use site. The resulting LCA is the
-      // loop in which we materialize the ping/pong selector.
+      // Track view-like alias chains so we can materialize ping/pong selection
+      // even when the pointer_cast is consumed by a BindTile/SubView outside
+      // the loop (common after alloc_tile -> memref.alloc + bind_tile lowering).
+      DenseMap<Value, Operation *> aliasResult2Op;
+      DenseMap<Value, Value> aliasResult2Source;
+
+      SmallVector<Value> closure;
+      SmallVector<Value> worklist{op.getResult()};
+      llvm::DenseSet<Value> visited;
+
+      // Collect the enclosing loop for each loop use site across the alias
+      // closure. The resulting LCA is the loop in which we materialize the
+      // ping/pong selector and any needed view-like rematerializations.
       SmallVector<scf::ForOp> useLoops;
-      llvm::DenseSet<Operation *> seen;
-      for (OpOperand &use : op.getResult().getUses()) {
-        Operation *owner = use.getOwner();
+      llvm::DenseSet<Operation *> seenLoops;
+
+      auto recordUseLoop = [&](Operation *owner) {
         if (!owner)
-          continue;
+          return;
         scf::ForOp enclosing = owner->getParentOfType<scf::ForOp>();
         if (!enclosing)
-          continue;
-        if (seen.insert(enclosing.getOperation()).second)
+          return;
+        if (seenLoops.insert(enclosing.getOperation()).second)
           useLoops.push_back(enclosing);
+      };
+
+      while (!worklist.empty()) {
+        Value v = worklist.pop_back_val();
+        if (!visited.insert(v).second)
+          continue;
+        closure.push_back(v);
+
+        for (OpOperand &use : v.getUses()) {
+          Operation *owner = use.getOwner();
+          if (!owner)
+            continue;
+
+          // Alias ops: propagate from source -> result.
+          if (auto bt = dyn_cast<pto::BindTileOp>(owner)) {
+            if (use.getOperandNumber() == 0) {
+              Value res = bt.getResult();
+              if (aliasResult2Op.try_emplace(res, owner).second) {
+                aliasResult2Source[res] = v;
+                worklist.push_back(res);
+              }
+              continue;
+            }
+          }
+          if (auto sv = dyn_cast<memref::SubViewOp>(owner)) {
+            if (use.getOperandNumber() == 0) {
+              Value res = sv.getResult();
+              if (aliasResult2Op.try_emplace(res, owner).second) {
+                aliasResult2Source[res] = v;
+                worklist.push_back(res);
+              }
+              continue;
+            }
+          }
+          if (auto rc = dyn_cast<memref::ReinterpretCastOp>(owner)) {
+            if (use.getOperandNumber() == 0) {
+              Value res = rc.getResult();
+              if (aliasResult2Op.try_emplace(res, owner).second) {
+                aliasResult2Source[res] = v;
+                worklist.push_back(res);
+              }
+              continue;
+            }
+          }
+          if (auto cast = dyn_cast<memref::CastOp>(owner)) {
+            if (use.getOperandNumber() == 0) {
+              Value res = cast.getResult();
+              if (aliasResult2Op.try_emplace(res, owner).second) {
+                aliasResult2Source[res] = v;
+                worklist.push_back(res);
+              }
+              continue;
+            }
+          }
+
+          // Non-alias use: record for loop LCA computation.
+          recordUseLoop(owner);
+        }
       }
 
       scf::ForOp baseLoop = lowestCommonAncestorLoop(useLoops);
@@ -149,13 +220,15 @@ struct PTOEnableMultiBufferPass
         continue;
       }
 
-      // If the original pointer_cast is used as an operand of the selected base
-      // loop op, we cannot replace that use with a value defined inside the
-      // loop. Treat this as unsupported to avoid miscompilation.
-      for (OpOperand &use : op.getResult().getUses()) {
-        if (use.getOwner() == baseLoop.getOperation()) {
-          op.emitError("unsupported: multi-buffer pointer_cast used as an operand of the base scf.for");
-          return signalPassFailure();
+      // If any value in the alias closure is used as an operand of the selected
+      // base loop op, we cannot safely rewrite that use with a value defined
+      // inside the loop. Treat this as unsupported to avoid miscompilation.
+      for (Value v : closure) {
+        for (OpOperand &use : v.getUses()) {
+          if (use.getOwner() == baseLoop.getOperation()) {
+            op.emitError("unsupported: multi-buffer value used as an operand of the base scf.for");
+            return signalPassFailure();
+          }
         }
       }
 
@@ -198,15 +271,78 @@ struct PTOEnableMultiBufferPass
       Value selected = rewriter.create<arith::SelectOp>(
           op.getLoc(), cond, ptr1.getResult(), ptr0.getResult());
 
-      // Replace uses that are inside the base loop body (including nested ops).
-      SmallVector<OpOperand *> toReplace;
-      for (OpOperand &use : op.getResult().getUses()) {
-        Operation *owner = use.getOwner();
-        if (owner && isInLoopBody(owner, baseLoop))
-          toReplace.push_back(&use);
+      // Materialize loop-local equivalents of values in the alias closure.
+      DenseMap<Value, Value> loopLocal;
+      loopLocal[op.getResult()] = selected;
+      Operation *insertAfter = selected.getDefiningOp();
+
+      auto materialize = [&](Value v, auto &materializeRef) -> Value {
+        if (auto it = loopLocal.find(v); it != loopLocal.end())
+          return it->second;
+
+        // If this value is already defined inside the base loop body, reuse it
+        // (the source operands will be rewritten separately as needed).
+        if (Operation *def = v.getDefiningOp()) {
+          if (isInLoopBody(def, baseLoop)) {
+            loopLocal[v] = v;
+            return v;
+          }
+        } else if (auto barg = dyn_cast<BlockArgument>(v)) {
+          if (barg.getOwner() == baseLoop.getBody()) {
+            loopLocal[v] = v;
+            return v;
+          }
+        }
+
+        auto it = aliasResult2Op.find(v);
+        if (it == aliasResult2Op.end())
+          return Value();
+
+        Operation *aliasOp = it->second;
+        Value src = aliasResult2Source.lookup(v);
+        Value localSrc = materializeRef(src, materializeRef);
+        if (!localSrc)
+          return Value();
+
+        // If the alias op already lives inside the base loop body, we expect
+        // its operands to be rewritten via the generic use replacement below.
+        if (isInLoopBody(aliasOp, baseLoop)) {
+          loopLocal[v] = v;
+          return v;
+        }
+
+        rewriter.setInsertionPointAfter(insertAfter);
+        mlir::IRMapping mapping;
+        mapping.map(src, localSrc);
+        Operation *cloned = rewriter.clone(*aliasOp, mapping);
+        insertAfter = cloned;
+
+        Value res = cloned->getResult(0);
+        loopLocal[v] = res;
+        return res;
+      };
+
+      // Replace uses that are inside the base loop body (including nested ops)
+      // with the loop-local equivalents.
+      for (Value v : closure) {
+        SmallVector<OpOperand *> toReplace;
+        for (OpOperand &use : v.getUses()) {
+          Operation *owner = use.getOwner();
+          if (owner && isInLoopBody(owner, baseLoop))
+            toReplace.push_back(&use);
+        }
+        if (toReplace.empty())
+          continue;
+
+        Value repl = materialize(v, materialize);
+        if (!repl) {
+          op.emitError("failed to materialize loop-local alias for multi-buffer value");
+          return signalPassFailure();
+        }
+
+        for (OpOperand *use : toReplace)
+          use->set(repl);
       }
-      for (OpOperand *use : toReplace)
-        use->set(selected);
 
       if (op.getResult().use_empty())
         op.erase();

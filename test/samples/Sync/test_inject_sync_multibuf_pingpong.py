@@ -1,15 +1,6 @@
-from mlir.ir import (
-    Context,
-    Location,
-    Module,
-    InsertionPoint,
-    F16Type,
-    IndexType,
-    IntegerAttr,
-    IntegerType,
-    MemRefType,
-)
-from mlir.dialects import arith, func, memref, scf, pto
+from mlir.ir import Context, Location, Module, InsertionPoint
+from mlir.dialects import arith, func, scf, pto
+from mlir.ir import F16Type, IndexType, IntegerAttr, IntegerType
 
 
 def build():
@@ -23,13 +14,20 @@ def build():
             idx = IndexType.get(ctx)
             i32 = IntegerType.get_signless(32, ctx)
 
-            gm = pto.AddressSpaceAttr.get(pto.AddressSpace.GM, ctx)
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
 
-            gm_ty = MemRefType.get([16, 16, 16], f16, memory_space=gm)
-            ub_ty = MemRefType.get([16, 16, 16], f16, memory_space=vec)
+            ptr_f16 = pto.PtrType.get(f16, ctx)
+            tv2_f16 = pto.TensorViewType.get(2, f16, ctx)
+            tile_view_16 = pto.PartitionTensorViewType.get([16, 16], f16, ctx)
 
-            fn_ty = func.FunctionType.get([gm_ty, gm_ty], [])
+            bl = pto.BLayoutAttr.get(pto.BLayout.RowMajor, ctx)
+            sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+            pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+            fractal_ab_size = pto.TileConfig.fractalABSize
+            cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
+            tile_buf_16 = pto.TileBufType.get([16, 16], f16, vec, [16, 16], cfg, ctx)
+
+            fn_ty = func.FunctionType.get([ptr_f16, ptr_f16], [])
             with InsertionPoint(m.body):
                 fn = func.FuncOp("test_inject_sync_multibuf_pingpong_py", fn_ty)
                 entry = fn.add_entry_block()
@@ -40,12 +38,20 @@ def build():
                 c0 = arith.ConstantOp(idx, 0).result
                 c1 = arith.ConstantOp(idx, 1).result
                 c4 = arith.ConstantOp(idx, 4).result
+                c16 = arith.ConstantOp(idx, 16).result
 
-                alloc = memref.AllocOp(ub_ty, [], [])
+                tv_in = pto.MakeTensorViewOp(tv2_f16, src, [c16, c16], [c16, c1]).result
+                tv_out = pto.MakeTensorViewOp(tv2_f16, dst, [c16, c16], [c16, c1]).result
+                sv_in = pto.PartitionViewOp(
+                    tile_view_16, tv_in, offsets=[c0, c0], sizes=[c16, c16]
+                ).result
+                sv_out = pto.PartitionViewOp(
+                    tile_view_16, tv_out, offsets=[c0, c0], sizes=[c16, c16]
+                ).result
+
+                alloc = pto.AllocTileOp(tile_buf_16)
+                alloc.operation.attributes["pto.multi_buffer"] = IntegerAttr.get(i32, 2)
                 ub = alloc.result
-                alloc.operation.attributes["pto.multi_buffer"] = IntegerAttr.get(
-                    i32, 2
-                )
 
                 # Loop-carried hazard:
                 # - TLOAD writes to UB on PIPE_MTE2.
@@ -55,8 +61,8 @@ def build():
                 # back-edge dependency.
                 loop = scf.ForOp(c0, c4, c1, [])
                 with InsertionPoint(loop.body):
-                    pto.TLoadOp(None, src, ub)
-                    pto.TStoreOp(None, ub, dst)
+                    pto.TLoadOp(None, sv_in, ub)
+                    pto.TStoreOp(None, ub, sv_out)
                     scf.YieldOp([])
 
                 func.ReturnOp([])
@@ -67,4 +73,3 @@ def build():
 
 if __name__ == "__main__":
     print(build())
-
