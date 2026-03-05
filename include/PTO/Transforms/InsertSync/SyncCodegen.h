@@ -57,9 +57,6 @@ private:
   Value GetBufferSelected(IRRewriter &rewriter, Operation *op,
                           SyncOperation *sync);
  
-  // 生成嵌套循环的计数器 (用于多缓冲切换)
-  Value createNestedIndexModular(IRRewriter &rewriter, Operation *defineOp);
- 
 private:
   SyncIRs &syncIR_;
   func::FuncOp func_;

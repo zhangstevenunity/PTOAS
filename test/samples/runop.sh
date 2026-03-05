@@ -282,6 +282,28 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard: planned ping/pong buffers must be materialized as a
+    # loop-local selector + dynamic event-id set/wait on back-edge deps.
+    if [[ "$base" == "test_inject_sync_multibuf_pingpong" ]]; then
+      if ! grep -Fq "static_cast<event_t>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic event-id (static_cast<event_t>) in generated C++"
+        overall=1
+        continue
+      fi
+      local tassign_count
+      tassign_count="$(grep -c "TASSIGN(" "$cpp")"
+      if [[ "${tassign_count}" -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected >=2 TASSIGN calls (ping/pong pointer_cast hoisting)"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "?" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing ternary select for ping/pong buffer selection"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard: intra-pipe dependencies must be serialized by a
     # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
     if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then

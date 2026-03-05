@@ -57,8 +57,8 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     //
     bool hasExplicitSync = false;
     func.walk([&](Operation *op) {
-      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
-              pto::WaitEventOp>(op)) {
+      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::SetFlagDynOp,
+              pto::WaitFlagDynOp, pto::RecordEventOp, pto::WaitEventOp>(op)) {
         hasExplicitSync = true;
         return WalkResult::interrupt();
       }
