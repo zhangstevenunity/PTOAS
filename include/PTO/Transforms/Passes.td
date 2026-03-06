@@ -116,4 +116,16 @@ def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
   ];
 }
 
+
+
+def PTOCanonicalizeVops : Pass<"pto-canonicalize-vops", "func::FuncOp"> {
+  let summary = "Canonicalize VOPS patterns (tail ops, pred propagation, hoisting).";
+  let constructor = "mlir::pto::createPTOCanonicalizeVopsPass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

@@ -26,6 +26,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncEventIdAllocation.cpp
   InsertSync/SyncCodegen.cpp
   LoweringSyncToPipe.cpp
+  PTOCanonicalizeVops.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO

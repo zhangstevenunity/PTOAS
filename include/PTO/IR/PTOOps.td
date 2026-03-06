@@ -3645,4 +3645,177 @@ def TPrintOp: PTO_TOp<"tprint", [
   }];
  }
 
+//===----------------------------------------------------------------------===//
+// VF / VOPS (vector-tile ops)
+//===----------------------------------------------------------------------===//
+
+// pto.vf.scope { ... }
+def VFScopeOp : PTO_Op<"vf.scope", [IsolatedFromAbove, NoRegionArguments, SingleBlockImplicitTerminator<"YieldOp">]> {
+  let summary = "VF scope for explicit V-pipe ops.";
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "attr-dict $body";
+}
+
+// yield terminator for vf.scope
+def YieldOp : PTO_Op<"yield", [Terminator, HasParent<"VFScopeOp">]> {
+  let summary = "Terminator for pto.vf.scope";
+  let arguments = (ins);
+  let results = (outs);
+  let assemblyFormat = "attr-dict";
+}
+
+// pto.vpred.all : !pto.preg
+def VPredAllOp : PTO_Op<"vpred.all", [Pure]> {
+  let summary = "Create an all-true predicate.";
+  let results = (outs PregType:$pred);
+  let assemblyFormat = "attr-dict `:` type($pred)";
+}
+
+// pto.vpred.tail %count : !pto.preg
+def VPredTailOp : PTO_Op<"vpred.tail", [Pure]> {
+  let summary = "Create a tail predicate for a given element count.";
+  let arguments = (ins Index:$count);
+  let results = (outs PregType:$pred);
+  let assemblyFormat = "$count attr-dict `:` type($pred)";
+}
+
+// pto.uload_row %tile, %row : !pto.uscalar<elem>
+def ULoadRowOp : PTO_Op<"uload_row", [Pure]> {
+  let summary = "Uniform scalar load for RowExpand-like patterns.";
+  let arguments = (ins TileBufType:$tile, Index:$row);
+  let results = (outs UScalarType:$value);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row attr-dict `:` type($value)";
+}
+
+// pto.vdup %u, %pred : !pto.vtile<...>
+def VDupOp : PTO_Op<"vdup", [Pure]> {
+  let summary = "Duplicate a uniform scalar into a vtile under predicate.";
+  let arguments = (ins UScalarType:$src, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$src `,` $pred attr-dict `:` type($dst)";
+}
+
+// pto.vload %tile, %row, %col, %pred : !pto.vtile<...>
+def VLoadOp : PTO_Op<"vload", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Vector load from tile buffer at (row,col) under predicate.";
+  let arguments = (ins TileBufType:$tile, Index:$row, Index:$col, PregType:$pred);
+  let results = (outs VTileType:$value);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row `,` $col `,` $pred attr-dict `:` type($value)";
+}
+
+// pto.vstore %tile, %row, %col, %value, %pred
+def VStoreOp : PTO_Op<"vstore", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Vector store to tile buffer at (row,col) under predicate.";
+  let arguments = (ins TileBufType:$tile, Index:$row, Index:$col, VTileType:$value, PregType:$pred);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row `,` $col `,` $value `,` $pred attr-dict `:` type($value)";
+}
+
+// pto.vload_tail %tile, %row, %col, %count : !pto.vtile<...>
+def VLoadTailOp : PTO_Op<"vload_tail", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Tail-safe vector load with explicit count.";
+  let arguments = (ins TileBufType:$tile, Index:$row, Index:$col, Index:$count);
+  let results = (outs VTileType:$value);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row `,` $col `,` $count attr-dict `:` type($value)";
+}
+
+// pto.vstore_tail %tile, %row, %col, %count, %value
+def VStoreTailOp : PTO_Op<"vstore_tail", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Tail-safe vector store with explicit count.";
+  let arguments = (ins TileBufType:$tile, Index:$row, Index:$col, Index:$count, VTileType:$value);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row `,` $col `,` $count `,` $value attr-dict `:` type($value)";
+}
+
+// pto.vload_block %tile, %row : !pto.vtile<...>
+def VLoadBlockOp : PTO_Op<"vload_block", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Block load used by RowExpand block-broadcast patterns.";
+  let arguments = (ins TileBufType:$tile, Index:$row);
+  let results = (outs VTileType:$value);
+  let hasVerifier = 1;
+  let assemblyFormat = "$tile `,` $row attr-dict `:` type($value)";
+}
+
+// pto.vlane_adapt %blk : !pto.vtile<...>
+def VLaneAdaptOp : PTO_Op<"vlane_adapt", [Pure]> {
+  let summary = "Adapt lanes from a block vtile to a full vtile.";
+  let arguments = (ins VTileType:$src);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$src attr-dict `:` type($dst)";
+}
+
+// Binops: (vtile, vtile, preg) -> vtile
+
+def VAddOp : PTO_Op<"vadd", [Pure]> {
+  let summary = "Vector add.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VSubOp : PTO_Op<"vsub", [Pure]> {
+  let summary = "Vector sub.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VMulOp : PTO_Op<"vmul", [Pure]> {
+  let summary = "Vector mul.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VMinOp : PTO_Op<"vmin", [Pure]> {
+  let summary = "Vector min.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VMaxOp : PTO_Op<"vmax", [Pure]> {
+  let summary = "Vector max.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VAndOp : PTO_Op<"vand", [Pure]> {
+  let summary = "Vector and.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VOrOp : PTO_Op<"vor", [Pure]> {
+  let summary = "Vector or.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+def VXorOp : PTO_Op<"vxor", [Pure]> {
+  let summary = "Vector xor.";
+  let arguments = (ins VTileType:$lhs, VTileType:$rhs, PregType:$pred);
+  let results = (outs VTileType:$dst);
+  let hasVerifier = 1;
+  let assemblyFormat = "$lhs `,` $rhs `,` $pred attr-dict `:` type($dst)";
+}
+
+
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

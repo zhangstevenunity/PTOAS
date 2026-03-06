@@ -437,4 +437,83 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Target Config (VF/VOPS)
+//===----------------------------------------------------------------------===//
+
+// #pto.target_config<arch=a3|a5, isa="...", variant="...", repeat_bytes=256, block_bytes=32, caps={...}>
+
+def TargetConfigAttr : AttrDef<PTO_Dialect, "TargetConfig"> {
+  let mnemonic = "target_config";
+  let summary = "Target configuration for VF/VOPS emission.";
+
+  let parameters = (ins
+    "mlir::StringAttr":$arch,          // required: "a3" | "a5"
+    "mlir::StringAttr":$isa,           // optional
+    "mlir::StringAttr":$variant,       // optional
+    "mlir::IntegerAttr":$repeatBytes,  // optional
+    "mlir::IntegerAttr":$blockBytes,   // optional
+    "mlir::DictionaryAttr":$caps       // optional, default empty dict
+  );
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    static ::mlir::Attribute parse(::mlir::AsmParser &parser, ::mlir::Type) {
+      if (failed(parser.parseLess())) return {};
+      auto ctx = parser.getContext();
+
+      ::mlir::StringAttr arch;
+      ::mlir::StringAttr isa;
+      ::mlir::StringAttr variant;
+      ::mlir::IntegerAttr repeatBytes;
+      ::mlir::IntegerAttr blockBytes;
+      ::mlir::DictionaryAttr caps;
+
+      while (true) {
+        llvm::StringRef key;
+        if (failed(parser.parseKeyword(&key))) return {};
+        if (failed(parser.parseEqual())) return {};
+
+        if (key == "arch") {
+          llvm::StringRef av;
+          if (failed(parser.parseKeyword(&av))) return {};
+          if (av != "a3" && av != "a5") return {};
+          arch = ::mlir::StringAttr::get(ctx, av);
+        } else if (key == "isa") {
+          if (failed(parser.parseAttribute(isa))) return {};
+        } else if (key == "variant") {
+          if (failed(parser.parseAttribute(variant))) return {};
+        } else if (key == "repeat_bytes") {
+          if (failed(parser.parseAttribute(repeatBytes))) return {};
+        } else if (key == "block_bytes") {
+          if (failed(parser.parseAttribute(blockBytes))) return {};
+        } else if (key == "caps") {
+          if (failed(parser.parseAttribute(caps))) return {};
+        } else {
+          return {};
+        }
+
+        if (succeeded(parser.parseOptionalGreater())) break;
+        if (failed(parser.parseComma())) return {};
+      }
+
+      if (!arch) return {};
+      if (!caps) caps = ::mlir::DictionaryAttr::get(ctx);
+      return Base::get(ctx, arch, isa, variant, repeatBytes, blockBytes, caps);
+    }
+
+    void print(::mlir::AsmPrinter &printer) const {
+      printer << "<";
+      printer << "arch=" << getArch().getValue();
+      if (getIsa()) printer << ", isa=" << getIsa();
+      if (getVariant()) printer << ", variant=" << getVariant();
+      if (getRepeatBytes()) printer << ", repeat_bytes=" << getRepeatBytes();
+      if (getBlockBytes()) printer << ", block_bytes=" << getBlockBytes();
+      if (getCaps() && !getCaps().empty()) printer << ", caps=" << getCaps();
+      printer << ">";
+    }
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOATTRS
