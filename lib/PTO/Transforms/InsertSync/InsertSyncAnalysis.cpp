@@ -24,18 +24,6 @@ static bool isValidPipeIndex(PipelineType pipe) {
   return static_cast<unsigned>(pipe) < kPipeStateSize;
 }
 
-static bool needsPipeAllBarrier(PipelineType srcPipe, PipelineType dstPipe) {
-  // A3 runtime is unstable for these scalar synchronization forms:
-  // 1) PIPE_S -> PIPE_MTE2
-  // 2) PIPE_MTE3 -> PIPE_S
-  // Conservatively fall back to PIPE_ALL barrier to preserve correctness.
-  if (srcPipe == PipelineType::PIPE_S && dstPipe == PipelineType::PIPE_MTE2)
-    return true;
-  if (srcPipe == PipelineType::PIPE_MTE3 && dstPipe == PipelineType::PIPE_S)
-    return true;
-  return false;
-}
-
 // ==============================================================================
 // 1. Entry Point
 // ==============================================================================
@@ -342,19 +330,7 @@ void InsertSyncAnalysis::InsertSyncOperation(
   PipelineType nowPipe = nowCompound->kPipeValue;
   PipelineType frontPipe = frontCompound->kPipeValue;
 
-  if (needsPipeAllBarrier(frontPipe, nowPipe)) {
-    unsigned insertBarrierId = nowCompound->GetIndex();
-    auto barrierOp = std::make_unique<SyncOperation>(
-        SyncOperation::TYPE::PIPE_BARRIER, PipelineType::PIPE_ALL,
-        PipelineType::PIPE_ALL, syncIndex_, insertBarrierId, forEndIndex);
-    barrierOp->SetDepSyncIRIndex(frontCompound->GetIndex());
-    syncIR_[insertBarrierId]->pipeBefore.push_back(barrierOp.get());
-    barrierOp->SetSyncIRIndex(insertBarrierId);
-
-    SmallVector<std::unique_ptr<SyncOperation>> newSync;
-    newSync.emplace_back(std::move(barrierOp));
-    syncOperations_.emplace_back(std::move(newSync));
-  } else if (nowPipe == frontPipe) {
+  if (nowPipe == frontPipe) {
     unsigned insertBarrierId = nowCompound->GetIndex();
     auto barrierOp = std::make_unique<SyncOperation>(
         SyncOperation::TYPE::PIPE_BARRIER, frontPipe, nowPipe, syncIndex_,
