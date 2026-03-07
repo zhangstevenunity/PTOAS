@@ -3645,4 +3645,93 @@ def TPrintOp: PTO_TOp<"tprint", [
   }];
  }
 
+//===----------------------------------------------------------------------===//
+// TPUSH/TPOP Ring Buffer Communication Ops
+//===----------------------------------------------------------------------===//
+
+// --- Initialization ---
+
+def InitializePipeOp : PTO_Op<"initialize_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize ring buffer pipe handle";
+  let description = [{
+    Called once at kernel startup. Binds ring buffer pipe to backing memory,
+    computes slot configuration from dir_mask, and returns a fifo handle.
+  }];
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      PTODpsType:$gm_slot_buffer,
+      I32:$c2v_consumer_buf,
+      I32:$v2c_consumer_buf
+  );
+
+  let results = (outs FifoType:$fifo);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,` `slot_size` `=` $slot_size `}`
+    `(` $gm_slot_buffer `:` qualified(type($gm_slot_buffer)) `,`
+        $c2v_consumer_buf `:` type($c2v_consumer_buf) `,`
+        $v2c_consumer_buf `:` type($v2c_consumer_buf)
+    `)` attr-dict `->` qualified(type($fifo))
+  }];
+}
+
+// --- Data Transfer: Push (producer, no DPS) ---
+
+def TPushOp : PTO_TOp<"tpush", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Push tile data via unified fifo handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      FifoType:$fifo
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $fifo `:` qualified(type($tile)) `,` qualified(type($fifo)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+  }];
+}
+
+// --- Data Transfer: Pop (consumer, DPS) ---
+
+def TPopOp : PTO_TOp<"tpop", [
+    PTO_DpsInitOpInterface,
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Pop tile data via unified fifo handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      FifoType:$fifo
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $fifo `:` qualified(type($tile)) `,` qualified(type($fifo)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

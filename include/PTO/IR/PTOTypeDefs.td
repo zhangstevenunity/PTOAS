@@ -184,3 +184,18 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     int32_t getPadValueI32() const;       // 0 null, 1 zero, 2 max, 3 min
   }];
 }
+
+def FifoType : TypeDef<PTO_Dialect, "Fifo"> {
+  let mnemonic = "fifo";
+  let summary = "FIFO handle type for TPUSH/TPOP v2 static schedule";
+  let parameters = (ins
+    "mlir::Type":$srcTileType,
+    "mlir::Type":$dstTileType,
+    "mlir::pto::FifoLocationAttr":$location,
+    "unsigned":$depth,
+    "unsigned":$numBuffers
+  );
+  let assemblyFormat = [{
+    `<` $srcTileType `,` $dstTileType `,` $location `,` $depth `,` $numBuffers `>`
+  }];
+}
