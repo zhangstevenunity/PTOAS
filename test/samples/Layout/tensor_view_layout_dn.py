@@ -20,13 +20,15 @@ def build_module():
         pto.register_dialect(ctx, load=True)
 
         f32 = builtin.F32Type.get()
-        mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+        vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
+        bl = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
+        sl = pto.SLayoutAttr.get(pto.SLayout.NoneBox, ctx)
+        pd = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
+        cfg = pto.TileBufConfigAttr.get(bl, sl, pto.TileConfig.fractalABSize, pd, ctx)
 
-        tensor_view_ty = pto.TensorViewType.get([1, 1, 16, 1024, 1024], f32)
-        part_view_ty = pto.PartitionTensorViewType.get([1, 1, 16, 16, 16], f32)
-        tile_buf_ty = pto.TileBufType.get(
-            [256, 16], f32, mat, [256, 16], pto.TileBufConfigAttr.get_default(ctx)
-        )
+        tensor_view_ty = pto.TensorViewType.get(2, f32, ctx)
+        part_view_ty = pto.PartitionTensorViewType.get([16, 1], f32, ctx)
+        tile_buf_ty = pto.TileBufType.get([16, 1], f32, vec, [16, 1], cfg, ctx)
 
         ptr_f32 = pto.PtrType.get(f32)
         layout_dn = pto.LayoutAttr.get(pto.Layout.DN, ctx)
@@ -38,11 +40,11 @@ def build_module():
             def run(src, dst):
                 c0 = idx(0)
 
-                shape = [idx(1), idx(1), idx(16), idx(1024), idx(1024)]
-                # DN (col-major) for the minor 2D dims (rows x cols):
-                #   addr(r, c) = base + r * 1 + c * rows
-                # so we want strides [..., 1, rows] for the last two dims.
-                strides = [idx(1048576), idx(1048576), idx(1048576), idx(1), idx(1024)]
+                c1 = idx(1)
+                c16 = idx(16)
+                shape = [c16, c1]
+                # DN for (16 x 1): addr(r, c) = base + r*1 + c*rows.
+                strides = [c1, c1]
 
                 src_view = pto.MakeTensorViewOp(
                     tensor_view_ty, src, shape, strides, layout=layout_dn
@@ -50,8 +52,8 @@ def build_module():
                 src_part = pto.PartitionViewOp(
                     part_view_ty,
                     src_view,
-                    offsets=[c0, c0, c0, c0, c0],
-                    sizes=[idx(1), idx(1), idx(16), idx(16), idx(16)],
+                    offsets=[c0, c0],
+                    sizes=[c16, c1],
                 ).result
 
                 tile = pto.AllocTileOp(tile_buf_ty).result
@@ -63,8 +65,8 @@ def build_module():
                 dst_part = pto.PartitionViewOp(
                     part_view_ty,
                     dst_view,
-                    offsets=[c0, c0, c0, c0, c0],
-                    sizes=[idx(1), idx(1), idx(16), idx(16), idx(16)],
+                    offsets=[c0, c0],
+                    sizes=[c16, c1],
                 ).result
 
                 pto.TStoreOp(None, tile, dst_part)

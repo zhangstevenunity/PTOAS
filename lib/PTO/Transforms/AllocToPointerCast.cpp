@@ -25,6 +25,25 @@ namespace {} // namespace
 LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
     memref::AllocOp op, PatternRewriter &rewriter) const {
   const auto &currentMemRefType = cast<BaseMemRefType>(op.getType());
+
+  // Preserve tile config carried by the downstream bind_tile user. Losing this
+  // metadata here makes PointerCast lowering fall back to RowMajor defaults,
+  // which can generate illegal intermediate TRESHAPE sequences.
+  TileBufConfigAttr configAttr;
+  for (Operation *user : op.getResult().getUsers()) {
+    auto bind = dyn_cast<pto::BindTileOp>(user);
+    if (!bind || bind.getSource() != op.getResult())
+      continue;
+    if (!configAttr) {
+      configAttr = bind.getConfigAttr();
+      continue;
+    }
+    if (configAttr != bind.getConfigAttr()) {
+      op.emitWarning("alloc has multiple bind_tile users with different configs; "
+                     "using the first one");
+      break;
+    }
+  }
   
   constexpr uint64_t kAlign = 4096;
   auto iter = buffer2Offsets.find(op.getResult());
@@ -101,7 +120,7 @@ LogicalResult MemrefAllocaOpToPointerCastOpPattern::matchAndRewrite(
       ValueRange(addrs),      // addrs
       vRow ? vRow : Value(),  // valid_row
       vCol ? vCol : Value(),  // valid_col
-      TileBufConfigAttr()     // config (空对象)
+      configAttr              // preserve bind_tile config when available
   );
 
   rewriter.replaceOp(op, ptoPointerCastOp->getResults());
