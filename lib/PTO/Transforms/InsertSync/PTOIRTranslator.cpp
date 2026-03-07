@@ -258,14 +258,61 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
   if (op.getAddrs().empty()) {
     return op.emitError("PointerCast must have at least one address operand");
   }
-  Value rootSrc = op.getAddrs().front(); 
- 
+  SmallVector<uint64_t> baseAddresses;
+  baseAddresses.reserve(op.getAddrs().size());
+  for (Value addr : op.getAddrs()) {
+    llvm::APInt apIntValue;
+    if (!matchPattern(addr, m_ConstantInt(&apIntValue))) {
+      // Variable address: be conservative and treat as unknown overlap.
+      baseAddresses.clear();
+      break;
+    }
+    int64_t c = apIntValue.getSExtValue();
+    if (c < 0) {
+      // Unexpected negative planned address: drop address info to stay
+      // conservative in dependency analysis.
+      baseAddresses.clear();
+      break;
+    }
+    baseAddresses.push_back(static_cast<uint64_t>(c));
+  }
+
   uint64_t sizeInBytes = 0;
   if (memRefType.hasStaticShape()) {
-    int64_t elemSize = memRefType.getElementType().getIntOrFloatBitWidth() / 8;
-    int64_t numElements = 1;
-    for (auto dim : memRefType.getShape()) numElements *= dim;
-    sizeInBytes = numElements * elemSize;
+    int64_t bitWidth =
+        memRefType.getElementType().getIntOrFloatBitWidth();
+    uint64_t elemBytes = static_cast<uint64_t>((bitWidth + 7) / 8);
+    if (elemBytes == 0)
+      elemBytes = 1;
+
+    // Prefer stride-based size computation to account for padded/fractal layouts.
+    SmallVector<int64_t> strides;
+    int64_t offset = ShapedType::kDynamic;
+    if (succeeded(getStridesAndOffset(memRefType, strides, offset)) &&
+        offset != ShapedType::kDynamic &&
+        llvm::all_of(strides, [](int64_t s) { return s != ShapedType::kDynamic; }) &&
+        offset >= 0) {
+      uint64_t maxIndex = static_cast<uint64_t>(offset);
+      auto shape = memRefType.getShape();
+      bool invalid = false;
+      for (size_t i = 0; i < shape.size(); ++i) {
+        int64_t dim = shape[i];
+        if (dim <= 0) {
+          invalid = true;
+          break;
+        }
+        uint64_t stride = static_cast<uint64_t>(strides[i]);
+        maxIndex += static_cast<uint64_t>(dim - 1) * stride;
+      }
+      if (!invalid && !shape.empty()) {
+        sizeInBytes = (maxIndex + 1) * elemBytes;
+      }
+    } else {
+      uint64_t numElements = 1;
+      for (auto dim : memRefType.getShape())
+        numElements *= static_cast<uint64_t>(dim);
+      sizeInBytes = numElements * elemBytes;
+    }
   }
  
   pto::AddressSpace space = pto::AddressSpace::GM; 
@@ -277,9 +324,9 @@ LogicalResult PTOIRTranslator::UpdatePointerCastOpMemInfo(pto::PointerCastOp op)
  
   auto newMemInfo = std::make_unique<BaseMemInfo>(
       res,          
-      rootSrc,      
+      res,
       space,
-      SmallVector<uint64_t>{0}, 
+      std::move(baseAddresses),
       sizeInBytes
   );
  
@@ -512,9 +559,14 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
     auto newInfo = parentInfo->clone(result);
  
     if (!newInfo->baseAddresses.empty()) {
-        newInfo->baseAddresses[0] += deltaOffset;
-    } else {
-        newInfo->baseAddresses.push_back(deltaOffset);
+      if (deltaOffset < 0) {
+        // Negative offsets are unexpected for buffer views in this pipeline.
+        // Drop address information to stay conservative in dependency analysis.
+        newInfo->baseAddresses.clear();
+      } else {
+        for (auto &addr : newInfo->baseAddresses)
+          addr += static_cast<uint64_t>(deltaOffset);
+      }
     }
  
     if (newSize > 0) {

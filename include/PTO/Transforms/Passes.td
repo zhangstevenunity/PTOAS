@@ -50,6 +50,23 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   ];
 }
 
+def PTOEnableMultiBuffer : Pass<"pto-enable-multibuffer", "func::FuncOp"> {
+  let summary = "Materialize multi-buffer (ping/pong) selection";
+  let description = [{
+    Rewrites `pto.pointer_cast(addrs=[ping,pong])` into a loop-local selector
+    that dynamically picks the active address. This enables planned ping/pong
+    buffers to take effect in the emitted C++.
+  }];
+
+  let constructor = "mlir::pto::createPTOEnableMultiBufferPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   let summary = "Convert Ops from other dialects to PTO Ops";
   let constructor = "mlir::pto::createConvertToPTOOpPass()";

@@ -3591,6 +3591,85 @@ struct PTOWaitFlagToEmitC : public OpConversionPattern<mlir::pto::WaitFlagOp> {
   }
 };
 
+struct PTOSetFlagDynToEmitC
+    : public OpConversionPattern<mlir::pto::SetFlagDynOp> {
+  using OpConversionPattern<mlir::pto::SetFlagDynOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::SetFlagDynOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto *ctx = rewriter.getContext();
+    Location loc = op.getLoc();
+
+    std::string srcTok = pipeTokFromPipeAttr(op.getSrcPipe());
+    std::string dstTok = pipeTokFromPipeAttr(op.getDstPipe());
+
+    // Cast the dynamic event id into the ISA event type to keep ABI stable.
+    auto eventTy = emitc::OpaqueType::get(ctx, "event_t");
+    auto castTyAttr = rewriter.getArrayAttr(
+        {emitc::OpaqueAttr::get(ctx, "event_t")});
+    Value eventVal =
+        rewriter
+            .create<emitc::CallOpaqueOp>(loc, eventTy, "static_cast",
+                                         /*args=*/ArrayAttr{},
+                                         /*template_args=*/castTyAttr,
+                                         /*operands=*/ValueRange{adaptor.getEventId()})
+            .getResult(0);
+
+    // NOTE: emitc.call_opaque mixes literal tokens (OpaqueAttr) and SSA operands
+    // via integer placeholders. IntegerAttr(0) prints operands[0].
+    auto argsAttr = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, srcTok),
+        emitc::OpaqueAttr::get(ctx, dstTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, "set_flag",
+        /*args=*/argsAttr,
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{eventVal});
+    return success();
+  }
+};
+
+struct PTOWaitFlagDynToEmitC
+    : public OpConversionPattern<mlir::pto::WaitFlagDynOp> {
+  using OpConversionPattern<mlir::pto::WaitFlagDynOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::WaitFlagDynOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto *ctx = rewriter.getContext();
+    Location loc = op.getLoc();
+
+    std::string srcTok = pipeTokFromPipeAttr(op.getSrcPipe());
+    std::string dstTok = pipeTokFromPipeAttr(op.getDstPipe());
+
+    auto eventTy = emitc::OpaqueType::get(ctx, "event_t");
+    auto castTyAttr = rewriter.getArrayAttr(
+        {emitc::OpaqueAttr::get(ctx, "event_t")});
+    Value eventVal =
+        rewriter
+            .create<emitc::CallOpaqueOp>(loc, eventTy, "static_cast",
+                                         /*args=*/ArrayAttr{},
+                                         /*template_args=*/castTyAttr,
+                                         /*operands=*/ValueRange{adaptor.getEventId()})
+            .getResult(0);
+
+    auto argsAttr = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, srcTok),
+        emitc::OpaqueAttr::get(ctx, dstTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, "wait_flag",
+        /*args=*/argsAttr,
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{eventVal});
+    return success();
+  }
+};
+
 struct PTOGetBufToEmitC : public OpConversionPattern<mlir::pto::GetBufOp> {
   using OpConversionPattern<mlir::pto::GetBufOp>::OpConversionPattern;
 
@@ -7181,9 +7260,11 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<ArithCmpIToEmitC>(typeConverter, ctx);
   patterns.add<PTOBindTileToEmitC>(typeConverter, ctx);
   patterns.add<PTOSetFlagToEmitC>(typeConverter, ctx);
+  patterns.add<PTOSetFlagDynToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubSCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubCSToEmitC>(typeConverter, ctx);
   patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx);
+  patterns.add<PTOWaitFlagDynToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetBufToEmitC>(typeConverter, ctx);
   patterns.add<PTORlsBufToEmitC>(typeConverter, ctx);
   patterns.add<PTOXORSToEmitC>(typeConverter, ctx);

@@ -548,6 +548,12 @@ struct PTOViewToMemrefPass
         auto allocType = MemRefType::get(shape, elemTy, allocLayout, tbTy.getMemorySpace());
         Value alloc = rewriter.create<memref::AllocOp>(loc, allocType);
 
+        // Propagate multi-buffer intent so PlanMemory can allocate ping/pong
+        // addresses for this local buffer.
+        if (auto mb = op->getAttr("pto.multi_buffer")) {
+          alloc.getDefiningOp()->setAttr("pto.multi_buffer", mb);
+        }
+
         // BindTileOp 的 Builder 会自动处理空的 Value，将其视为静态维度
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
@@ -1100,8 +1106,12 @@ struct PTOViewToMemrefPass
       func.walk([&](mlir::pto::TReshapeOp op) { reshapes.push_back(op); });
 
       for (auto op : reshapes) {
+        // NOTE: After Stage 0.5 (alloc_tile -> memref.alloc + bind_tile), the
+        // operand types of tile_buf view ops may be rewritten to MemRefType,
+        // which temporarily breaks the ODS-typed accessors (they would
+        // llvm::cast<TileBufType>(...) and assert). Use raw operands here.
         Value src = op->getOperand(0);
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
         if (!tbTy) {
           op.emitError("treshape result must be tile_buf type");
           signalPassFailure();
@@ -1118,8 +1128,10 @@ struct PTOViewToMemrefPass
       func.walk([&](mlir::pto::BitcastOp op) { bitcasts.push_back(op); });
 
       for (auto op : bitcasts) {
+        // See note above: avoid typed accessors on ops whose operands have been
+        // rewritten to memref values in Stage 0.5.
         Value src = op->getOperand(0);
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op->getResult(0).getType());
+        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
         if (!tbTy) {
           op.emitError("bitcast result must be tile_buf type");
           signalPassFailure();
