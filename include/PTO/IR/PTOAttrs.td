@@ -437,4 +437,27 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// FIFO Location (for TPUSH/TPOP FIFO v2)
+//===----------------------------------------------------------------------===//
+
+def PTO_FifoLocation_GM : I32EnumAttrCase<"GM", 0, "gm">;
+def PTO_FifoLocation_LOCAL : I32EnumAttrCase<"LOCAL", 1, "local">;
+
+def PTO_FifoLocationEnum : PTO_I32Enum<
+  "FifoLocation", "PTO FIFO physical location", [
+    PTO_FifoLocation_GM,
+    PTO_FifoLocation_LOCAL
+  ]>;
+
+def PTO_FifoLocationAttr : PTO_Attr<"FifoLocation", "fifo_location"> {
+  let parameters = (ins EnumParameter<PTO_FifoLocationEnum>:$location);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Physical location of cross-core FIFO buffer.
+    GM: FIFO in global memory.
+    LOCAL: FIFO in on-chip local memory (UB/L1).
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOATTRS

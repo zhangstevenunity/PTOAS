@@ -79,6 +79,123 @@ static const char *addrSpaceQualifier(pto::AddressSpace as) {
   return "__gm__";
 }
 
+static std::string getEmitCElementTypeToken(Type elemTy) {
+  if (elemTy.isF16())
+    return "half";
+  if (elemTy.isBF16())
+    return "bfloat16_t";
+  if (elemTy.isF32())
+    return "float";
+  if (elemTy.isF64())
+    return "double";
+  if (elemTy.isInteger(8)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int8_t" : "uint8_t";
+  }
+  if (elemTy.isInteger(16)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int16_t" : "uint16_t";
+  }
+  if (elemTy.isInteger(32)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return (intTy.isSignless() || intTy.isSigned()) ? "int32_t" : "uint32_t";
+  }
+  if (elemTy.isInteger(64)) {
+    auto intTy = cast<IntegerType>(elemTy);
+    return intTy.isUnsigned() ? "uint64_t" : "int64_t";
+  }
+  return "";
+}
+
+static const char *getEmitCTileRoleToken(pto::AddressSpace as) {
+  switch (as) {
+  case pto::AddressSpace::VEC:
+    return "TileType::Vec";
+  case pto::AddressSpace::MAT:
+    return "TileType::Mat";
+  case pto::AddressSpace::LEFT:
+    return "TileType::Left";
+  case pto::AddressSpace::RIGHT:
+    return "TileType::Right";
+  case pto::AddressSpace::ACC:
+    return "TileType::Acc";
+  case pto::AddressSpace::BIAS:
+    return "TileType::Bias";
+  case pto::AddressSpace::SCALING:
+    return "TileType::Scaling";
+  case pto::AddressSpace::GM:
+  case pto::AddressSpace::Zero:
+    return "TileType::Vec";
+  }
+  return "TileType::Vec";
+}
+
+static FailureOr<std::string> getEmitCTileTypeTokenFromType(Type ty) {
+  auto mrTy = dyn_cast<MemRefType>(ty);
+  if (!mrTy || mrTy.getRank() < 2 || !mrTy.hasStaticShape())
+    return failure();
+
+  int64_t rows = mrTy.getDimSize(0);
+  int64_t cols = mrTy.getDimSize(1);
+  if (rows == ShapedType::kDynamic || cols == ShapedType::kDynamic)
+    return failure();
+
+  std::string elemTok = getEmitCElementTypeToken(mrTy.getElementType());
+  if (elemTok.empty())
+    return failure();
+
+  pto::AddressSpace as = pto::AddressSpace::VEC;
+  if (auto asAttr =
+          dyn_cast_or_null<pto::AddressSpaceAttr>(mrTy.getMemorySpace()))
+    as = asAttr.getAddressSpace();
+
+  const char *roleTok = getEmitCTileRoleToken(as);
+  return std::string("Tile<") + roleTok + ", " + elemTok + ", " +
+         std::to_string(rows) + ", " + std::to_string(cols) +
+         ", BLayout::RowMajor, " + std::to_string(rows) + ", " +
+         std::to_string(cols) + ", SLayout::NoneBox, 512, PadValue::Null>";
+}
+
+static FailureOr<int> allocateFlagBaseForInitOp(mlir::pto::InitializePipeOp op) {
+  static constexpr int kFlagBasePool[] = {0, 2, 4, 6, 8, 10, 12, 14};
+  static constexpr int kFlagBasePoolSize = 8;
+  int idx = 0;
+  for (Operation &candidate : *op->getBlock()) {
+    if (auto init = dyn_cast<mlir::pto::InitializePipeOp>(&candidate)) {
+      if (init == op)
+        break;
+      ++idx;
+    }
+  }
+  if (idx < 0 || idx >= kFlagBasePoolSize)
+    return failure();
+  return kFlagBasePool[idx];
+}
+
+static FailureOr<std::string>
+getTPipeFifoTypeToken(pto::FifoType fifoTy, int8_t dirMask, PTOArch targetArch) {
+  if (targetArch == PTOArch::A3)
+    return std::string("FIFOType::GM_FIFO");
+  if (targetArch == PTOArch::A5) {
+    if (dirMask == 1)
+      return std::string("FIFOType::VEC_FIFO");
+    if (dirMask == 2)
+      return std::string("FIFOType::MAT_FIFO");
+  }
+  if (fifoTy.getLocation().getLocation() == pto::FifoLocation::GM)
+    return std::string("FIFOType::GM_FIFO");
+  return failure();
+}
+
+static std::pair<std::string, std::string>
+getTPipeSyncTypeTokens(const std::string &fifoTypeToken) {
+  if (fifoTypeToken == "FIFOType::GM_FIFO")
+    return {"TSyncOpType::TSTORE_C2GM_UFOFF", "TSyncOpType::TLOAD"};
+  if (fifoTypeToken == "FIFOType::MAT_FIFO")
+    return {"TSyncOpType::TINSERT_V2L1", "TSyncOpType::NONE"};
+  return {"TSyncOpType::TMOV_C2UB", "TSyncOpType::NONE"};
+}
+
 static Value peelUnrealized(Value v) {
   if (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
     return castOp.getOperand(0);
@@ -174,6 +291,13 @@ public:
       std::string finalTypeStr = qualifier + " " + elemTypeStr;
       return emitc::PointerType::get(
           emitc::OpaqueType::get(Ctx, finalTypeStr));
+    });
+
+    addConversion([Ctx](pto::FifoType type) -> Type {
+      // `initialize_pipe` returns a Pipe-dependent handle type in generated C++.
+      // Keep it as `auto` to avoid hard-coding a non-existent concrete FIFO type.
+      (void)type;
+      return emitc::OpaqueType::get(Ctx, "auto");
     });
 
     // ---------------------------------------------------------
@@ -3635,6 +3759,107 @@ struct PTORlsBufToEmitC : public OpConversionPattern<mlir::pto::RlsBufOp> {
         /*args=*/argsAttr,
         /*templateArgs=*/ArrayAttr{},
         /*operands=*/ValueRange{});
+    return success();
+  }
+};
+
+struct PTOInitializePipeToEmitC
+    : public OpConversionPattern<mlir::pto::InitializePipeOp> {
+  PTOInitializePipeToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                           PTOArch targetArch)
+      : OpConversionPattern<mlir::pto::InitializePipeOp>(typeConverter, ctx),
+        targetArch(targetArch) {}
+
+  LogicalResult matchAndRewrite(mlir::pto::InitializePipeOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto fifoTy = dyn_cast<mlir::pto::FifoType>(op.getFifo().getType());
+    if (!fifoTy)
+      return rewriter.notifyMatchFailure(op, "expected !pto.fifo result type");
+
+    int8_t dirMask = static_cast<int8_t>(op.getDirMask());
+    if (dirMask == 3)
+      return rewriter.notifyMatchFailure(
+          op, "bidirectional DIRMASK is not supported in unified v3");
+    if (dirMask != 1 && dirMask != 2)
+      return rewriter.notifyMatchFailure(op, "unsupported dir_mask");
+
+    auto flagBase = allocateFlagBaseForInitOp(op);
+    if (failed(flagBase))
+      return rewriter.notifyMatchFailure(op, "insufficient FlagID pairs");
+
+    auto fifoTypeToken = getTPipeFifoTypeToken(fifoTy, dirMask, targetArch);
+    if (failed(fifoTypeToken))
+      return rewriter.notifyMatchFailure(op, "failed to map FIFOType");
+
+    auto syncTokens = getTPipeSyncTypeTokens(*fifoTypeToken);
+    int slotNum = 8;
+    auto srcTok = getEmitCTileTypeTokenFromType(fifoTy.getSrcTileType());
+    if (failed(srcTok))
+      return rewriter.notifyMatchFailure(
+          op, "failed to map fifo src type to Tile<...> token");
+    auto dstTok = getEmitCTileTypeTokenFromType(fifoTy.getDstTileType());
+    if (failed(dstTok))
+      return rewriter.notifyMatchFailure(
+          op, "failed to map fifo dst type to Tile<...> token");
+    std::string tpipeTok =
+        "TPipe<" + std::to_string(*flagBase) + ", " + *fifoTypeToken + ", " +
+        std::to_string(slotNum) + ", " + std::to_string(slotNum) + ", " +
+        *srcTok + ", " + *dstTok + ", " + syncTokens.first + ", " +
+        syncTokens.second + ", VecCubeRatio::V2C1_VECS>";
+
+    Value fifoHandle;
+    if (*fifoTypeToken == "FIFOType::GM_FIFO") {
+      fifoHandle = peelUnrealized(adaptor.getGmSlotBuffer());
+    } else if (*fifoTypeToken == "FIFOType::VEC_FIFO") {
+      fifoHandle = peelUnrealized(adaptor.getC2vConsumerBuf());
+    } else {
+      fifoHandle = peelUnrealized(adaptor.getV2cConsumerBuf());
+    }
+
+    auto emitFifoTy = cast<Type>(getTypeConverter()->convertType(op.getFifo().getType()));
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{emitFifoTy}, tpipeTok,
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{fifoHandle});
+    return success();
+  }
+
+  PTOArch targetArch;
+};
+
+struct PTOTPushToEmitC
+    : public OpConversionPattern<mlir::pto::TPushOp> {
+  using OpConversionPattern<mlir::pto::TPushOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::TPushOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, "TPUSH",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{
+            peelUnrealized(adaptor.getTile()),
+            peelUnrealized(adaptor.getFifo()),
+        });
+    return success();
+  }
+};
+
+struct PTOTPopToEmitC
+    : public OpConversionPattern<mlir::pto::TPopOp> {
+  using OpConversionPattern<mlir::pto::TPopOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::TPopOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, "TPOP",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{
+            peelUnrealized(adaptor.getTile()),
+            peelUnrealized(adaptor.getFifo()),
+        });
     return success();
   }
 };
@@ -7186,6 +7411,9 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetBufToEmitC>(typeConverter, ctx);
   patterns.add<PTORlsBufToEmitC>(typeConverter, ctx);
+  patterns.add<PTOInitializePipeToEmitC>(typeConverter, ctx, targetArch);
+  patterns.add<PTOTPushToEmitC>(typeConverter, ctx);
+  patterns.add<PTOTPopToEmitC>(typeConverter, ctx);
   patterns.add<PTOXORSToEmitC>(typeConverter, ctx);
   patterns.add<PTOSYNCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubSToEmitC>(typeConverter, ctx);
