@@ -1146,10 +1146,11 @@ struct PTOViewToMemrefPass
           
           Value src = op->getOperand(0); 
           Value dst = op->getOperand(1);
-          
-          auto config = lookupConfig(dst); // Config on Tile
 
-          rewriter.replaceOpWithNewOp<pto::TLoadOp>(op, TypeRange{}, src, dst);
+          auto newOp =
+              rewriter.create<pto::TLoadOp>(op.getLoc(), TypeRange{}, src, dst);
+          newOp->setAttrs(op->getAttrs());
+          rewriter.replaceOp(op, newOp->getResults());
       }
 
       // --- TStoreOp [Src, Dst] ---
@@ -1162,9 +1163,10 @@ struct PTOViewToMemrefPass
         Value src = op->getOperand(0); 
         Value dst = op->getOperand(1);
 
-        auto config = lookupConfig(src); // Config on Tile
-
-        rewriter.replaceOpWithNewOp<pto::TStoreOp>(op, TypeRange{}, src, dst);
+        auto newOp = rewriter.create<pto::TStoreOp>(op.getLoc(), TypeRange{},
+                                                    src, dst);
+        newOp->setAttrs(op->getAttrs());
+        rewriter.replaceOp(op, newOp->getResults());
       }
 
        // --- TTransOp [Src, Tmp, Dst] ---

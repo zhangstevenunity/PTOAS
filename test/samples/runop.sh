@@ -440,6 +440,22 @@ PY
 	      fi
 	    fi
 
+    # Regression guard for row-reduction kernels:
+    # (32 x 1) row-major outputs are minor-2D ambiguous; layout must align with
+    # row-major tiles (ND), otherwise pto-isa can hit layout/tile static_assert.
+    if [[ "$base" == "rowmin" || "$base" == "rowsum" || "$base" == "rowmax" ]]; then
+      if ! grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::ND" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected pto::Layout::ND for shape (32 x 1) GlobalTensor"
+        overall=1
+        continue
+      fi
+      if grep -Eq "pto::Shape<1, 1, 1, 32, 1>.*pto::Layout::DN" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected pto::Layout::DN for shape (32 x 1) GlobalTensor"
+        overall=1
+        continue
+      fi
+    fi
+
 	    # Sync regression: InjectSync samples use `make_tensor_view` for GM.
 	    # They must not fall back to inferring a fractal (NZ) layout in C++.
 	    if [[ "$base" == "test_inject_sync_if" || \
