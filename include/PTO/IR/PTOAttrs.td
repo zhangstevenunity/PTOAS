@@ -437,4 +437,27 @@ def TileBufConfigAttr : AttrDef<PTO_Dialect, "TileBufConfig"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Pipe Location (for TPUSH/TPOP unified pipe handle)
+//===----------------------------------------------------------------------===//
+
+def PTO_PipeLocation_GM : I32EnumAttrCase<"GM", 0, "gm">;
+def PTO_PipeLocation_LOCAL : I32EnumAttrCase<"LOCAL", 1, "local">;
+
+def PTO_PipeLocationEnum : PTO_I32Enum<
+  "PipeLocation", "PTO pipe physical location", [
+    PTO_PipeLocation_GM,
+    PTO_PipeLocation_LOCAL
+  ]>;
+
+def PTO_PipeLocationAttr : PTO_Attr<"PipeLocation", "pipe_location"> {
+  let parameters = (ins EnumParameter<PTO_PipeLocationEnum>:$location);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Physical location of cross-core pipe buffer.
+    GM: pipe in global memory.
+    LOCAL: pipe in on-chip local memory (UB/L1).
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOATTRS

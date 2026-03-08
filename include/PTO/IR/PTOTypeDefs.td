@@ -184,3 +184,15 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     int32_t getPadValueI32() const;       // 0 null, 1 zero, 2 max, 3 min
   }];
 }
+
+def PipeType : TypeDef<PTO_Dialect, "Pipe"> {
+  let mnemonic = "pipe";
+  let summary = "Pipe handle type for TPUSH/TPOP unified static schedule";
+  let parameters = (ins
+    "mlir::Type":$srcTileType,
+    "mlir::Type":$dstTileType
+  );
+  let assemblyFormat = [{
+    `<` $srcTileType `,` $dstTileType `>`
+  }];
+}

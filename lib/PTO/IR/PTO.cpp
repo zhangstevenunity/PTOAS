@@ -2006,6 +2006,73 @@ LogicalResult RlsBufOp::verify() {
   return verifyBufSyncOp(getOperation(), getPipe(), getBufIdAttr(),
                          getModeAttr());
 }
+
+//===----------------------------------------------------------------------===//
+// TPUSH/TPOP Op Verifiers
+//===----------------------------------------------------------------------===//
+
+static bool isInsideSection(Operation *op) {
+  return op->getParentOfType<pto::SectionCubeOp>() ||
+         op->getParentOfType<pto::SectionVectorOp>();
+}
+
+static bool isInsideSectionCube(Operation *op) {
+  return op->getParentOfType<pto::SectionCubeOp>() != nullptr;
+}
+
+static bool isInsideSectionVector(Operation *op) {
+  return op->getParentOfType<pto::SectionVectorOp>() != nullptr;
+}
+
+static LogicalResult verifyInitializePipe(Operation *op, int8_t dirMask,
+                                          int32_t slotSize, Type pipeType) {
+  if (isInsideSection(op))
+    return op->emitOpError("must be at function level, not inside a section");
+  if (dirMask == 3)
+    return op->emitOpError("bidirectional DIRMASK is not supported");
+  if (dirMask != 1 && dirMask != 2)
+    return op->emitOpError("dir_mask must be 1 (C2V) or 2 (V2C)");
+  if (slotSize <= 0)
+    return op->emitOpError("slot_size must be positive");
+  auto pipeTy = dyn_cast<pto::PipeType>(pipeType);
+  if (!pipeTy)
+    return op->emitOpError("result type must be !pto.pipe<...>");
+  return success();
+}
+
+LogicalResult InitializePipeOp::verify() {
+  return verifyInitializePipe(getOperation(), getDirMask(), getSlotSize(),
+                              getPipe().getType());
+}
+
+static LogicalResult verifyPipeTileType(Operation *op, Type pipeType,
+                                        Type tileType, bool isPush) {
+  auto pipeTy = dyn_cast<pto::PipeType>(pipeType);
+  if (!pipeTy)
+    return op->emitOpError("expects pipe operand type !pto.pipe<...>");
+
+  Type expected = isPush ? pipeTy.getSrcTileType() : pipeTy.getDstTileType();
+  if (tileType != expected) {
+    return op->emitOpError(isPush ? "tile type must match pipe src tile type"
+                                  : "tile type must match pipe dst tile type");
+  }
+  return success();
+}
+
+LogicalResult TPushOp::verify() {
+  if (!isInsideSectionCube(getOperation()) && !isInsideSectionVector(getOperation()))
+    return emitOpError("must be inside a section.cube or section.vector");
+  return verifyPipeTileType(getOperation(), getPipeHandle().getType(),
+                            getTile().getType(), /*isPush=*/true);
+}
+
+LogicalResult TPopOp::verify() {
+  if (!isInsideSectionCube(getOperation()) && !isInsideSectionVector(getOperation()))
+    return emitOpError("must be inside a section.cube or section.vector");
+  return verifyPipeTileType(getOperation(), getPipeHandle().getType(),
+                            getTile().getType(), /*isPush=*/false);
+}
+
 // ---- TOp ----
 LogicalResult TGemvBiasOp::verify() {
   if (getPTOTypeRank(getA().getType()) == -1 ||
@@ -4439,6 +4506,31 @@ void TMatmulMxBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Mem
   // 这里的 bias 是必选的 AnyType:$bias，所以是 Singleton
   addEffect(effects, &getBiasMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
+}
+
+void InitializePipeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getGmSlotBufferMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getC2vConsumerBufMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getV2cConsumerBufMutable(), MemoryEffects::Read::get());
+  addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void TPushOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+}
+
+void TPopOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Read::get());
+  addEffect(effects, &getPipeHandleMutable(), MemoryEffects::Write::get());
+  addEffect(effects, &getTileMutable(), MemoryEffects::Write::get());
 }
 
 // [Include 必须放在最后]
