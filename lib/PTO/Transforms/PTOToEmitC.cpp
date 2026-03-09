@@ -85,6 +85,61 @@ static Value peelUnrealized(Value v) {
   return v;
 }
 
+static std::optional<mlir::pto::Layout> getLayoutAttrFromOp(Operation *op) {
+  if (!op)
+    return std::nullopt;
+  if (auto attr = op->getAttrOfType<mlir::pto::LayoutAttr>("layout"))
+    return attr.getLayout();
+  return std::nullopt;
+}
+
+static std::optional<mlir::pto::Layout> resolveLayoutFromValueChain(Value v) {
+  v = peelUnrealized(v);
+  while (Operation *def = v.getDefiningOp()) {
+    if (auto layout = getLayoutAttrFromOp(def))
+      return layout;
+    if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+      v = peelUnrealized(subview.getSource());
+      continue;
+    }
+    if (auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(def)) {
+      v = peelUnrealized(reinterpret.getSource());
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(def)) {
+      v = peelUnrealized(cast.getSource());
+      continue;
+    }
+    if (auto unrealized = dyn_cast<UnrealizedConversionCastOp>(def)) {
+      if (unrealized->getNumOperands() == 0)
+        break;
+      v = peelUnrealized(unrealized.getOperand(0));
+      continue;
+    }
+    break;
+  }
+  return std::nullopt;
+}
+
+static std::optional<mlir::pto::Layout>
+resolveLayoutForGlobalTensor(Operation *anchor, Value basePtr) {
+  if (auto layout = getLayoutAttrFromOp(anchor))
+    return layout;
+  return resolveLayoutFromValueChain(basePtr);
+}
+
+static std::string layoutToEmitCString(mlir::pto::Layout layout) {
+  switch (layout) {
+  case mlir::pto::Layout::ND:
+    return "pto::Layout::ND";
+  case mlir::pto::Layout::DN:
+    return "pto::Layout::DN";
+  case mlir::pto::Layout::NZ:
+    return "pto::Layout::NZ";
+  }
+  return "pto::Layout::ND";
+}
+
 //===----------------------------------------------------------------------===//
 // Type Converter
 //===----------------------------------------------------------------------===//
@@ -2475,18 +2530,8 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     // 3.0 Layout: prefer the attribute from InferPTOLayout; only fall back to
     // local inference when the pass is disabled.
     std::string layoutEnum = "pto::Layout::ND";
-    if (auto attr = op->getAttrOfType<mlir::pto::LayoutAttr>("layout")) {
-      switch (attr.getLayout()) {
-      case mlir::pto::Layout::ND:
-        layoutEnum = "pto::Layout::ND";
-        break;
-      case mlir::pto::Layout::DN:
-        layoutEnum = "pto::Layout::DN";
-        break;
-      case mlir::pto::Layout::NZ:
-        layoutEnum = "pto::Layout::NZ";
-        break;
-      }
+    if (auto layout = resolveLayoutForGlobalTensor(op, op.getSource())) {
+      layoutEnum = layoutToEmitCString(*layout);
     } else {
       auto strToInt = [](const std::string &s, int64_t &out) -> bool {
         return s != "-1" && llvm::to_integer(s, out);
@@ -2725,21 +2770,9 @@ static Value buildGlobalTensorFromMemref(ConversionPatternRewriter &rewriter,
   // inference when the pass is disabled.
   std::string layoutEnum = "pto::Layout::ND";
   bool hasLayoutAttr = false;
-  if (anchor) {
-    if (auto attr = anchor->getAttrOfType<mlir::pto::LayoutAttr>("layout")) {
-      hasLayoutAttr = true;
-      switch (attr.getLayout()) {
-      case mlir::pto::Layout::ND:
-        layoutEnum = "pto::Layout::ND";
-        break;
-      case mlir::pto::Layout::DN:
-        layoutEnum = "pto::Layout::DN";
-        break;
-      case mlir::pto::Layout::NZ:
-        layoutEnum = "pto::Layout::NZ";
-        break;
-      }
-    }
+  if (auto layout = resolveLayoutForGlobalTensor(anchor, basePtr)) {
+    layoutEnum = layoutToEmitCString(*layout);
+    hasLayoutAttr = true;
   }
   if (!hasLayoutAttr) {
     SmallVector<int64_t, 5> shapeInt(5, -1), strideInt(5, -1);
