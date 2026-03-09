@@ -385,7 +385,7 @@ process_one_dir() {
         overall=1
         continue
       fi
-      if [[ $(grep -c "TRESHAPE(" "$cpp") -ne 1 ]]; then
+      if grep -Fq "TRESHAPE(" "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	pto.bitcast should not lower via TRESHAPE()"
         overall=1
         continue
@@ -406,21 +406,29 @@ import re
 import sys
 
 text = open(sys.argv[1], "r", encoding="utf-8").read()
+
+# Accept either:
+# 1. Two-step lowering:
+#      ptr = tile.data();
+#      addr = reinterpret_cast<uint64_t>(ptr);
+#      TASSIGN(dst, addr);
+# 2. Inline lowering:
+#      addr = reinterpret_cast<uint64_t>(tile.data());
+#      TASSIGN(dst, addr);
 ptr_vars = {
     match.group(1)
     for match in re.finditer(r"\b(\w+)\s*=\s*\w+\.data\(\);", text)
 }
-addr_vars = {
-    match.group(1)
-    for match in re.finditer(
-        r"\b(\w+)\s*=\s*reinterpret_cast<uint64_t>\((\w+)\);", text
-    )
-    if match.group(2) in ptr_vars
-}
-ok = any(
-    re.search(rf"TASSIGN\([^,]+,\s*{re.escape(addr_var)}\);", text)
-    for addr_var in addr_vars
-)
+addr_vars = set()
+for match in re.finditer(
+    r"\b(\w+)\s*=\s*reinterpret_cast<uint64_t>\((.+)\);", text
+):
+    addr_var = match.group(1)
+    src_expr = match.group(2).strip()
+    if src_expr in ptr_vars or src_expr.endswith(".data()"):
+        addr_vars.add(addr_var)
+
+ok = any(re.search(rf"TASSIGN\([^,]+,\s*{re.escape(addr_var)}\);", text) for addr_var in addr_vars)
 sys.exit(0 if ok else 1)
 PY
       then

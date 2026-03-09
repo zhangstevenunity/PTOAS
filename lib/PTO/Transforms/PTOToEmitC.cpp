@@ -6569,7 +6569,26 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       return rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
     };
 
-    Value tileCandidate = peelAllCasts(adaptor.getSource());
+    // For view-like bind_tile chains (for example, treshape/bitcast lowered by
+    // PTOViewToMemref), the upstream bind_tile/alloc_tile may already have
+    // been converted to a Tile. Reuse that remapped Tile so semantic views can
+    // lower via TRESHAPE/TASSIGN instead of falling back to a raw pointer path.
+    Value remappedSource;
+    if (Value v = rewriter.getRemappedValue(op.getSource()))
+      remappedSource = peelAllCasts(v);
+    Value tileCandidate =
+        remappedSource ? remappedSource : peelAllCasts(adaptor.getSource());
+
+    int64_t ignored = 0;
+    bool hasDynamicValidShape =
+        (op.getValidRow() && !getIndexConst(op.getValidRow(), ignored)) ||
+        (op.getValidCol() && !getIndexConst(op.getValidCol(), ignored));
+
+    if (!viewSemantics && remappedSource && isTileLike(remappedSource) &&
+        !hasDynamicValidShape) {
+      rewriter.replaceOp(op, remappedSource);
+      return success();
+    }
     if (viewSemantics && viewSemantics.getValue() == "bitcast" &&
         isTileLike(tileCandidate)) {
       FailureOr<Value> dstTile = buildTileValue();
