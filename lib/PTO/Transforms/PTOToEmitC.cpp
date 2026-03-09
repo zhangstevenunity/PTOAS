@@ -130,7 +130,42 @@ static const char *getEmitCTileRoleToken(pto::AddressSpace as) {
   return "TileType::Vec";
 }
 
-static FailureOr<std::string> getEmitCTileTypeTokenFromType(Type ty) {
+struct EmitCTileLayoutDefaults {
+  const char *blTok;
+  const char *slTok;
+  int fractalBytes;
+  const char *padTok;
+};
+
+static EmitCTileLayoutDefaults
+getEmitCTileLayoutDefaults(pto::AddressSpace as, PTOArch targetArch) {
+  switch (as) {
+  case pto::AddressSpace::ACC:
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 1024, "PadValue::Null"};
+  case pto::AddressSpace::RIGHT:
+    return {"BLayout::RowMajor", "SLayout::ColMajor", 512, "PadValue::Null"};
+  case pto::AddressSpace::LEFT:
+    if (targetArch == PTOArch::A3) {
+      // pto-isa A2/A3: TileLeft -> BLayout::RowMajor + SLayout::RowMajor.
+      return {"BLayout::RowMajor", "SLayout::RowMajor", 512,
+              "PadValue::Null"};
+    }
+    // pto-isa A5: TileLeft -> BLayout::ColMajor + SLayout::RowMajor.
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 512, "PadValue::Null"};
+  case pto::AddressSpace::MAT:
+    return {"BLayout::ColMajor", "SLayout::RowMajor", 512, "PadValue::Null"};
+  case pto::AddressSpace::VEC:
+  case pto::AddressSpace::BIAS:
+  case pto::AddressSpace::SCALING:
+  case pto::AddressSpace::GM:
+  case pto::AddressSpace::Zero:
+    return {"BLayout::RowMajor", "SLayout::NoneBox", 512, "PadValue::Null"};
+  }
+  return {"BLayout::RowMajor", "SLayout::NoneBox", 512, "PadValue::Null"};
+}
+
+static FailureOr<std::string> getEmitCTileTypeTokenFromType(Type ty,
+                                                             PTOArch targetArch) {
   auto mrTy = dyn_cast<MemRefType>(ty);
   if (!mrTy || mrTy.getRank() < 2 || !mrTy.hasStaticShape())
     return failure();
@@ -150,10 +185,12 @@ static FailureOr<std::string> getEmitCTileTypeTokenFromType(Type ty) {
     as = asAttr.getAddressSpace();
 
   const char *roleTok = getEmitCTileRoleToken(as);
+  auto defaults = getEmitCTileLayoutDefaults(as, targetArch);
   return std::string("Tile<") + roleTok + ", " + elemTok + ", " +
          std::to_string(rows) + ", " + std::to_string(cols) +
-         ", BLayout::RowMajor, " + std::to_string(rows) + ", " +
-         std::to_string(cols) + ", SLayout::NoneBox, 512, PadValue::Null>";
+         ", " + defaults.blTok + ", " + std::to_string(rows) + ", " +
+         std::to_string(cols) + ", " + defaults.slTok + ", " +
+         std::to_string(defaults.fractalBytes) + ", " + defaults.padTok + ">";
 }
 
 static FailureOr<int> allocateFlagBaseForInitOp(mlir::pto::InitializePipeOp op) {
@@ -2940,6 +2977,11 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
 
   using OpConversionPattern<pto::PointerCastOp>::OpConversionPattern;
 
+  PointerCastConversion(TypeConverter &typeConverter, MLIRContext *ctx,
+                        PTOArch targetArch)
+      : OpConversionPattern<pto::PointerCastOp>(typeConverter, ctx),
+        targetArch(targetArch) {}
+
   enum class TileRole { Vec, Mat, Left, Right, Acc, Bias, Scaling };
 
   static void collectUserOpsThroughCasts(Value v, SmallVectorImpl<Operation *> &out) {
@@ -2998,6 +3040,26 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     return TileRole::Vec;
   }
 
+  EmitCTileLayoutDefaults getDefaultLayoutForRole(TileRole role) const {
+    switch (role) {
+    case TileRole::Left:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::LEFT, targetArch);
+    case TileRole::Right:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::RIGHT, targetArch);
+    case TileRole::Acc:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::ACC, targetArch);
+    case TileRole::Bias:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::BIAS, targetArch);
+    case TileRole::Mat:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::MAT, targetArch);
+    case TileRole::Scaling:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::SCALING, targetArch);
+    case TileRole::Vec:
+      return getEmitCTileLayoutDefaults(pto::AddressSpace::VEC, targetArch);
+    }
+    return getEmitCTileLayoutDefaults(pto::AddressSpace::VEC, targetArch);
+  }
+
   // [新增] 辅助函数：判断 Value 是否源自 arith.constant
   static bool isConstant(Value v, int64_t &outVal) {
     if (!v) return false;
@@ -3053,9 +3115,12 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
       case TileRole::Scaling: roleTok = "TileType::Scaling"; break;
     }
 
-    // 4. Config & Layout (support BLayoutAttr/SLayoutAttr/PadValueAttr after namespace change)
-    std::string layoutParams = "BLayout::RowMajor";
-    std::string extraParams = "";
+    // 4. Config & Layout (default by tile role; explicit config overrides)
+    auto defaults = getDefaultLayoutForRole(role);
+    std::string layoutParams = defaults.blTok;
+    std::string slStr = defaults.slTok;
+    int32_t frVal = defaults.fractalBytes;
+    std::string padStr = defaults.padTok;
     if (auto configOpt = op.getConfig()) {
         auto config = *configOpt;
         int32_t blVal = 0;
@@ -3068,24 +3133,20 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
         if (auto attr = dyn_cast<SLayoutAttr>(config.getSLayout()))
             slVal = static_cast<int32_t>(attr.getValue());
 
-        std::string slStr = (slVal == 1) ? "SLayout::RowMajor" : (slVal == 2) ? "SLayout::ColMajor" : "SLayout::NoneBox";
+        slStr = (slVal == 1) ? "SLayout::RowMajor" : (slVal == 2) ? "SLayout::ColMajor" : "SLayout::NoneBox";
 
-        int32_t frVal = 0;
+        frVal = 0;
         if (auto attr = dyn_cast<IntegerAttr>(config.getSFractalSize())) frVal = attr.getInt();
 
         int32_t padVal = 0;
         if (auto attr = dyn_cast<PadValueAttr>(config.getPad()))
             padVal = static_cast<int32_t>(attr.getValue());
 
-        std::string padStr = "PadValue::Null";
+        padStr = "PadValue::Null";
         switch (padVal) {
             case 1: padStr = "PadValue::Zero"; break;
             case 2: padStr = "PadValue::Max";  break;
             case 3: padStr = "PadValue::Min";  break;
-        }
-
-        if (!slStr.empty()) {
-            extraParams += ", " + slStr + ", " + std::to_string(frVal) + ", " + padStr;
         }
     }
 
@@ -3144,7 +3205,8 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     // 5. 生成 Tile 类型字符串
     std::string tileTypeStr =
       std::string("Tile<") + roleTok + ", " + elemTypeStr + ", " + dimStr + ", " +
-      layoutParams + ", " + vrowTok + ", " + vcolTok + extraParams + ">";
+      layoutParams + ", " + vrowTok + ", " + vcolTok + ", " + slStr + ", " +
+      std::to_string(frVal) + ", " + padStr + ">";
 
     auto tileType = emitc::OpaqueType::get(ctx, tileTypeStr);
     Value resultValue;
@@ -3192,6 +3254,9 @@ struct PointerCastConversion : public OpConversionPattern<pto::PointerCastOp> {
     rewriter.replaceOp(op, resultValue);
     return success();
   }
+
+private:
+  PTOArch targetArch;
 };
 
 //===----------------------------------------------------------------------===//
@@ -3791,11 +3856,13 @@ struct PTOInitializePipeToEmitC
 
     auto syncTokens = getTPipeSyncTypeTokens(*pipeTypeToken);
     int slotNum = (dirMask == 3) ? 4 : 8;
-    auto srcTok = getEmitCTileTypeTokenFromType(pipeTy.getSrcTileType());
+    auto srcTok =
+        getEmitCTileTypeTokenFromType(pipeTy.getSrcTileType(), targetArch);
     if (failed(srcTok))
       return rewriter.notifyMatchFailure(
           op, "failed to map pipe src type to Tile<...> token");
-    auto dstTok = getEmitCTileTypeTokenFromType(pipeTy.getDstTileType());
+    auto dstTok =
+        getEmitCTileTypeTokenFromType(pipeTy.getDstTileType(), targetArch);
     if (failed(dstTok))
       return rewriter.notifyMatchFailure(
           op, "failed to map pipe dst type to Tile<...> token");
@@ -4182,7 +4249,10 @@ struct PTOTAddToTADD : public OpConversionPattern<pto::TAddOp> {
 // populate patterns
 //===----------------------------------------------------------------------===
 struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCastOp> {
-  using OpConversionPattern<memref::ReinterpretCastOp>::OpConversionPattern;
+  ReinterpretCastToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+                         PTOArch targetArch)
+      : OpConversionPattern<memref::ReinterpretCastOp>(typeConverter, ctx),
+        targetArch(targetArch) {}
 
   LogicalResult matchAndRewrite(memref::ReinterpretCastOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
@@ -4275,7 +4345,11 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     case pto::AddressSpace::BIAS:
       roleTok = "TileType::Bias";
       break;
+    case pto::AddressSpace::SCALING:
+      roleTok = "TileType::Scaling";
+      break;
     case pto::AddressSpace::GM:
+    case pto::AddressSpace::Zero:
       roleTok = "TileType::Vec";
       break;
     }
@@ -4287,12 +4361,13 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
       cols = resMrTy.getDimSize(1);
     }
 
-    // Keep a conservative default config for now.
+    auto defaults = getEmitCTileLayoutDefaults(as, targetArch);
     std::string tileTypeStr =
         std::string("Tile<") + roleTok + ", " + elemTok + ", " +
         std::to_string(rows) + ", " + std::to_string(cols) +
-        ", BLayout::RowMajor, " + std::to_string(rows) + ", " +
-        std::to_string(cols) + ", SLayout::NoneBox, 512, PadValue::Null>";
+        ", " + defaults.blTok + ", " + std::to_string(rows) + ", " +
+        std::to_string(cols) + ", " + defaults.slTok + ", " +
+        std::to_string(defaults.fractalBytes) + ", " + defaults.padTok + ">";
 
     auto tileType = emitc::OpaqueType::get(ctx, tileTypeStr);
     Value tile = rewriter
@@ -4352,6 +4427,9 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
     rewriter.replaceOp(op, tile);
     return success();
   }
+
+private:
+  PTOArch targetArch;
 };
 //===----------------------------------------------------------------------===//
 // pto.taddc lowering -> TADDC(dst, src0, src1, src2)
@@ -7502,7 +7580,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOLReluToEmitC>(typeConverter, ctx);
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
-  patterns.add<PointerCastConversion>(typeConverter, ctx);
+  patterns.add<PointerCastConversion>(typeConverter, ctx, targetArch);
   patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL,
                PTOLoadScalarToEmitC, PTOStoreScalarToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAndToEmitC>(typeConverter, ctx);
@@ -7573,7 +7651,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOTMatmulAccToTMATMULACC>(typeConverter, ctx);
   patterns.add<PTOTGemvToTGEMV>(typeConverter, ctx);
   patterns.add<PTOTGemvAccToTGEMVACC>(typeConverter, ctx);
-  patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx);
+  patterns.add<ReinterpretCastToEmitC>(typeConverter, ctx, targetArch);
   patterns.add<PTOTAbsToTABS>(typeConverter, ctx);
   patterns.add<PTOTAddToTADD>(typeConverter, ctx);
   patterns.add<PTOAddSCToTADDSC>(typeConverter, ctx);

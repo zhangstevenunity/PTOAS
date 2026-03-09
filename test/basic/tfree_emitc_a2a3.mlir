@@ -29,5 +29,6 @@ module {
   }
 }
 
+// CHECK: TPipe<{{.*}}Tile<TileType::Acc, float, 64, 128, BLayout::ColMajor, 64, 128, SLayout::RowMajor, 1024
 // CHECK: TPOP(
 // CHECK-NOT: TFREE

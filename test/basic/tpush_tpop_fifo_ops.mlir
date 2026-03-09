@@ -12,7 +12,7 @@ module {
     %acc_mem = memref.alloc() : memref<64x128xf32, #pto.address_space<acc>>
     %vec_mem = memref.alloc() : memref<32x128xf32, #pto.address_space<vec>>
     %acc_tile = pto.bind_tile %acc_mem, %c64, %c128 {
-      config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
+      config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=1024, pad=#pto.pad_value<null>>
     } : memref<64x128xf32, #pto.address_space<acc>> -> memref<64x128xf32, #pto.address_space<acc>>
     %vec_tile = pto.bind_tile %vec_mem, %c32, %c128 {
       config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>

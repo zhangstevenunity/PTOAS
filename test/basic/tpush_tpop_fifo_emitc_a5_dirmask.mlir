@@ -13,10 +13,10 @@ module {
     %cube_mem = memref.alloc() : memref<64x128xf32, #pto.address_space<mat>>
     %vec_mem = memref.alloc() : memref<32x128xf32, #pto.address_space<vec>>
     %acc_tile = pto.bind_tile %acc_mem, %c64, %c128 {
-      config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
+      config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=1024, pad=#pto.pad_value<null>>
     } : memref<64x128xf32, #pto.address_space<acc>> -> memref<64x128xf32, #pto.address_space<acc>>
     %cube_tile = pto.bind_tile %cube_mem, %c64, %c128 {
-      config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
+      config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=512, pad=#pto.pad_value<null>>
     } : memref<64x128xf32, #pto.address_space<mat>> -> memref<64x128xf32, #pto.address_space<mat>>
     %vec_tile = pto.bind_tile %vec_mem, %c32, %c128 {
       config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
@@ -52,13 +52,11 @@ module {
 // CHECK: __global__ AICORE void pipe_emitc_a5_dirmask
 // CHECK-NOT: initialize_pipe<
 // CHECK-NOT: initialize_pipe(
-// CHECK-DAG: TPipe<
-// CHECK-DAG: FIFOType::VEC_FIFO
-// CHECK-DAG: TPipe<
-// CHECK-DAG: FIFOType::MAT_FIFO
-// CHECK-DAG: Tile<TileType::Acc
-// CHECK-DAG: Tile<TileType::Mat
-// CHECK-DAG: Tile<TileType::Vec
+// CHECK: auto {{.*}} = TPipe<0, FIFOType::VEC_FIFO
+// CHECK-SAME: Tile<TileType::Acc, float, 64, 128, BLayout::ColMajor, 64, 128, SLayout::RowMajor, 1024, PadValue::Null>
+// CHECK: auto {{.*}} = TPipe<2, FIFOType::MAT_FIFO
+// CHECK-SAME: Tile<TileType::Vec
+// CHECK-SAME: Tile<TileType::Mat, float, 64, 128, BLayout::ColMajor, 64, 128, SLayout::RowMajor, 512, PadValue::Null>
 // CHECK-DAG: TPUSH(
 // CHECK-DAG: TPOP(
 // CHECK-DAG: TFREE(
