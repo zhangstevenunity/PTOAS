@@ -7,6 +7,7 @@
 - `pto.initialize_pipe`
 - `pto.tpush(tile, pipe)`
 - `pto.tpop(tile, pipe)`
+- `pto.tfree(pipe)`
 
 并补充当前待完成TODO项。
 
@@ -73,24 +74,35 @@ pto.tpop(%tile, %pipe : <TileTy>, !pto.pipe<SrcTileTy, DstTileTy>)
 
 语义备注：
 
-- 按目标方案，`tpop` 应只负责“获取 slot + 读取数据”。
-- slot 释放应由独立 `tfree` 完成（当前 PTOAS 待补齐）。
+- `tpop` 只负责”获取 slot + 读取数据”。
+- slot 释放由独立的 `pto.tfree` 完成（仅 A5 架构需要，见 2.4）。
+
+### 2.4 `pto.tfree(pipe)`
+
+用途：显式释放 `tpop` 占用的 pipe slot。仅 A5 架构需要——A5 使用 Local buffer 作为 push/pop 数据传递介质，`tpop` 后数据仍在 slot 中供后续计算读取，必须等消费者用完后才能释放。A2A3 使用 Global Memory 通信，`tpop` 已将数据拷贝至本地内存，slot 可立即释放，因此 `tfree` 在 A2A3 上为空操作（EmitC 直接擦除）。
+
+概念签名：
+
+```mlir
+pto.tfree(%pipe : !pto.pipe<SrcTileTy, DstTileTy>)
+```
+
+参数说明：
+
+| 参数 | 类型 | 说明 | 约束 |
+|---|---|---|---|
+| `pipe` | `!pto.pipe<SrcTileTy, DstTileTy>` | `initialize_pipe` 返回的 pipe 句柄 | 必须与对应 `tpop` 使用同一 pipe |
+
+约束与行为：
+
+- 必须在 `section.cube` 或 `section.vector` 内部使用。
+- 每个 `tpop` 应对应一个 `tfree`，使用相同的 `pipe_handle`。
+- `InsertTFreePass`（仅 A5）会在 `tpop` 的 tile 数据最后一次被读取之后自动插入 `tfree`；已有手写 `tfree` 的 `tpop` 会被跳过。
+- EmitC 降低：A5 生成 `TFREE(...)`，A2A3 擦除该 op。
 
 ## 3. TODO（当前版本）
 
-### T1. `TFREE` 指令链路补齐
+### T1. FlagID 分配策略重构
 
-- 新增 `pto.tfree(pipe)`（ODS、verifier、EmitC lowering、测试）。
-- 明确 `tpop/tfree` 配对规则，至少覆盖线性路径校验。
-- 验收：`emit-c` 中释放时机由 `TFREE` 控制，不再隐式绑定到 `TPOP`。
-
-### T2. `reserve_buffer/import_peer_buffer` 与常量传播
-
-- 补齐 PTOAS IR 节点：`reserve_buffer`、`import_peer_buffer`。
-- 在地址分配链路中支持 `base=auto`、冲突检查、peer 常量解析。
-- 增加跨函数常量传播：consumer 的解析 base 传递到 producer 的 `import_peer_buffer`。
-
-### T3. FlagID 分配策略重构
-
-- 当前（`0,2,4,6,8,10,12,14`）的线性分配的策略较简单。
-- 应该在kernel函数范围内进行分析和分配。
+- 当前（`0,2,4,6,8,10,12`）的线性分配策略较简单。
+- 应该在 kernel 函数范围内进行分析和分配。
