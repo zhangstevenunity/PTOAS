@@ -362,8 +362,8 @@ process_one_dir() {
     # SSA `pto.treshape` (lowered into `pto.bind_tile`) must lower to a single
     # `TRESHAPE(dst, src)` instead of an invalid Tile-to-pointer cast sequence.
     if [[ "$base" == "reshape" ]]; then
-      if ! grep -Fq "TRESHAPE(" "$cpp"; then
-        echo -e "${A}(${base}.py)	FAIL	missing TRESHAPE() lowering for SSA treshape"
+      if [[ $(grep -c "TRESHAPE(" "$cpp") -ne 1 ]]; then
+        echo -e "${A}(${base}.py)	FAIL	expected exactly one TRESHAPE() for SSA treshape"
         overall=1
         continue
       fi
@@ -385,7 +385,7 @@ process_one_dir() {
         overall=1
         continue
       fi
-      if [[ $(grep -c "TRESHAPE(" "$cpp") -ne 1 ]]; then
+      if [[ $(grep -c "TRESHAPE(" "$cpp") -ne 0 ]]; then
         echo -e "${A}(${base}.py)	FAIL	pto.bitcast should not lower via TRESHAPE()"
         overall=1
         continue

@@ -6603,8 +6603,9 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     };
 
     Value tileCandidate = peelAllCasts(adaptor.getSource());
-    if (viewSemantics && viewSemantics.getValue() == "bitcast" &&
-        isTileLike(tileCandidate)) {
+    const bool tileLike = isTileLike(tileCandidate);
+
+    if (viewSemantics && viewSemantics.getValue() == "bitcast" && tileLike) {
       FailureOr<Value> dstTile = buildTileValue();
       if (failed(dstTile))
         return failure();
@@ -6619,10 +6620,54 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       return success();
     }
 
-    if (isTileLike(tileCandidate)) {
+    if (viewSemantics && viewSemantics.getValue() == "treshape" && tileLike) {
       FailureOr<Value> dstTile = buildTileValue();
       if (failed(dstTile))
         return failure();
+      if ((*dstTile).getType() == tileCandidate.getType()) {
+        rewriter.replaceOp(op, tileCandidate);
+        return success();
+      }
+
+      rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TRESHAPE",
+                                           ArrayAttr{}, ArrayAttr{},
+                                           ValueRange{*dstTile, tileCandidate});
+      rewriter.replaceOp(op, *dstTile);
+      return success();
+    }
+
+    Value source = op.getSource();
+
+    while (auto castOp = source.getDefiningOp<UnrealizedConversionCastOp>())
+      source = castOp.getOperand(0);
+
+    if (auto upstreamCast = source.getDefiningOp<pto::PointerCastOp>()) {
+      // Prefer reconstructing the tile view from the original physical address
+      // when possible. This avoids generating redundant TRESHAPE() calls for
+      // alloc_tile/bind_tile lowering and keeps view semantics localized to
+      // explicit SSA view ops (pto.treshape / pto.bitcast).
+      SmallVector<Value> physAddrs;
+      auto upstreamOperands = upstreamCast.getAddrs();
+      physAddrs.append(upstreamOperands.begin(), upstreamOperands.end());
+
+      Value vRow = op.getValidRow();
+      Value vCol = op.getValidCol();
+
+      rewriter.replaceOpWithNewOp<pto::PointerCastOp>(
+          op, op.getType(), physAddrs, vRow ? vRow : Value(),
+          vCol ? vCol : Value(), configAttr);
+
+      return success();
+    }
+
+    if (tileLike) {
+      FailureOr<Value> dstTile = buildTileValue();
+      if (failed(dstTile))
+        return failure();
+      if ((*dstTile).getType() == tileCandidate.getType()) {
+        rewriter.replaceOp(op, tileCandidate);
+        return success();
+      }
 
       rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TRESHAPE",
                                            ArrayAttr{}, ArrayAttr{},
@@ -6632,17 +6677,7 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
     }
 
     SmallVector<Value> physAddrs;
-    Value source = op.getSource();
-
-    while (auto castOp = source.getDefiningOp<UnrealizedConversionCastOp>())
-      source = castOp.getOperand(0);
-
-    if (auto upstreamCast = source.getDefiningOp<pto::PointerCastOp>()) {
-      auto upstreamOperands = upstreamCast.getAddrs();
-      physAddrs.append(upstreamOperands.begin(), upstreamOperands.end());
-    } else {
-      physAddrs.push_back(adaptor.getSource());
-    }
+    physAddrs.push_back(adaptor.getSource());
 
     Value vRow = op.getValidRow();
     Value vCol = op.getValidCol();
