@@ -3783,7 +3783,6 @@ LogicalResult SubsetOp::inferReturnTypes(
 
   // Derive valid shape from parent valid dims when possible.
   SmallVector<int64_t> validShape;
-  constexpr int64_t kDynamicValidDim = -1;
   ArrayRef<int64_t> parentValid = sourceType.getValidShape();
   for (size_t i = 0, e = resultShape.size(); i < e; ++i) {
     int64_t sizeDim = resultShape[i];
@@ -3791,28 +3790,16 @@ LogicalResult SubsetOp::inferReturnTypes(
 
     if (parentValid.size() == resultShape.size()) {
       int64_t pv = parentValid[i];
-      if (pv < 0) {
-        vdim = kDynamicValidDim;
-      } else {
-        int64_t off = 0;
-        // operands: [source, offsets...]
-        if (operands.size() > 1 + i) {
-          auto offOpt = getConstIndexValue(operands[1 + i]);
-          if (!offOpt) {
-            vdim = kDynamicValidDim;
-            validShape.push_back(vdim);
-            continue;
-          }
-          off = *offOpt;
+      // In current subset usage, valid dims are treated as static.
+      // Only refine when both parent valid and offset are compile-time constants.
+      if (pv >= 0 && operands.size() > 1 + i) {
+        auto offOpt = getConstIndexValue(operands[1 + i]);
+        if (offOpt) {
+          int64_t off = *offOpt;
           // Interpret parent valid dims as a per-tile "period" when the parent
           // buffer is wider than the valid region (e.g. ping/pong workspace).
           // This avoids inferring a zero valid dim when taking a view at an
           // offset equal to the parent valid dim.
-          //
-          // Example:
-          //   parent: shape 32x64, valid 32x32
-          //   subset: offset [0,32], sizes [32,32]
-          // should infer v_col=32 (not 0).
           int64_t diff = 0;
           if (pv > 0) {
             int64_t offMod = off % pv;
@@ -3823,8 +3810,6 @@ LogicalResult SubsetOp::inferReturnTypes(
           if (diff < 0)
             diff = 0;
           vdim = std::min<int64_t>(sizeDim, diff);
-        } else {
-          vdim = kDynamicValidDim;
         }
       }
     }
