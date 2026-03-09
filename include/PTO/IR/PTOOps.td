@@ -3645,4 +3645,118 @@ def TPrintOp: PTO_TOp<"tprint", [
   }];
  }
 
+//===----------------------------------------------------------------------===//
+// TPUSH/TPOP Ring Buffer Communication Ops
+//===----------------------------------------------------------------------===//
+
+// --- Initialization ---
+
+def InitializePipeOp : PTO_Op<"initialize_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize ring buffer pipe handle";
+  let description = [{
+    Called once at kernel startup. Binds ring buffer pipe to backing memory,
+    computes slot configuration from dir_mask, and returns a pipe handle.
+  }];
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      I32Attr:$slot_size,
+      PTODpsType:$gm_slot_buffer,
+      I32:$c2v_consumer_buf,
+      I32:$v2c_consumer_buf
+  );
+
+  let results = (outs PipeType:$pipe);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `,` `slot_size` `=` $slot_size `}`
+    `(` $gm_slot_buffer `:` qualified(type($gm_slot_buffer)) `,`
+        $c2v_consumer_buf `:` type($c2v_consumer_buf) `,`
+        $v2c_consumer_buf `:` type($v2c_consumer_buf)
+    `)` attr-dict `->` qualified(type($pipe))
+  }];
+}
+
+// --- Data Transfer: Push (producer, no DPS) ---
+
+def TPushOp : PTO_TOp<"tpush", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Push tile data via unified pipe handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+  }];
+}
+
+// --- Data Transfer: Pop (consumer, DPS) ---
+
+def TPopOp : PTO_TOp<"tpop", [
+    PTO_DpsInitOpInterface,
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Pop tile data via unified pipe handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
+  }];
+}
+
+// --- Data Transfer: Free (consumer slot release) ---
+
+def TFreeOp : PTO_TOp<"tfree", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Release pipe slot after consumer finishes using data";
+
+  let arguments = (ins
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `:` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

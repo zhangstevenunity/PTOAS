@@ -116,4 +116,21 @@ def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
   ];
 }
 
+def PTOInsertTFree : Pass<"pto-insert-tfree", "func::FuncOp"> {
+  let summary = "Auto-insert pto.tfree after last use of tpop tile data (A5 only)";
+  let description = [{
+    For each pto.tpop in section.cube / section.vector, analyzes the
+    data dependency of the popped tile and inserts pto.tfree(pipe_handle)
+    at the earliest safe point — immediately after the last read of the tile.
+    Skips tpop ops that already have a matching tfree.
+    Only meaningful on A5 architecture where tpop/tfree split protocol is used.
+  }];
+
+  let constructor = "mlir::pto::createPTOInsertTFreePass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

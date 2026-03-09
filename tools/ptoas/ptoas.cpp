@@ -672,6 +672,11 @@ int main(int argc, char **argv) {
   std::string arch = ptoTargetArch;
   for (char &c : arch)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+  // Insert pto.tfree at earliest safe point (A5 only, after PlanMemory)
+  if (arch == "a5")
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertTFreePass());
+
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
   } else if (arch == "a5") {

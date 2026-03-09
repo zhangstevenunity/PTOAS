@@ -65,6 +65,8 @@ std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<mlir::Pass> createPTOInsertLoadStoreForMixCVPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
 // Declare register function
+std::unique_ptr<Pass> createPTOInsertTFreePass();
+
 void registerPTOPasses();
 
 } // namespace pto
