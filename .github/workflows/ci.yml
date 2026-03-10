@@ -3,6 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  # Nightly remote-board validation (GitHub cron is UTC).
+  # 22:00 CST (UTC+8) == 14:00 UTC.
+  schedule:
+    - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
       stage:
@@ -23,7 +27,8 @@ on:
         description: "aclrtSetDevice device id"
         type: string
         # NOTE: On our shared remote NPU host, device 0/1 may be unstable or
-        # occupied. Default to a higher id for remote validation runs.
+        # occupied. Default to a higher id to reduce flakiness for scheduled
+        # runs. Override in workflow_dispatch if needed.
         default: "2"
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
@@ -222,13 +227,10 @@ jobs:
       group: remote-npu-validation
       cancel-in-progress: false
     # Ordering: `needs: build-and-test` enforces "CI -> remote".
-    # Remote SSH validation needs repository secrets, so gate same-repo PRs and
-    # keep workflow_dispatch for manual reruns.
     if: >-
       ${{
-        github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'pull_request' &&
-         github.event.pull_request.head.repo.full_name == github.repository)
+        (github.event_name == 'workflow_dispatch' ||
+         github.event_name == 'schedule')
       }}
     env:
       PAYLOAD_DOWNLOAD_DIR: ${{ github.workspace }}/_payload
@@ -254,7 +256,7 @@ jobs:
           REMOTE_PORT: ${{ github.event.inputs.remote_port || '22' }}
         run: |
           set -euo pipefail
-          # For PR-triggered runs, default to DEFAULT_SKIP_CASES (known-bad/flaky).
+          # For scheduled runs, default to DEFAULT_SKIP_CASES (known-bad/flaky).
           # For workflow_dispatch runs, honor the user's input (the UI default
           # is pre-filled but can be edited to run everything).
           if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
