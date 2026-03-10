@@ -137,6 +137,23 @@ process_one_dir() {
     fi
     [[ $has_insync -eq 1 ]] || ptoas_flags+=(--enable-insert-sync)
   fi
+
+  local target_arch="a3"
+  if ((${#ptoas_flags[@]})); then
+    for ((idx=0; idx<${#ptoas_flags[@]}; ++idx)); do
+      if [[ "${ptoas_flags[idx]}" == "--pto-arch" && $((idx + 1)) -lt ${#ptoas_flags[@]} ]]; then
+        target_arch="${ptoas_flags[idx + 1]}"
+      elif [[ "${ptoas_flags[idx]}" == --pto-arch=* ]]; then
+        target_arch="${ptoas_flags[idx]#--pto-arch=}"
+      fi
+    done
+  fi
+  local expected_vec_barrier="pipe_barrier(PIPE_V)"
+  local skip_vec_barrier=0
+  if [[ "${target_arch,,}" == "a5" ]]; then
+    skip_vec_barrier=1
+  fi
+
   local -a ptoas_cmd_base=("$ptoas")
   if (( ${#ptoas_flags[@]} )); then
     ptoas_cmd_base+=("${ptoas_flags[@]}")
@@ -285,10 +302,18 @@ process_one_dir() {
     # Regression guard: intra-pipe dependencies must be serialized by a
     # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
     if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
-      if ! grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_V) for intra-pipe dependency"
-        overall=1
-        continue
+      if [[ "${skip_vec_barrier}" == "1" ]]; then
+        if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_V) on A5"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "${expected_vec_barrier}" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing ${expected_vec_barrier} for intra-pipe dependency"
+          overall=1
+          continue
+        fi
       fi
     fi
 
@@ -305,10 +330,18 @@ process_one_dir() {
         overall=1
         continue
       fi
-      if ! grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
-        echo -e "${A}(${base}.py)\tFAIL\tmissing pipe_barrier(PIPE_V) lowering for barrier_sync[TVEC]"
-        overall=1
-        continue
+      if [[ "${skip_vec_barrier}" == "1" ]]; then
+        if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_V) lowering for barrier_sync[TVEC] on A5"
+          overall=1
+          continue
+        fi
+      else
+        if ! grep -Fq "${expected_vec_barrier}" "$cpp"; then
+          echo -e "${A}(${base}.py)\tFAIL\tmissing ${expected_vec_barrier} lowering for barrier_sync[TVEC]"
+          overall=1
+          continue
+        fi
       fi
     fi
 
@@ -531,10 +564,18 @@ PY
       # Regression guard: intra-pipe dependencies must be serialized by a
       # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
       if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then
-        if ! grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
-          echo -e "${A}(${base}.pto)\tFAIL\tmissing pipe_barrier(PIPE_V) for intra-pipe dependency"
-          overall=1
-          continue
+        if [[ "${skip_vec_barrier}" == "1" ]]; then
+          if grep -Fq "pipe_barrier(PIPE_V)" "$cpp"; then
+            echo -e "${A}(${base}.pto)\tFAIL\tunexpected pipe_barrier(PIPE_V) on A5"
+            overall=1
+            continue
+          fi
+        else
+          if ! grep -Fq "${expected_vec_barrier}" "$cpp"; then
+            echo -e "${A}(${base}.pto)\tFAIL\tmissing ${expected_vec_barrier} for intra-pipe dependency"
+            overall=1
+            continue
+          fi
         fi
       fi
 

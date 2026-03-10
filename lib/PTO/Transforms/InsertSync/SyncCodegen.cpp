@@ -2,6 +2,7 @@
 #include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
  
 #define DEBUG_TYPE "pto-inject-sync"
@@ -21,6 +22,14 @@ static pto::PipeAttr getPipeAttr(Builder &builder, PipelineType pipe) {
 static pto::EventAttr getEventAttr(Builder &builder, int id) {
   auto odsEventVal = static_cast<pto::EVENT>(id);
   return pto::EventAttr::get(builder.getContext(), odsEventVal);
+}
+
+static bool isTargetArchA5(func::FuncOp func) {
+  auto module = func.getOperation()->getParentOfType<ModuleOp>();
+  if (!module)
+    return false;
+  auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
+  return arch && arch.getValue().equals_insensitive("a5");
 }
  
 static bool IsSyncExist(const SyncOps &list, SyncOperation *newSync) {
@@ -216,6 +225,13 @@ void SyncCodegen::SyncInsert(IRRewriter &rewriter, Operation *op,
 // [核心修改] 加强版 CreateBarrierOp
 void SyncCodegen::CreateBarrierOp(IRRewriter &rewriter, Operation *op,
                                   SyncOperation *sync, bool beforeInsert) {
+  // A5: PIPE_V intra-pipe ordering is guaranteed by hardware; do not emit
+  // explicit vector barrier (it is also rejected by backend checks).
+  if (isTargetArchA5(func_) &&
+      sync->GetActualSrcPipe() == PipelineType::PIPE_V) {
+    return;
+  }
+
   // [Fix] 判定是否需要前置插入：如果是显式 Before，或者 Op 是 Terminator (如 Yield)
   bool insertAtPos = beforeInsert || op->hasTrait<OpTrait::IsTerminator>();
  

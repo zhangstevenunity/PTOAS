@@ -672,14 +672,17 @@ int main(int argc, char **argv) {
   std::string arch = ptoTargetArch;
   for (char &c : arch)
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (arch == "a3") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else if (arch == "a5") {
-    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
-  } else {
+  if (arch != "a3" && arch != "a5") {
     llvm::errs() << "Error: invalid --pto-arch='" << ptoTargetArch
                  << "'. Expected 'a3' or 'a5'.\n";
     return 1;
+  }
+  module->getOperation()->setAttr("pto.target_arch",
+                                  mlir::StringAttr::get(&context, arch));
+  if (arch == "a3") {
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
+  } else {
+    pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
   }
   pm.addPass(emitc::createFormExpressionsPass());
   pm.addPass(mlir::createCSEPass());
