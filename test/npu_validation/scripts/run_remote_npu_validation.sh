@@ -123,10 +123,10 @@ export LD_LIBRARY_PATH="${ASCEND_HOME_PATH}/lib64:${LD_LIBRARY_PATH:-}"
 
 pto_arch_lc="$(printf '%s' "${PTO_ARCH}" | tr '[:upper:]' '[:lower:]')"
 case "${pto_arch_lc}" in
-  a5) SOC_VERSION="Ascend910_9599" ;;
-  a3) SOC_VERSION="Ascend910B1" ;;
+  a5) SOC_VERSION="a5" ;;
+  a3) SOC_VERSION="a3" ;;
   *)
-    SOC_VERSION="Ascend910B1"
+    SOC_VERSION="a3"
     pto_arch_lc="a3"
     ;;
 esac
