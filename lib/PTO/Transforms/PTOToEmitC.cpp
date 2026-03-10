@@ -1701,13 +1701,6 @@ static LogicalResult parseEmitCTileType(Value exemplar,
   return success(parts.size() >= 7);
 }
 
-static FailureOr<std::string> getEmitCTileElementTypeToken(Value exemplar) {
-  SmallVector<std::string, 12> parts;
-  if (failed(parseEmitCTileType(exemplar, parts)))
-    return failure();
-  return parts[1];
-}
-
 static FailureOr<int64_t> getEmitCTileStorageSizeBytes(Value exemplar) {
   SmallVector<std::string, 12> parts;
   if (failed(parseEmitCTileType(exemplar, parts)))
@@ -5567,12 +5560,8 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    auto elemTokOr = getEmitCTileElementTypeToken(dst);
-    if (failed(elemTokOr))
-      return rewriter.notifyMatchFailure(
-          op, "failed to recover tile element type token for TPRELU tmp");
-
-    auto tmpOr = createSiblingTileWithElementType(loc, dst, *elemTokOr, rewriter);
+    auto tmpOr =
+        createSiblingTileWithElementType(loc, dst, "uint8_t", rewriter);
     if (failed(tmpOr))
       return rewriter.notifyMatchFailure(
           op, "failed to materialize sibling tmp tile for TPRELU");
