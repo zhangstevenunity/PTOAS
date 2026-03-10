@@ -343,18 +343,11 @@ def _normalize_pto_arch(pto_arch: Optional[str]) -> Optional[str]:
     return None
 
 
-def _default_soc_version(pto_arch: Optional[str]) -> str:
-    arch = _normalize_pto_arch(pto_arch)
-    if arch == "a5":
-        return "Ascend910_9599"
-    return "Ascend910B1"
-
-
 def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     # Heuristic: kernels that touch cube/L0/L1 tile types or cbuf memories need
     # the "cube" arch; pure vector kernels can use the vector arch.
     #
-    # IMPORTANT: the default arch depends on the Ascend SoC.
+    # IMPORTANT: the default arch depends on the target architecture.
     cube_markers = (
         "TileType::Mat",
         "TileType::Left",
@@ -372,7 +365,7 @@ def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    arch = _normalize_pto_arch(pto_arch) or "a3"
+    arch = _normalize_pto_arch(pto_arch)
     if arch == "a5":
         # A5 uses A5 instruction set. pto-isa examples build A5 kernels with
         # dav-c310-{vec|cube}.
@@ -380,8 +373,8 @@ def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     if arch == "a3":
         # A2/A3 uses dav-c310 toolchain arch.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
-    # Default to A2/A3 (dav-c310) when arch is unknown.
-    return "dav-c310-cube" if needs_cube else "dav-c310-vec"
+    # Default to Ascend910 (dav-c220) when arch is unknown.
+    return "dav-c220-cube" if needs_cube else "dav-c220-vec"
 
 
 def _parse_int_list(blob: str):
@@ -854,11 +847,11 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            arch = _normalize_pto_arch(pto_arch) or "a3"
+            arch = _normalize_pto_arch(pto_arch)
             if arch == "a5" or arch == "a3":
                 aicore_arch = "dav-c310-vec"
             else:
-                aicore_arch = "dav-c310-vec"
+                aicore_arch = "dav-c220-vec"
         else:
             aicore_arch = _infer_aicore_arch(raw_kernel, pto_arch)
 
@@ -1405,11 +1398,11 @@ endif()
         encoding="utf-8",
     )
 
-    soc_version = _default_soc_version(pto_arch)
+    arch_for_runsh = _normalize_pto_arch(pto_arch) or (pto_arch or "Ascend910")
     run_sh = (templates_root / "run_sh_template.sh").read_text(encoding="utf-8")
     run_sh = run_sh.replace("@EXECUTABLE@", testcase)
     run_sh = run_sh.replace("@RUN_MODE@", run_mode)
-    run_sh = run_sh.replace("@SOC_VERSION@", soc_version)
+    run_sh = run_sh.replace("@SOC_VERSION@", arch_for_runsh)
     run_path = output_dir / "run.sh"
     run_path.write_text(run_sh, encoding="utf-8")
     run_path.chmod(0o755)
