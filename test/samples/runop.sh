@@ -259,8 +259,15 @@ process_one_dir() {
       pto_input="$decoded_pto"
     fi
 
+    local -a per_sample_flags=()
+    # This sample builds a late-stage IR with explicit pointer_cast addresses,
+    # which only assembles at Level-3 (skip PlanMemory).
+    if [[ "$base" == "bind_tile_wrap_pointer_cast" ]]; then
+      per_sample_flags+=(--pto-level=level3)
+    fi
+
     # Write output via -o to avoid mixing debug prints with generated C++.
-    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "$pto_input" -o "$cpp")
+    local -a ptoas_cmd=("${ptoas_cmd_base[@]}" "${per_sample_flags[@]}" "$pto_input" -o "$cpp")
     if ! "${ptoas_cmd[@]}" >/dev/null 2>&1; then
       if [[ $expect_fail -eq 1 ]]; then
         echo -e "${A}(${base}.py)\tXFAIL\tptoas failed as expected"
@@ -402,6 +409,27 @@ process_one_dir() {
       fi
       if grep -Eq "= \(__ubuf__ [^)]+\*\) v[0-9]+;" "$cpp"; then
         echo -e "${A}(${base}.py)	FAIL	found invalid Tile-to-__ubuf__ pointer cast (issue #207)"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Regression guard: plain pto.bind_tile (no view semantics) must lower via
+    # address binding, not `TRESHAPE(dst, src)`. Otherwise users see spurious
+    # reshape instructions and pto-isa static checks may reject the kernel.
+    if [[ "$base" == "bind_tile_wrap_pointer_cast" ]]; then
+      if grep -Fq "TRESHAPE(" "$cpp"; then
+        echo -e "${A}(${base}.py)	FAIL	unexpected TRESHAPE() lowering for plain bind_tile"
+        overall=1
+        continue
+      fi
+      if [[ $(grep -c "TASSIGN(" "$cpp") -lt 2 ]]; then
+        echo -e "${A}(${base}.py)	FAIL	expected at least 2 TASSIGN() calls"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "TADDS(" "$cpp"; then
+        echo -e "${A}(${base}.py)	FAIL	missing TADDS() lowering"
         overall=1
         continue
       fi
