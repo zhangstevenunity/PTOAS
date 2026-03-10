@@ -332,17 +332,6 @@ def _inject_packed_pred_mask_preload(
     return kernel_text[:insert_at] + block + kernel_text[insert_at:]
 
 
-def _normalize_pto_arch(pto_arch: Optional[str]) -> Optional[str]:
-    if not pto_arch:
-        return None
-    arch = pto_arch.strip().lower()
-    if arch.startswith("a3"):
-        return "a3"
-    if arch.startswith("a5"):
-        return "a5"
-    return None
-
-
 def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     # Heuristic: kernels that touch cube/L0/L1 tile types or cbuf memories need
     # the "cube" arch; pure vector kernels can use the vector arch.
@@ -365,14 +354,14 @@ def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    arch = _normalize_pto_arch(pto_arch)
+    arch = (pto_arch or "").strip().lower()
     if arch == "a5":
         # A5 uses A5 instruction set. pto-isa examples build A5 kernels with
         # dav-c310-{vec|cube}.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
     if arch == "a3":
-        # A2/A3 uses dav-c310 toolchain arch.
-        return "dav-c310-cube" if needs_cube else "dav-c310-vec"
+        # A2/A3 uses dav-c220 toolchain arch.
+        return "dav-c220-cube" if needs_cube else "dav-c220-vec"
     # Default to Ascend910 (dav-c220) when arch is unknown.
     return "dav-c220-cube" if needs_cube else "dav-c220-vec"
 
@@ -847,9 +836,11 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            arch = _normalize_pto_arch(pto_arch)
-            if arch == "a5" or arch == "a3":
+            arch = (pto_arch or "").strip().lower()
+            if arch == "a5":
                 aicore_arch = "dav-c310-vec"
+            elif arch == "a3":
+                aicore_arch = "dav-c220-vec"
             else:
                 aicore_arch = "dav-c220-vec"
         else:
@@ -1203,10 +1194,10 @@ def generate_testcase(
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
     # pto-isa selects instruction implementations based on MEMORY_BASE vs
-    # REGISTER_BASE. A5 (e.g. Ascend950) and A2/A3 use REGISTER_BASE.
+    # REGISTER_BASE. A5 uses REGISTER_BASE.
     mem_base_define = "MEMORY_BASE"
-    arch = _normalize_pto_arch(pto_arch)
-    if arch == "a3" or arch == "a5":
+    arch = (pto_arch or "").strip().lower()
+    if arch == "a5":
         mem_base_define = "REGISTER_BASE"
 
     # CCE printing support is gated behind `--cce-enable-print` on some bisheng
@@ -1398,7 +1389,7 @@ endif()
         encoding="utf-8",
     )
 
-    arch_for_runsh = _normalize_pto_arch(pto_arch) or (pto_arch or "Ascend910")
+    arch_for_runsh = pto_arch or "Ascend910"
     run_sh = (templates_root / "run_sh_template.sh").read_text(encoding="utf-8")
     run_sh = run_sh.replace("@EXECUTABLE@", testcase)
     run_sh = run_sh.replace("@RUN_MODE@", run_mode)
