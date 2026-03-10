@@ -1,135 +1,134 @@
 
 module {
-  func.func @peak_exact_capacity(%arg0: memref<16x16x16xf16, #pto.address_space<gm>>,
-                                 %arg1: memref<16x16x16xf16, #pto.address_space<gm>>) {
+  func.func @peak_exact_capacity(%arg0: memref<16x256xf16, #pto.address_space<gm>>,
+                                 %arg1: memref<16x256xf16, #pto.address_space<gm>>) {
     // Default UB size is 1572864 bits (196608 bytes). Each buffer here is
     // 16*16*16*f16 = 8192 bytes. 24 buffers live at once should fit exactly:
     //   24 * 8192 = 196608 bytes.
-    %u0 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u1 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u2 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u3 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u4 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u5 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u6 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u7 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u8 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u9 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u10 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u11 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u12 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u13 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u14 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u15 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u16 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u17 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u18 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u19 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u20 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u21 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u22 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
-    %u23 = memref.alloc() : memref<16x16x16xf16, #pto.address_space<vec>>
+    %u0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u2 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u3 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u4 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u5 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u6 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u7 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u8 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u9 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u10 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u11 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u12 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u13 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u14 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u15 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u16 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u17 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u18 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u19 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u20 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u21 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u22 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %u23 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
 
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u1 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u2 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u3 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u4 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u5 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u6 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u7 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u8 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u9 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u10 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u11 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u12 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u13 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u14 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u15 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u16 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u17 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u18 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u19 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u20 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u21 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u22 : memref<16x16x16xf16, #pto.address_space<vec>>)
-    pto.tload ins(%arg0 : memref<16x16x16xf16, #pto.address_space<gm>>)
-             outs(%u23 : memref<16x16x16xf16, #pto.address_space<vec>>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u0 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u1 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u2 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u3 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u4 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u5 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u6 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u7 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u8 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u9 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u10 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u11 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u12 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u13 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u14 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u15 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u16 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u17 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u18 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u19 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u20 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u21 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u22 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tload ins(%arg0 : memref<16x256xf16, #pto.address_space<gm>>)
+             outs(%u23 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 
-    pto.tstore ins(%u0 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u1 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u2 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u3 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u4 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u5 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u6 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u7 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u8 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u9 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u10 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u11 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u12 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u13 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u14 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u15 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u16 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u17 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u18 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u19 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u20 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u21 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u22 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
-    pto.tstore ins(%u23 : memref<16x16x16xf16, #pto.address_space<vec>>)
-              outs(%arg1 : memref<16x16x16xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u0 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u1 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u2 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u3 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u4 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u5 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u6 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u7 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u8 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u9 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u10 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u11 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u12 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u13 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u14 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u15 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u16 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u17 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u18 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u19 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u20 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u21 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u22 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
+    pto.tstore ins(%u23 : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%arg1 : memref<16x256xf16, #pto.address_space<gm>>)
     return
   }
 }
 
 // 24 live buffers implies a max offset of 23*8192 = 188416 bytes.
-
