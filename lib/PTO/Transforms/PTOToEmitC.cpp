@@ -6424,6 +6424,8 @@ struct PTOSYNCToEmitC : public OpConversionPattern<pto::TSyncOp> {
 // =============================================================================
 struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
   using OpConversionPattern::OpConversionPattern;
+  static constexpr llvm::StringLiteral kDynamicValidShapeAttrName =
+      "__pto.dynamic_validshape";
 
   static bool getIndexConst(Value v, int64_t &out) {
     if (!v)
@@ -6559,8 +6561,13 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
       Value vRowEmitC = adaptor.getValidRow();
       Value vColEmitC = adaptor.getValidCol();
       int64_t cRow = 0, cCol = 0;
+      bool preserveRuntimeValid = op->hasAttr(kDynamicValidShapeAttrName);
 
-      if (vRow && getIndexConst(vRow, cRow)) {
+      if (preserveRuntimeValid && vRow) {
+        vrowTok = "-1";
+        rowIsDynamic = true;
+        useConstructor = true;
+      } else if (vRow && getIndexConst(vRow, cRow)) {
         vrowTok = std::to_string(cRow);
       } else if (vRow) {
         vrowTok = "-1";
@@ -6570,7 +6577,11 @@ struct PTOBindTileToEmitC : public OpConversionPattern<pto::BindTileOp> {
         vrowTok = std::to_string(rows);
       }
 
-      if (vCol && getIndexConst(vCol, cCol)) {
+      if (preserveRuntimeValid && vCol) {
+        vcolTok = "-1";
+        colIsDynamic = true;
+        useConstructor = true;
+      } else if (vCol && getIndexConst(vCol, cCol)) {
         vcolTok = std::to_string(cCol);
       } else if (vCol) {
         vcolTok = "-1";

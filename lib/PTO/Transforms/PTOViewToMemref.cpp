@@ -36,6 +36,8 @@ namespace pto {
 
 static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
     "__pto.lowered_set_validshape";
+static constexpr llvm::StringLiteral kDynamicValidShapeAttrName =
+    "__pto.dynamic_validshape";
 
 namespace {
 
@@ -555,6 +557,8 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, alloc, vRow ? vRow : Value(), vCol ? vCol : Value(),
             configAttr);
+        if (tbTy.hasDynamicValid())
+          bindOp->setAttr(kDynamicValidShapeAttrName, UnitAttr::get(ctx));
 
         rewriter.replaceOp(op, bindOp.getResult());
       }
@@ -1027,6 +1031,8 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, resultMemRefType, sv.getResult(),
             vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        if (op.getType().hasDynamicValid())
+          bindOp->setAttr(kDynamicValidShapeAttrName, UnitAttr::get(ctx));
 
         rewriter.replaceOp(op, bindOp.getResult());
       }
@@ -1093,6 +1099,8 @@ struct PTOViewToMemrefPass
         auto bindOp = rewriter.create<pto::BindTileOp>(
             loc, targetType, src,
             vRow ? vRow : Value(), vCol ? vCol : Value(), configAttr);
+        if (tbTy.hasDynamicValid())
+          bindOp->setAttr(kDynamicValidShapeAttrName, UnitAttr::get(ctx));
         if (!viewSemantics.empty())
           bindOp->setAttr("pto.view_semantics",
                           rewriter.getStringAttr(viewSemantics));

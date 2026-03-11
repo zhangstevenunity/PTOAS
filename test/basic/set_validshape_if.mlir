@@ -31,9 +31,9 @@ module {
   }
 }
 
-// CHECK: [[ORIG:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null> [[ORIG:v[0-9]+]];
 // CHECK: TASSIGN([[ORIG]],
-// CHECK: [[TILE:v[0-9]+]];
+// CHECK: Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null> [[TILE:v[0-9]+]] = Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null>(
 // CHECK: __ubuf__ float* [[DATA:v[0-9]+]] = [[ORIG]].data();
 // CHECK: TASSIGN([[TILE]],
 // CHECK: if (
