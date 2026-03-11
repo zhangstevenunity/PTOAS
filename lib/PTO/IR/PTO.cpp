@@ -2719,60 +2719,32 @@ static std::optional<int64_t> getConstIndexLike(Value v) {
 
 mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
   auto srcTy = llvm::dyn_cast<TileBufType>(getSource().getType());
-  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
-  if (!srcTy || !dstTy)
-    return emitOpError("expects tile_buf source and tile_buf result");
+  if (!srcTy)
+    return emitOpError("expects tile_buf source");
 
-  if (srcTy.getRank() != 2 || dstTy.getRank() != 2)
-    return emitOpError("expects rank-2 tile_buf source/result");
+  if (srcTy.getRank() != 2)
+    return emitOpError("expects rank-2 tile_buf source");
 
-  if (srcTy.getShape() != dstTy.getShape())
-    return emitOpError("expects source/result to have the same shape");
-
-  if (srcTy.getElementType() != dstTy.getElementType())
-    return emitOpError("expects source/result to have the same element type");
-
-  if (srcTy.getMemorySpace() != dstTy.getMemorySpace())
-    return emitOpError("expects source/result to have the same memorySpace");
-
-  auto srcCfg = srcTy.getConfigAttr();
-  auto dstCfg = dstTy.getConfigAttr();
-  if (srcCfg != dstCfg)
-    return emitOpError("expects source/result to have the same tile config");
-
-  ArrayRef<int64_t> shape = dstTy.getShape();
-  ArrayRef<int64_t> validShape = dstTy.getValidShape();
+  ArrayRef<int64_t> shape = srcTy.getShape();
+  ArrayRef<int64_t> validShape = srcTy.getValidShape();
   if (validShape.size() != 2)
-    return emitOpError("expects result validShape to be rank-2");
+    return emitOpError("expects source validShape to be rank-2");
+  if (!srcTy.hasDynamicValid())
+    return emitOpError("expects source tile_buf to have dynamic validShape (?, ?)");
 
   auto checkDim = [&](Value operand, unsigned dimIdx,
                       StringRef dimName) -> LogicalResult {
     int64_t maxStatic = shape[dimIdx];
-    int64_t resultValid = validShape[dimIdx];
-
-    if (resultValid < -1)
-      return emitOpError() << "expects result " << dimName
-                           << " valid dim to be >= -1";
-    if (maxStatic != ShapedType::kDynamic && resultValid > maxStatic)
-      return emitOpError() << "expects result " << dimName
-                           << " valid dim <= shape dim (" << maxStatic << ")";
 
     auto constVal = getConstIndexLike(operand);
-    if (!constVal) {
-      if (resultValid >= 0)
-        return emitOpError() << "expects dynamic result " << dimName
-                             << " valid dim when operand is not constant";
+    if (!constVal)
       return success();
-    }
 
     if (*constVal < 0)
       return emitOpError() << "expects " << dimName << " operand to be non-negative";
     if (maxStatic != ShapedType::kDynamic && *constVal > maxStatic)
       return emitOpError() << "expects " << dimName << " operand <= shape dim ("
                            << maxStatic << ")";
-    if (resultValid >= 0 && resultValid != *constVal)
-      return emitOpError() << "expects static result " << dimName
-                           << " valid dim to match operand constant " << *constVal;
     return success();
   };
 
@@ -2783,6 +2755,7 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
 
   return success();
 }
+
 
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   Type ts = getSrc().getType();
@@ -4309,6 +4282,12 @@ void TGetValOp::getEffects(
 void TSetValOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_WRITE(getDstMutable());
+}
+
+// SET_VALIDSHAPE: update runtime valid row/col metadata on source tile in-place.
+void SetValidShapeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_WRITE(getSourceMutable());
 }
 
 // Elementwise + reductions: mostly PIPE_V tilebuf ops

@@ -3886,6 +3886,27 @@ struct PTOGetValToGETVAL : public OpConversionPattern<pto::TGetValOp> {
   }
 };
 
+struct PTOSetValidShapeToEmitC : public OpConversionPattern<pto::SetValidShapeOp> {
+  using OpConversionPattern<pto::SetValidShapeOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::SetValidShapeOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Value src = peelUnrealized(adaptor.getSource());
+    Value row = peelUnrealized(adaptor.getValidRow());
+    Value col = peelUnrealized(adaptor.getValidCol());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "PTOAS__TILE_SET_VALID_ROW", ArrayAttr{},
+        ArrayAttr{}, ValueRange{src, row});
+    rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), TypeRange{}, "PTOAS__TILE_SET_VALID_COL", ArrayAttr{},
+        ArrayAttr{}, ValueRange{src, col});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 // pto.load_scalar / pto.store_scalar lowering -> ptr[offset]
 //===----------------------------------------------------------------------===//
@@ -7337,7 +7358,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOMrgSortToEmitC>(typeConverter, ctx);
   patterns.add<SubviewToEmitCPattern>(typeConverter, ctx);
   patterns.add<PointerCastConversion>(typeConverter, ctx);
-  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL,
+  patterns.add<PTOSetValToSETVAL, PTOGetValToGETVAL, PTOSetValidShapeToEmitC,
                PTOLoadScalarToEmitC, PTOStoreScalarToEmitC>(typeConverter, ctx);
   patterns.add<PTOTAndToEmitC>(typeConverter, ctx);
   patterns.add<PTOMulToEmitC>(typeConverter, ctx);

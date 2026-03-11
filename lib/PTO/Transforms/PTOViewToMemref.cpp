@@ -18,6 +18,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -844,61 +845,8 @@ struct PTOViewToMemrefPass
         rewriter.replaceOp(op, sv.getResult());
       }
 
-      auto lowerSetValidShapeOp = [&](mlir::pto::SetValidShapeOp op,
-                                      bool requireMemRefSource) -> LogicalResult {
-        Value src = op.getSource();
-        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
-        if (!srcMrTy) {
-          if (!requireMemRefSource)
-            return success();
-          return op.emitOpError(
-              "pto.set_validshape source must be lowered to memref first");
-        }
-
-        auto tbTy = dyn_cast<mlir::pto::TileBufType>(op.getResult().getType());
-        if (!tbTy)
-          return op.emitOpError("result must be tile_buf type");
-
-        auto targetType = dyn_cast<MemRefType>(convertPTOTypeToMemRef(tbTy));
-        if (!targetType)
-          return op.emitOpError("failed to convert tile_buf result to memref type");
-
-        IRRewriter rewriter(ctx);
-        rewriter.setInsertionPoint(op);
-        Location loc = op.getLoc();
-
-        Value vRow = ensureIndex(rewriter, loc, op.getValidRow(), op);
-        Value vCol = ensureIndex(rewriter, loc, op.getValidCol(), op);
-
-        auto configAttr = tbTy.getConfigAttr();
-        if (!configAttr)
-          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
-
-        auto bindOp = rewriter.create<pto::BindTileOp>(
-            loc, targetType, src, vRow, vCol, configAttr);
-        bindOp->setAttr("pto.view_semantics",
-                        rewriter.getStringAttr("set_validshape"));
-        rewriter.replaceOp(op, bindOp.getResult());
-        return success();
-      };
-
       // ------------------------------------------------------------------
-      // Stage 2.4: opportunistically lower pto.set_validshape when its source
-      // is already a memref. This keeps downstream subset lowering working for
-      // chains like: set_validshape -> subset.
-      // ------------------------------------------------------------------
-      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
-      func.walk([&](mlir::pto::SetValidShapeOp op) { setValidShapes.push_back(op); });
-
-      for (auto op : setValidShapes) {
-        if (failed(lowerSetValidShapeOp(op, /*requireMemRefSource=*/false))) {
-          signalPassFailure();
-          return;
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // Stage 2.5: lower pto.subset -> memref.subview + bind_tile
+      // Stage 2.4: lower pto.subset -> memref.subview + bind_tile
       // ------------------------------------------------------------------
       SmallVector<mlir::pto::SubsetOp, 8> subsets;
       func.walk([&](mlir::pto::SubsetOp op) { subsets.push_back(op); });
@@ -1186,19 +1134,50 @@ struct PTOViewToMemrefPass
       }
 
       // ------------------------------------------------------------------
-      // Stage 2.8: finalize pto.set_validshape after other tile view-like ops
-      // have been lowered. This supports chains like:
-      //   subset -> set_validshape
-      //   treshape/bitcast -> set_validshape
+      // Stage 2.5: lower pto.set_validshape (in-place) -> re-bind + rewrite
+      // dominated uses to the new tile metadata handle.
       // ------------------------------------------------------------------
-      setValidShapes.clear();
+      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
       func.walk([&](mlir::pto::SetValidShapeOp op) { setValidShapes.push_back(op); });
 
       for (auto op : setValidShapes) {
-        if (failed(lowerSetValidShapeOp(op, /*requireMemRefSource=*/true))) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPointAfter(op);
+        Location loc = op.getLoc();
+
+        Value src = op->getOperand(0);
+        auto srcMrTy = dyn_cast<MemRefType>(src.getType());
+        if (!srcMrTy) {
+          op.emitError("pto.set_validshape source must be lowered to memref first");
           signalPassFailure();
           return;
         }
+
+        auto configAttr = lookupConfig(src);
+        if (!configAttr)
+          configAttr = pto::TileBufConfigAttr::getDefault(ctx);
+
+        Value vRow = ensureIndex(rewriter, loc, op.getValidRow(), op);
+        Value vCol = ensureIndex(rewriter, loc, op.getValidCol(), op);
+        if (!vRow || !vCol) {
+          signalPassFailure();
+          return;
+        }
+
+        auto bindOp = rewriter.create<pto::BindTileOp>(loc, srcMrTy, src, vRow, vCol,
+                                                       configAttr);
+
+        DominanceInfo dom(func);
+        src.replaceUsesWithIf(bindOp.getResult(), [&](OpOperand &use) {
+          Operation *owner = use.getOwner();
+          if (owner == op.getOperation() || owner == bindOp.getOperation())
+            return false;
+          if (owner->getBlock() == op->getBlock())
+            return op->isBeforeInBlock(owner);
+          return dom.dominates(op.getOperation(), owner);
+        });
+
+        rewriter.eraseOp(op);
       }
 
       // ------------------------------------------------------------------

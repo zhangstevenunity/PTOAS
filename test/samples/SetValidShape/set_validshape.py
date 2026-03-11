@@ -20,7 +20,6 @@ def build():
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
 
-            tile_static = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
             tile_dynamic = pto.TileBufType.get([32, 32], f32, vec, [-1, -1], cfg, ctx)
 
             fn_ty = func.FunctionType.get([], [])
@@ -31,11 +30,12 @@ def build():
             with InsertionPoint(entry):
                 c16 = arith.ConstantOp(idx, 16).result
                 c24 = arith.ConstantOp(idx, 24).result
+                c32 = arith.ConstantOp(idx, 32).result
 
-                tb = pto.AllocTileOp(tile_static).result
-                tb_dyn = pto.SetValidShapeOp(tile_dynamic, tb, c16, c24).result
+                tb = pto.AllocTileOp(tile_dynamic, valid_row=c32, valid_col=c32).result
+                pto.SetValidShapeOp(tb, c16, c24)
 
-                pto.TAddOp(tb_dyn, tb_dyn, tb_dyn)
+                pto.TAddOp(tb, tb, tb)
 
                 func.ReturnOp([])
 
