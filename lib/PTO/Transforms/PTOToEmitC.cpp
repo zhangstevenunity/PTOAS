@@ -3891,9 +3891,28 @@ struct PTOSetValidShapeToEmitC : public OpConversionPattern<pto::SetValidShapeOp
 
   LogicalResult matchAndRewrite(pto::SetValidShapeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    Value src = peelUnrealized(adaptor.getSource());
+    auto peelAllCasts = [](Value v) {
+      while (auto castOp = v.getDefiningOp<UnrealizedConversionCastOp>())
+        v = castOp.getOperand(0);
+      if (auto castOp = v.getDefiningOp<emitc::CastOp>())
+        v = castOp.getOperand();
+      return v;
+    };
+    auto isTileLike = [](Value v) -> bool {
+      auto ot = dyn_cast<emitc::OpaqueType>(v.getType());
+      if (!ot)
+        return false;
+      StringRef s = ot.getValue();
+      return s.contains("Tile<") || s.contains("ConvTile<");
+    };
+
+    Value src = peelAllCasts(peelUnrealized(adaptor.getSource()));
     Value row = peelUnrealized(adaptor.getValidRow());
     Value col = peelUnrealized(adaptor.getValidCol());
+
+    if (!isTileLike(src))
+      return rewriter.notifyMatchFailure(
+          op, "set_validshape source must lower to a tile-like value");
 
     rewriter.create<emitc::CallOpaqueOp>(
         op.getLoc(), TypeRange{}, "PTOAS__TILE_SET_VALID_ROW", ArrayAttr{},

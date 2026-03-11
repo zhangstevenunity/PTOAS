@@ -513,6 +513,8 @@ set_validshape(source, valid_row, valid_col)
 - `source` must have dynamic valid shape:
   - `v_row = ?`
   - `v_col = ?`
+- User-authored PTO IR must use the `pto.tile_buf` form; any memref form seen
+  later in the pipeline is compiler-internal lowering state only
 - If `valid_row` / `valid_col` are compile-time constants, they must be non-negative and not exceed the tile's static shape bounds
 
 **Hardware Mapping:**

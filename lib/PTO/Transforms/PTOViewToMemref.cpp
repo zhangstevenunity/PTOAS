@@ -34,6 +34,9 @@ namespace pto {
 
 #define GEN_PASS_DEF_PTOVIEWTOMEMREF
 
+static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
+    "__pto.lowered_set_validshape";
+
 namespace {
 
 // =============================================================================
@@ -1130,6 +1133,15 @@ struct PTOViewToMemrefPass
           return;
         IRRewriter rewriter(ctx);
         rewriter.replaceOp(op, lowered);
+      }
+
+      SmallVector<mlir::pto::SetValidShapeOp, 8> setValidShapes;
+      func.walk([&](mlir::pto::SetValidShapeOp op) {
+        setValidShapes.push_back(op);
+      });
+      for (auto op : setValidShapes) {
+        if (isa<MemRefType>(op.getSource().getType()))
+          op->setAttr(kLoweredSetValidShapeAttrName, UnitAttr::get(ctx));
       }
 
       // ------------------------------------------------------------------

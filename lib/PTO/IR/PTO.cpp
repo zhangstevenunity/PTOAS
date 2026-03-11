@@ -2697,6 +2697,9 @@ static bool isTileBufOrMemref(Type ty) {
   return ty.isa<MemRefType, pto::TileBufType>();
 }
 
+static constexpr llvm::StringLiteral kLoweredSetValidShapeAttrName =
+    "__pto.lowered_set_validshape";
+
 static std::optional<int64_t> getConstIndexLike(Value v) {
   if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>())
     return cOp.value();
@@ -2731,6 +2734,9 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
 
     shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
   } else if (auto srcTy = llvm::dyn_cast<MemRefType>(getSource().getType())) {
+    if (!(*this)->hasAttr(kLoweredSetValidShapeAttrName))
+      return emitOpError(
+          "expects tile_buf source; memref source is only valid for the internal lowered form");
     if (srcTy.getRank() != 2)
       return emitOpError("expects rank-2 memref source after tile lowering");
     shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
