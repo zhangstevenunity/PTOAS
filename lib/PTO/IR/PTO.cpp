@@ -4512,6 +4512,28 @@ void TMatmulMxBiasOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<Mem
   addEffect(effects, &getDstMutable(), MemoryEffects::Write::get());
 }
 
+//===----------------------------------------------------------------------===//
+// VOPS verifier stubs (restored from jsonl)
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult VLoadOp::verify() { return success(); }
+mlir::LogicalResult VStoreOp::verify() { return success(); }
+mlir::LogicalResult VLoadTailOp::verify() { return success(); }
+mlir::LogicalResult VStoreTailOp::verify() { return success(); }
+mlir::LogicalResult VLoadBlockOp::verify() { return success(); }
+mlir::LogicalResult VLaneAdaptOp::verify() { return success(); }
+mlir::LogicalResult VDupOp::verify() { return success(); }
+mlir::LogicalResult ULoadRowOp::verify() { return success(); }
+
+mlir::LogicalResult VAddOp::verify() { return success(); }
+mlir::LogicalResult VSubOp::verify() { return success(); }
+mlir::LogicalResult VMulOp::verify() { return success(); }
+mlir::LogicalResult VMinOp::verify() { return success(); }
+mlir::LogicalResult VMaxOp::verify() { return success(); }
+mlir::LogicalResult VAndOp::verify() { return success(); }
+mlir::LogicalResult VOrOp::verify() { return success(); }
+mlir::LogicalResult VXorOp::verify() { return success(); }
+
 // [Include 必须放在最后]
 #include "PTO/IR/PTOInterfaces.cpp.inc"
 #define GET_OP_CLASSES

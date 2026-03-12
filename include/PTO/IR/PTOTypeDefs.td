@@ -184,3 +184,72 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     int32_t getPadValueI32() const;       // 0 null, 1 zero, 2 max, 3 min
   }];
 }
+
+// ---- !pto.preg ----
+// Predicate register used by vops.
+def PregType : TypeDef<PTO_Dialect, "Preg"> {
+  let mnemonic = "preg";
+  let summary = "Predicate register type used by VOPS.";
+}
+
+// ---- !pto.uscalar<elem> ----
+// Uniform scalar (per-thread uniform) used by vops patterns.
+def UScalarType : TypeDef<PTO_Dialect, "UScalar"> {
+  let mnemonic = "uscalar";
+  let summary = "Uniform scalar value used for scalar+SIMD patterns inside pto.vf.scope.";
+  let parameters = (ins "mlir::Type":$elementType);
+
+  // Print/parse as: !pto.uscalar<elementType>
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    static ::mlir::Type parse(::mlir::AsmParser &parser) {
+      if (failed(parser.parseLess())) return {};
+      ::mlir::Type elem;
+      if (failed(parser.parseType(elem))) return {};
+      if (failed(parser.parseGreater())) return {};
+      return Base::get(parser.getContext(), elem);
+    }
+
+    void print(::mlir::AsmPrinter &printer) const {
+      printer << "<";
+      printer.printType(getElementType());
+      printer << ">";
+    }
+  }];
+}
+
+// ---- !pto.vtile<elem, lanes> ----
+// Vector tile value used in vops. Lanes is typically elements-per-repeat (EPR).
+def VTileType : TypeDef<PTO_Dialect, "VTile"> {
+  let mnemonic = "vtile";
+  let summary = "Vector tile value used inside pto.vf.scope (maps to vreg on A5, subtile view on A3).";
+  let parameters = (ins
+    "mlir::Type":$elementType,
+    "int64_t":$lanes
+  );
+
+  // Print/parse as: !pto.vtile<lanes x elementType>
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    static ::mlir::Type parse(::mlir::AsmParser &parser) {
+      if (failed(parser.parseLess())) return {};
+      int64_t lanes = 0;
+      if (failed(parser.parseInteger(lanes))) return {};
+      if (failed(parser.parseKeyword("x"))) return {};
+      ::mlir::Type elem;
+      if (failed(parser.parseType(elem))) return {};
+      if (failed(parser.parseGreater())) return {};
+      return Base::get(parser.getContext(), elem, lanes);
+    }
+
+    void print(::mlir::AsmPrinter &printer) const {
+      printer << "<" << getLanes() << "x";
+      printer.printType(getElementType());
+      printer << ">";
+    }
+
+    int64_t lanes() const { return getLanes(); }
+  }];
+}
