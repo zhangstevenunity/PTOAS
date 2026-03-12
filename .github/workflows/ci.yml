@@ -210,7 +210,7 @@ jobs:
             cp "${file}" "${dst}"
           done < <(
             find test/samples \
-              \( -path '*/npu_validation/*' -o -name '*_golden.py' -o -name '*_compare.py' \) \
+              \( -path '*/npu_validation/*' -o -name '*_golden.py' -o -name '*_compare.py' -o -name 'validation_runtime.py' \) \
               -type f -print0
           )
           chmod +x "${PAYLOAD_DIR}/test/npu_validation/scripts/run_remote_npu_validation.sh"

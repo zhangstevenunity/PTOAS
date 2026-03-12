@@ -851,6 +851,7 @@ def generate_testcase(
 
     custom_golden = _find_custom_case_asset(sample_root, testcase, "golden.py")
     custom_compare = _find_custom_case_asset(sample_root, testcase, "compare.py")
+    shared_validation_runtime = sample_root.parent / "validation_runtime.py"
 
     raw_kernel = input_cpp.read_text(encoding="utf-8")
     raw_kernel_for_analysis = raw_kernel
@@ -1174,6 +1175,8 @@ def generate_testcase(
     else:
         golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
         golden_dst.write_text(golden_py, encoding="utf-8")
+    if (custom_golden is not None or custom_compare is not None) and shared_validation_runtime.is_file():
+        _copy_asset_if_needed(shared_validation_runtime, output_dir / "validation_runtime.py")
 
     # Emit the kernel source, optionally injecting a packed-predicate preload to
     # make TCMP/TCMPS outputs deterministic for byte-wise compares.
