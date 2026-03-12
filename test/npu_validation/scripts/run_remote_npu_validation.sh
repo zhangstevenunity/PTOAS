@@ -74,14 +74,7 @@ for f in "$HOME/.bash_profile" "$HOME/.bashrc"; do
   source_rc "$f"
 done
 
-if [[ -f "/usr/local/Ascend/cann/set_env.sh" ]]; then
-  log "Sourcing /usr/local/Ascend/cann/set_env.sh"
-  set +e +u +o pipefail
-  # shellcheck disable=SC1091
-  source "/usr/local/Ascend/cann/set_env.sh" || true
-  set -euo pipefail
-  set -o pipefail
-elif [[ -f "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh" ]]; then
+if [[ -f "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh" ]]; then
   log "Sourcing /usr/local/Ascend/ascend-toolkit/latest/set_env.sh"
   set +e +u +o pipefail
   # shellcheck disable=SC1091
@@ -101,7 +94,7 @@ command -v bisheng || true
 bisheng --version || true
 
 if [[ -z "${ASCEND_HOME_PATH:-}" ]]; then
-  for d in /usr/local/Ascend/cann /usr/local/Ascend/cann-* /usr/local/Ascend/ascend-toolkit/latest; do
+  for d in /usr/local/Ascend/ascend-toolkit/latest /usr/local/Ascend/cann-*; do
     [[ -d "$d" ]] || continue
     export ASCEND_HOME_PATH="$d"
     break
@@ -233,6 +226,13 @@ while IFS= read -r -d '' cpp; do
     cd "${nv_dir}"
     export ACL_DEVICE_ID="${DEVICE_ID}"
 
+    CUSTOM_GOLDEN=0
+    CUSTOM_COMPARE=0
+    if [[ -f "./validation_meta.env" ]]; then
+      # shellcheck disable=SC1091
+      source "./validation_meta.env"
+    fi
+
     enable_sim_golden="OFF"
     [[ "${GOLDEN_MODE}" == "sim" ]] && enable_sim_golden="ON"
     cmake -S . -B ./build \
@@ -264,12 +264,23 @@ while IFS= read -r -d '' cpp; do
     case "${GOLDEN_MODE}" in
       sim)
         python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
-        copy_outputs_as_golden
-        if [[ "${RUN_MODE}" == "npu" ]]; then
-          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        if [[ "${CUSTOM_GOLDEN}" == "1" ]]; then
+          log "Using custom golden for ${testcase}"
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
+          COMPARE_STRICT=1 python3 ./compare.py
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            python3 ./golden.py
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+            COMPARE_STRICT=1 python3 ./compare.py
+          fi
+        else
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
+          copy_outputs_as_golden
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          fi
+          COMPARE_STRICT=1 python3 ./compare.py
         fi
-        COMPARE_STRICT=1 python3 ./compare.py
         ;;
       npu)
         if [[ "${RUN_MODE}" != "npu" ]]; then
@@ -278,9 +289,13 @@ while IFS= read -r -d '' cpp; do
         fi
         python3 ./golden.py
         LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        copy_outputs_as_golden
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        if [[ "${CUSTOM_GOLDEN}" != "1" ]]; then
+          copy_outputs_as_golden
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        else
+          log "Using custom golden for ${testcase}"
+        fi
         COMPARE_STRICT=1 python3 ./compare.py
         ;;
       skip)

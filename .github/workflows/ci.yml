@@ -33,7 +33,7 @@ on:
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
-        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print"
+        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic"
       run_only_cases:
         description: "Comma/space separated testcase names to run (empty = run all)"
         type: string
@@ -204,6 +204,15 @@ jobs:
           cp test/npu_validation/scripts/generate_testcase.py "${PAYLOAD_DIR}/test/npu_validation/scripts/"
           cp test/npu_validation/scripts/run_remote_npu_validation.sh "${PAYLOAD_DIR}/test/npu_validation/scripts/"
           cp test/npu_validation/templates/* "${PAYLOAD_DIR}/test/npu_validation/templates/"
+          while IFS= read -r -d '' file; do
+            dst="${PAYLOAD_DIR}/${file}"
+            mkdir -p "$(dirname "${dst}")"
+            cp "${file}" "${dst}"
+          done < <(
+            find test/samples \
+              \( -path '*/npu_validation/*' -o -name '*_golden.py' -o -name '*_compare.py' \) \
+              -type f -print0
+          )
           chmod +x "${PAYLOAD_DIR}/test/npu_validation/scripts/run_remote_npu_validation.sh"
           tar -czf "${PAYLOAD_TGZ}" -C "${PAYLOAD_DIR}" .
 
@@ -238,7 +247,7 @@ jobs:
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic
     steps:
       - name: Resolve validation parameters
         shell: bash
