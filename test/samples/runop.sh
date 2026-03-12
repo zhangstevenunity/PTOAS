@@ -180,6 +180,11 @@ process_one_dir() {
   local f mlir ptobc_file decoded_pto cpp base overall=0
   for f in "$dir"/*.py; do
     [[ -f "$f" ]] || continue
+    case "$(basename "$f")" in
+      *_golden.py|*_compare.py|validation_runtime.py)
+        continue
+        ;;
+    esac
     base="$(basename "$f" .py)"
     local expect_fail=0
     case "$base" in
