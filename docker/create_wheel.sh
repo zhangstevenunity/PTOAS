@@ -10,6 +10,7 @@
 #
 # Optional environment variables:
 #   WHEEL_PLAT_NAME - Explicit wheel platform tag (for bdist_wheel --plat-name)
+#   PTOAS_PYTHON_PACKAGE_VERSION - Wheel package version override
 
 set -e
 
@@ -22,8 +23,14 @@ for var in PTO_SOURCE_DIR PTO_INSTALL_DIR LLVM_BUILD_DIR; do
 done
 
 PY_PACKAGE_DIR="${LLVM_BUILD_DIR}/tools/mlir/python_packages/mlir_core"
+PTOAS_PYTHON_PACKAGE_VERSION="${PTOAS_PYTHON_PACKAGE_VERSION:-${PTOAS_VERSION:-}}"
+if [ -z "${PTOAS_PYTHON_PACKAGE_VERSION}" ]; then
+  PTOAS_PYTHON_PACKAGE_VERSION="$(python "${PTO_SOURCE_DIR}/.github/scripts/compute_ptoas_version.py" --cmake-file "${PTO_SOURCE_DIR}/CMakeLists.txt" --mode dev)"
+fi
+export PTOAS_PYTHON_PACKAGE_VERSION
 
 echo "Creating Python wheel..."
+echo "Wheel package version: ${PTOAS_PYTHON_PACKAGE_VERSION}"
 
 # Copy PTO dialect files to MLIR package directory
 echo "Copying PTO dialect files..."
@@ -54,3 +61,9 @@ fi
 
 echo "Wheel created at ${PY_PACKAGE_DIR}/dist/"
 ls -la "${PY_PACKAGE_DIR}/dist/"*.whl
+
+EXPECTED_WHEEL_GLOB="${PY_PACKAGE_DIR}/dist/ptoas-${PTOAS_PYTHON_PACKAGE_VERSION}-"*.whl
+if ! compgen -G "${EXPECTED_WHEEL_GLOB}" >/dev/null 2>&1; then
+  echo "Error: expected wheel matching ${EXPECTED_WHEEL_GLOB}" >&2
+  exit 1
+fi

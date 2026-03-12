@@ -33,12 +33,21 @@
 #include "mlir/Dialect/EmitC/IR/EmitC.h"
 #include "mlir/Dialect/EmitC/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include <string>
 
 using namespace mlir;
 using namespace pto;
+
+#ifndef PTOAS_RELEASE_VERSION
+#define PTOAS_RELEASE_VERSION "unknown"
+#endif
+
+static void printPTOASVersion(llvm::raw_ostream &os) {
+  os << "ptoas " << PTOAS_RELEASE_VERSION << "\n";
+}
 
 // #define ADD_CANONICALIZER_PASS \
 //    CanonicalizerOptions options; \
@@ -537,6 +546,8 @@ int main(int argc, char **argv) {
 
   registry.insert<emitc::EmitCDialect>();
   registry.insert<mlir::LLVM::LLVMDialect>();
+
+  llvm::cl::SetVersionPrinter(printPTOASVersion);
 
   // Parse command line options
   llvm::cl::ParseCommandLineOptions(argc, argv, "PTO Assembler (ptoas)\n");

@@ -12,6 +12,9 @@ add_llvm_executable(pto-opt
 # [新增] 魔法操作：修改最终输出的文件名为 "ptoas"
 # =========================================================
 set_target_properties(pto-opt PROPERTIES OUTPUT_NAME "ptoas")
+target_compile_definitions(pto-opt PRIVATE
+  PTOAS_RELEASE_VERSION="${PTOAS_CLI_VERSION}"
+)
 # [修改 2] 更新链接库名称
 # 原因：In-tree 时你的库叫 MLIRPTODialect，但现在 Out-of-tree 它们是你自己定义的
 # (通常在 lib/PTO/IR/CMakeLists.txt 里被定义为 PTOIR 或类似名字)。

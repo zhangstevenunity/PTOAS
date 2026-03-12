@@ -47,6 +47,16 @@ jobs:
           echo "PY_VER=$PY_VER" >> $GITHUB_ENV
           echo "PY_PATH=/opt/python/$PY_VER" >> $GITHUB_ENV
 
+      - name: Compute PTOAS CLI version
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            PTOAS_VERSION="$(${PY_PATH}/bin/python .github/scripts/compute_ptoas_version.py --mode release --check-tag "${GITHUB_REF_NAME}")"
+          else
+            PTOAS_VERSION="$(${PY_PATH}/bin/python .github/scripts/compute_ptoas_version.py --mode dev)"
+          fi
+          echo "PTOAS_VERSION=${PTOAS_VERSION}" >> "$GITHUB_ENV"
+          echo "Using PTOAS CLI version: ${PTOAS_VERSION}"
+
       - name: Install system dependencies
         run: |
           dnf install -y ninja-build cmake git ccache gcc-c++ lld zip
@@ -130,6 +140,7 @@ jobs:
             -DPython3_FIND_STRATEGY=LOCATION \
             -Dpybind11_DIR=$(${PY_PATH}/bin/python -m pybind11 --cmakedir) \
             -DMLIR_PYTHON_PACKAGE_DIR=${LLVM_BUILD_DIR}/tools/mlir/python_packages/mlir_core \
+            -DPTOAS_RELEASE_VERSION_OVERRIDE=${PTOAS_VERSION} \
             -DCMAKE_INSTALL_PREFIX=${PTO_INSTALL_DIR}
           ninja -C build
           ninja -C build install
@@ -137,6 +148,7 @@ jobs:
       - name: Create Python wheel
         run: |
           export PATH="${PY_PATH}/bin:$PATH"
+          export PTOAS_PYTHON_PACKAGE_VERSION="${PTOAS_VERSION}"
           bash $PTO_SOURCE_DIR/docker/create_wheel.sh
 
       - name: Repair wheel with auditwheel

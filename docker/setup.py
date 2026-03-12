@@ -1,8 +1,14 @@
+import os
+
 from setuptools import setup, find_namespace_packages
+
+
+def read_package_version() -> str:
+    return os.environ.get("PTOAS_PYTHON_PACKAGE_VERSION", "0.1.1")
 
 setup(
     name="ptoas",
-    version="0.1.1",
+    version=read_package_version(),
     description="PTO Assembler & Optimizer",
     # NOTE: find_namespace_packages detects folders even without __init__.py
     packages=find_namespace_packages(),

@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.20.0)
-project(ptoas)
+project(ptoas VERSION 0.7)
+
+set(PTOAS_RELEASE_VERSION_OVERRIDE ""
+    CACHE STRING "Override the version printed by ptoas --version")
+set(PTOAS_CLI_VERSION "${PROJECT_VERSION}")
+if(PTOAS_RELEASE_VERSION_OVERRIDE)
+  set(PTOAS_CLI_VERSION "${PTOAS_RELEASE_VERSION_OVERRIDE}")
+endif()
+message(STATUS "PTOAS CLI version: ${PTOAS_CLI_VERSION}")
 
 # =========================================================
 # [新增] 强制设置 C++17 标准 (LLVM 19 必需)

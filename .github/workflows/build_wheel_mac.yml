@@ -44,6 +44,16 @@ jobs:
         run: |
           echo "PY_PATH=$(python -c 'import sys; print(sys.prefix)')" >> $GITHUB_ENV
 
+      - name: Compute PTOAS CLI version
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "release" ]; then
+            PTOAS_VERSION="$(python .github/scripts/compute_ptoas_version.py --mode release --check-tag "${GITHUB_REF_NAME}")"
+          else
+            PTOAS_VERSION="$(python .github/scripts/compute_ptoas_version.py --mode dev)"
+          fi
+          echo "PTOAS_VERSION=${PTOAS_VERSION}" >> "$GITHUB_ENV"
+          echo "Using PTOAS CLI version: ${PTOAS_VERSION}"
+
       - name: Install system dependencies
         run: |
           brew install ninja ccache
@@ -123,6 +133,7 @@ jobs:
             -DPython3_FIND_STRATEGY=LOCATION \
             -Dpybind11_DIR=$(python -m pybind11 --cmakedir) \
             -DMLIR_PYTHON_PACKAGE_DIR=${LLVM_BUILD_DIR}/tools/mlir/python_packages/mlir_core \
+            -DPTOAS_RELEASE_VERSION_OVERRIDE=${PTOAS_VERSION} \
             -DCMAKE_INSTALL_PREFIX=${PTO_INSTALL_DIR}
           ninja -C build
           ninja -C build install
@@ -130,6 +141,7 @@ jobs:
       - name: Create Python wheel
         run: |
           export PY_PACKAGE_DIR=$LLVM_BUILD_DIR/tools/mlir/python_packages/mlir_core
+          export PTOAS_PYTHON_PACKAGE_VERSION="${PTOAS_VERSION}"
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             TARGET_ARCH="x86_64"
           else
