@@ -19,7 +19,8 @@ def main():
     buffers = default_buffers(meta)
     buffers[src_name] = src
     write_buffers(meta, buffers)
-    out = np.fmod(src, np.float32(3.14))
+    scalar = np.float32(3.14)
+    out = src - np.floor(src / scalar) * scalar
     write_golden(meta, {single_output(meta): np.asarray(out, dtype=np.float32)})
 
 

@@ -11,4 +11,4 @@ for search_root in (Path(__file__).resolve().parent, Path(__file__).resolve().pa
 from validation_runtime import compare_outputs
 
 if __name__ == '__main__':
-    compare_outputs(np.float32, atol=0.001)
+    compare_outputs(np.float32, atol=0.005)

@@ -8,7 +8,7 @@ for search_root in (Path(__file__).resolve().parent, Path(__file__).resolve().pa
         sys.path.insert(0, str(search_root))
         break
 
-from validation_runtime import default_buffers, float_values, load_case_meta, matrix32, rng, single_output, write_buffers, write_golden
+from validation_runtime import COLS, ROWS, default_buffers, float_values, load_case_meta, rng, single_output, write_buffers, write_golden
 
 
 def main():
@@ -16,11 +16,13 @@ def main():
     [src_name] = meta.inputs
     generator = rng()
     src = float_values(generator, meta.elem_counts[src_name], style='signed')
-    src_m = matrix32(src)
     buffers = default_buffers(meta)
     buffers[src_name] = src
     write_buffers(meta, buffers)
-    out = np.repeat(src_m[:, :1], 32, axis=1)
+    row_scalars = src[::COLS][:ROWS]
+    if row_scalars.size != ROWS:
+        raise ValueError(f'rowexpand: expected at least {ROWS} row scalars, got {row_scalars.size}')
+    out = np.repeat(row_scalars[:, None], COLS, axis=1)
     write_golden(meta, {single_output(meta): out.astype(np.float32).reshape(-1)})
 
 

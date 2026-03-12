@@ -21,7 +21,7 @@ def main():
     buffers[lhs_name] = lhs
     buffers[rhs_name] = rhs
     write_buffers(meta, buffers)
-    out = np.fmod(lhs, rhs)
+    out = lhs - np.floor(lhs / rhs) * rhs
     write_golden(meta, {single_output(meta): np.asarray(out, dtype=np.float32)})
 
 

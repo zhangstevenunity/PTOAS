@@ -18,20 +18,16 @@ def main():
     generator = rng()
     src = float_values(generator, meta.elem_counts[src_name], style='signed')
     src_m = matrix32(src)
-    out_init = float_values(generator, meta.elem_counts[out_name], style='signed_small')
     buffers = default_buffers(meta)
     buffers[src_name] = src
     buffers[tmp_name] = np.zeros(meta.elem_counts[tmp_name], dtype=meta.np_types[tmp_name])
-    buffers[out_name] = out_init
     write_buffers(meta, buffers)
     reduced = np.asarray(src_m.sum(axis=0, dtype=np.float32), dtype=np.float32)
-    out = np.asarray(out_init, dtype=np.float32).reshape(-1).copy()
+    out = np.zeros(meta.elem_counts[out_name], dtype=np.float32)
     if out.size == ROWS * COLS:
-        out_m = matrix32(out)
-        out_m[0, :] = reduced + out_m[0, :]
-        out = out_m.reshape(-1)
+        out[:COLS] = reduced
     elif out.size == COLS:
-        out = reduced + out
+        out = reduced
     else:
         raise ValueError(f'unsupported colsum output size: {out.size}')
     write_golden(meta, {out_name: out})

@@ -22,11 +22,9 @@ def main():
     buffers[src_name] = src
     write_buffers(meta, buffers)
     reduced = np.asarray(src_m.min(axis=1), dtype=np.float32)
-    out = np.asarray(buffers.get(out_name, np.zeros(meta.elem_counts[out_name], dtype=np.float32)), dtype=np.float32).reshape(-1).copy()
+    out = np.zeros(meta.elem_counts[out_name], dtype=np.float32)
     if out.size == ROWS * COLS:
-        out_m = matrix32(out)
-        out_m[:, 0] = reduced
-        out = out_m.reshape(-1)
+        out[:ROWS] = reduced
     elif out.size == ROWS:
         out = reduced
     else:

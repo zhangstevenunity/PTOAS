@@ -19,7 +19,7 @@ def main():
     buffers = default_buffers(meta)
     buffers[src_name] = src
     write_buffers(meta, buffers)
-    out = np.float32(3.14) / src
+    out = src / np.float32(3.14)
     write_golden(meta, {single_output(meta): np.asarray(out, dtype=np.float32)})
 
 

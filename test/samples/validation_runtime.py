@@ -147,7 +147,7 @@ def single_output(meta: CaseMeta) -> str:
 
 
 def packed_row_bytes(cols: int) -> int:
-    return ((cols + 63) // 64) * 8
+    return (cols + 7) // 8
 
 
 def pack_predicate_mask(bits: np.ndarray, *, storage_cols: int) -> np.ndarray:
@@ -160,13 +160,13 @@ def pack_predicate_mask(bits: np.ndarray, *, storage_cols: int) -> np.ndarray:
         raise ValueError(f'storage_cols={storage_cols} is too small for cols={cols}')
     packed = np.zeros((rows, storage_cols), dtype=np.uint8)
     for row in range(rows):
-        for word_index, base_col in enumerate(range(0, cols, 64)):
-            width = min(64, cols - base_col)
-            word = 0
+        for byte_index, base_col in enumerate(range(0, cols, 8)):
+            width = min(8, cols - base_col)
+            packed_byte = 0
             for bit_index in range(width):
                 if bits[row, base_col + bit_index]:
-                    word |= 1 << bit_index
-            packed[row, word_index * 8:(word_index + 1) * 8] = np.frombuffer(word.to_bytes(8, 'little'), dtype=np.uint8)
+                    packed_byte |= 1 << bit_index
+            packed[row, byte_index] = packed_byte
     return packed.reshape(-1)
 
 
