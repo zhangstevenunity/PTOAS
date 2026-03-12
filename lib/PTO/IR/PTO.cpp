@@ -4083,6 +4083,54 @@ mlir::LogicalResult mlir::pto::SubsetOp::verify() {
   return success();
 }
 
+LogicalResult mlir::pto::MakeTileBufArrayOp::verify() {
+  auto elems = getElements();
+  if (elems.empty())
+    return emitOpError("expects at least one tile_buf element");
+
+  auto firstTy = llvm::dyn_cast<TileBufType>(elems.front().getType());
+  if (!firstTy)
+    return emitOpError("expects tile_buf elements");
+
+  for (auto v : elems) {
+    auto ty = llvm::dyn_cast<TileBufType>(v.getType());
+    if (!ty)
+      return emitOpError("expects tile_buf elements");
+    if (ty != firstTy)
+      return emitOpError("all elements must have the same tile_buf type");
+  }
+
+  auto arrTy = llvm::dyn_cast<TileBufArrayType>(getResult().getType());
+  if (!arrTy)
+    return emitOpError("result must be tile_buf_array type");
+  if (arrTy.getSize() != static_cast<int64_t>(elems.size()))
+    return emitOpError("result size must equal number of elements");
+  if (arrTy.getElementType() != firstTy)
+    return emitOpError("result element type must match input tile_buf type");
+
+  return success();
+}
+
+LogicalResult mlir::pto::TileBufArrayGetOp::verify() {
+  auto arrTy = llvm::dyn_cast<TileBufArrayType>(getArray().getType());
+  auto resTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  if (!arrTy || !resTy)
+    return emitOpError("expects tile_buf_array input and tile_buf result");
+
+  auto elemTy = llvm::dyn_cast<TileBufType>(arrTy.getElementType());
+  if (!elemTy)
+    return emitOpError("array element type must be tile_buf");
+  if (elemTy != resTy)
+    return emitOpError("result type must equal array element type");
+
+  int64_t idx = 0;
+  if (getConstIndex(getIndex(), idx)) {
+    if (idx < 0 || idx >= arrTy.getSize())
+      return emitOpError("constant index out of range for tile_buf_array");
+  }
+  return success();
+}
+
 } // namespace pto
 } // namespace mlir
 

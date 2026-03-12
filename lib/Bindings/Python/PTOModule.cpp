@@ -618,6 +618,35 @@ PYBIND11_MODULE(_pto, m) {
                 return py::none();
             },
             py::arg("cls"), py::arg("type"));
-	
-	populatePTODialectSubmodule(m);
+
+    // ---- TileBufArrayType ----
+    mlir_type_subclass(
+        m, "TileBufArrayType",
+        [](MlirType t) -> bool { return mlirPTOTypeIsATileBufArrayType(t); })
+        .def_classmethod(
+            "get",
+            [](py::object cls, int64_t size, MlirType elementType,
+               MlirContext context) -> py::object {
+              MlirContext ctx = context;
+              if (!ctx.ptr)
+                ctx = mlirTypeGetContext(elementType);
+              MlirType t = mlirPTOTileBufArrayTypeGet(ctx, size, elementType);
+              if (mlirTypeIsNull(t))
+                return py::none();
+              return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("size"), py::arg("element_type"),
+            py::arg("context") = py::none())
+        .def_property_readonly(
+            "size",
+            [](MlirType self) -> int64_t {
+              return mlirPTOTileBufArrayTypeGetSize(self);
+            })
+        .def_property_readonly(
+            "element_type",
+            [](MlirType self) -> MlirType {
+              return mlirPTOTileBufArrayTypeGetElementType(self);
+            });
+
+    populatePTODialectSubmodule(m);
 }

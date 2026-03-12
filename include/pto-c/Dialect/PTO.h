@@ -60,6 +60,13 @@ MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufTypeGet(
 MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufTypeGetWithConfig(
     MlirContext ctx, intptr_t rank, const int64_t *shape,
     MlirType elementType, MlirAttribute memorySpace, MlirAttribute config);
+
+// ---- !pto.tile_buf_array<N x !pto.tile_buf<...>> ----
+MLIR_CAPI_EXPORTED bool mlirPTOTypeIsATileBufArrayType(MlirType type);
+MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufArrayTypeGet(
+    MlirContext ctx, int64_t size, MlirType elementType);
+MLIR_CAPI_EXPORTED int64_t mlirPTOTileBufArrayTypeGetSize(MlirType type);
+MLIR_CAPI_EXPORTED MlirType mlirPTOTileBufArrayTypeGetElementType(MlirType type);
 // ---- Enum attrs helpers (BLayout/SLayout/PadValue in mlir::pto) ----
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsABLayoutAttr(MlirAttribute attr);
 MLIR_CAPI_EXPORTED MlirAttribute mlirPTOBLayoutAttrGet(MlirContext ctx, int32_t value);

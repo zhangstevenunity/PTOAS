@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -21,11 +22,13 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include "Utils.h" // 假设包含一些通用的工具函数
 
 #include <algorithm>
+#include <functional>
 
 using namespace mlir;
 
@@ -554,6 +557,155 @@ struct PTOViewToMemrefPass
             configAttr);
 
         rewriter.replaceOp(op, bindOp.getResult());
+      }
+
+      // ------------------------------------------------------------------
+      // Stage 0.75: Lower tile_buf_array container ops (MVP)
+      // ------------------------------------------------------------------
+      SmallVector<mlir::pto::TileBufArrayGetOp, 8> arrayGets;
+      func.walk([&](mlir::pto::TileBufArrayGetOp op) { arrayGets.push_back(op); });
+
+      for (auto op : arrayGets) {
+        IRRewriter rewriter(ctx);
+        rewriter.setInsertionPoint(op);
+        Location loc = op.getLoc();
+
+        auto make = op.getArray().getDefiningOp<mlir::pto::MakeTileBufArrayOp>();
+        if (!make) {
+          op.emitError("tile_buf_array_get currently requires array from pto.make_tile_buf_array");
+          signalPassFailure();
+          return;
+        }
+
+        auto elems = make.getElements();
+        if (elems.empty()) {
+          op.emitError("tile_buf_array_get requires non-empty make_tile_buf_array");
+          signalPassFailure();
+          return;
+        }
+
+        int64_t idx = 0;
+        if (!getConstIndexValue(op.getIndex(), idx)) {
+          // Dynamic index lowering:
+          // Avoid creating memref-typed scf.if results (which later EmitC
+          // lowering cannot always reconcile). Instead, clone each direct
+          // no-result user behind an if-ladder and bind the selected element
+          // per branch.
+          Value indexValue = ensureIndex(rewriter, loc, op.getIndex(), op);
+          if (!indexValue) {
+            signalPassFailure();
+            return;
+          }
+          Value dynGetValue = op.getResult();
+          SmallVector<Operation *, 8> users;
+          SmallPtrSet<Operation *, 8> seen;
+          for (OpOperand &use : dynGetValue.getUses()) {
+            Operation *user = use.getOwner();
+            if (seen.insert(user).second)
+              users.push_back(user);
+          }
+
+          auto cloneUserReplacingDynGet = [&](Operation *user, Value replacement) {
+            Operation *cloned = rewriter.clone(*user);
+            for (OpOperand &operand : cloned->getOpOperands()) {
+              if (operand.get() == dynGetValue)
+                operand.set(replacement);
+            }
+          };
+
+          for (Operation *user : users) {
+            if (user == op.getOperation())
+              continue;
+            if (user->getNumRegions() != 0 || user->getNumResults() != 0) {
+              user->emitError(
+                  "dynamic tile_buf_array_get currently supports only direct no-result users");
+              signalPassFailure();
+              return;
+            }
+
+            // Single element array: trivial replacement.
+            if (elems.size() == 1) {
+              rewriter.setInsertionPoint(user);
+              cloneUserReplacingDynGet(user, elems.front());
+              user->erase();
+              continue;
+            }
+
+            std::function<void(Block *, size_t)> buildElseLadder;
+            buildElseLadder = [&](Block *block, size_t elemIdx) {
+              OpBuilder::InsertionGuard guard(rewriter);
+              rewriter.setInsertionPoint(block->getTerminator());
+
+              if (elemIdx + 1 == elems.size()) {
+                cloneUserReplacingDynGet(user, elems[elemIdx]);
+                return;
+              }
+
+              Value cIdx = rewriter.create<arith::ConstantIndexOp>(
+                  loc, static_cast<int64_t>(elemIdx));
+              Value cond = rewriter.create<arith::CmpIOp>(
+                  loc, arith::CmpIPredicate::eq, indexValue, cIdx);
+              auto ifOp = rewriter.create<scf::IfOp>(
+                  loc, TypeRange{}, cond, /*withElseRegion=*/true);
+
+              {
+                OpBuilder::InsertionGuard thenGuard(rewriter);
+                rewriter.setInsertionPoint(ifOp.thenBlock()->getTerminator());
+                cloneUserReplacingDynGet(user, elems[elemIdx]);
+              }
+
+              buildElseLadder(ifOp.elseBlock(), elemIdx + 1);
+            };
+
+            {
+              OpBuilder::InsertionGuard guard(rewriter);
+              rewriter.setInsertionPoint(user);
+              Value cIdx0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+              Value cond0 = rewriter.create<arith::CmpIOp>(
+                  loc, arith::CmpIPredicate::eq, indexValue, cIdx0);
+              auto ifOp = rewriter.create<scf::IfOp>(
+                  loc, TypeRange{}, cond0, /*withElseRegion=*/true);
+
+              {
+                OpBuilder::InsertionGuard thenGuard(rewriter);
+                rewriter.setInsertionPoint(ifOp.thenBlock()->getTerminator());
+                cloneUserReplacingDynGet(user, elems[0]);
+              }
+
+              buildElseLadder(ifOp.elseBlock(), 1);
+            }
+
+            user->erase();
+          }
+
+          if (!op->use_empty()) {
+            op.emitError("dynamic tile_buf_array_get still has users after lowering");
+            signalPassFailure();
+            return;
+          }
+          op.erase();
+          continue;
+        }
+
+        if (idx < 0 || idx >= static_cast<int64_t>(elems.size())) {
+          op.emitError("tile_buf_array_get index out of range in lowering");
+          signalPassFailure();
+          return;
+        }
+
+        rewriter.replaceOp(op, elems[static_cast<size_t>(idx)]);
+      }
+
+      SmallVector<mlir::pto::MakeTileBufArrayOp, 8> makeArrays;
+      func.walk([&](mlir::pto::MakeTileBufArrayOp op) { makeArrays.push_back(op); });
+
+      for (auto op : makeArrays) {
+        if (!op->use_empty()) {
+          op.emitError("unlowered tile_buf_array value remains after tile_buf_array_get rewrite");
+          signalPassFailure();
+          return;
+        }
+        op.erase();
       }
 
       // ------------------------------------------------------------------

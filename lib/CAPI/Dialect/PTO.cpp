@@ -166,6 +166,27 @@ bool mlirPTOTypeIsATileBufType(MlirType type) {
   return unwrap(type).isa<mlir::pto::TileBufType>();
 }
 
+bool mlirPTOTypeIsATileBufArrayType(MlirType type) {
+  return unwrap(type).isa<mlir::pto::TileBufArrayType>();
+}
+
+MlirType mlirPTOTileBufArrayTypeGet(MlirContext ctx, int64_t size,
+                                    MlirType elementType) {
+  MLIRContext *c = unwrap(ctx);
+  auto ty = mlir::pto::TileBufArrayType::get(c, size, unwrap(elementType));
+  return wrap(ty);
+}
+
+int64_t mlirPTOTileBufArrayTypeGetSize(MlirType type) {
+  auto t = mlir::cast<mlir::pto::TileBufArrayType>(unwrap(type));
+  return t.getSize();
+}
+
+MlirType mlirPTOTileBufArrayTypeGetElementType(MlirType type) {
+  auto t = mlir::cast<mlir::pto::TileBufArrayType>(unwrap(type));
+  return wrap(t.getElementType());
+}
+
 MlirType mlirPTOTileBufTypeGet(MlirContext ctx, intptr_t rank,
                                const int64_t *shape, MlirType elementType,
                                MlirAttribute memorySpace) {

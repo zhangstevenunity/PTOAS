@@ -305,6 +305,47 @@ def SubsetOp : PTO_Op<"subset", [
   }];
 }
 
+//=============================================================================
+// TileBufArray container ops
+//=============================================================================
+
+def MakeTileBufArrayOp : PTO_Op<"make_tile_buf_array", [Pure]> {
+  let summary = "Build a logical array of tile_buf values (same tile type, non-contiguous allowed).";
+
+  let arguments = (ins
+    Variadic<TileBufType>:$elements
+  );
+
+  let results = (outs
+    TileBufArrayType:$result
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `[` $elements `]` attr-dict `:` type($elements) `->` qualified(type($result))
+  }];
+}
+
+def TileBufArrayGetOp : PTO_Op<"tile_buf_array_get", [Pure]> {
+  let summary = "Get one tile_buf element from tile_buf_array by index.";
+
+  let arguments = (ins
+    TileBufArrayType:$array,
+    Index:$index
+  );
+
+  let results = (outs
+    TileBufType:$result
+  );
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $array `[` $index `]` attr-dict `:` qualified(type($array)) `->` qualified(type($result))
+  }];
+}
+
 // ============================================================================
 // SSA TileBuf Config Ops (aliasing views)
 // ============================================================================

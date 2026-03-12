@@ -30,6 +30,7 @@ TensorViewType = _pto_mod.TensorViewType
 PartitionTensorViewType = _pto_mod.PartitionTensorViewType
 TileType = _pto_mod.TileType
 TileBufType = _pto_mod.TileBufType
+TileBufArrayType = _pto_mod.TileBufArrayType
 AddressSpace = _pto_mod.AddressSpace
 AddressSpaceAttr = _pto_mod.AddressSpaceAttr
 TileBufConfigAttr = _pto_mod.TileBufConfigAttr
@@ -64,6 +65,10 @@ __all__ = [
     "PartitionTensorViewType",
     "TileType",
     "TileBufType",
+    "TileBufArrayType",
+    "TileBufArray",
+    "make_tile_buf_array",
+    "tile_buf_array_get",
     "AddressSpace", "AddressSpaceAttr",
     "BLayout","BLayoutAttr",
     "SLayout","SLayoutAttr",
@@ -234,6 +239,105 @@ def store_scalar(ptr, offset, value, *, loc=None, ip=None):
         loc=loc,
         ip=ip,
     )
+
+
+# -----------------------------------------------------------------------------
+# TileBufArray helpers (array-like ergonomics)
+# -----------------------------------------------------------------------------
+def _to_index_value(index, *, loc=None, ip=None):
+    if isinstance(index, int):
+        idx_ty = _ods_ir.IndexType.get()
+        idx_attr = _ods_ir.IntegerAttr.get(idx_ty, index)
+        cst = _ods_ir.Operation.create(
+            "arith.constant",
+            results=[idx_ty],
+            attributes={"value": idx_attr},
+            loc=loc,
+            ip=ip,
+        )
+        return cst.results[0]
+    return _pto_ops_gen._get_op_result_or_value(index)
+
+
+def _to_tile_buf_array_value(array):
+    if isinstance(array, TileBufArray):
+        return array.value
+    return _pto_ops_gen._get_op_result_or_value(array)
+
+
+def make_tile_buf_array(elements, *, loc=None, ip=None):
+    if not elements:
+        raise ValueError("make_tile_buf_array expects at least one element")
+
+    ops = [_pto_ops_gen._get_op_result_or_value(v) for v in elements]
+    elem_ty = ops[0].type
+    for i, v in enumerate(ops[1:], start=1):
+        if v.type != elem_ty:
+            raise ValueError(
+                f"all elements must have the same type, got index 0={elem_ty} and index {i}={v.type}"
+            )
+
+    arr_ty = TileBufArrayType.get(len(ops), elem_ty, elem_ty.context)
+    op = _ods_ir.Operation.create(
+        "pto.make_tile_buf_array",
+        results=[arr_ty],
+        operands=ops,
+        loc=loc,
+        ip=ip,
+    )
+    return op.results[0]
+
+
+def tile_buf_array_get(array, index, *, loc=None, ip=None):
+    arr_val = _to_tile_buf_array_value(array)
+    arr_ty = TileBufArrayType(arr_val.type)
+
+    idx = index
+    if isinstance(index, int) and index < 0:
+        idx = int(arr_ty.size) + index
+    idx_val = _to_index_value(idx, loc=loc, ip=ip)
+
+    op = _ods_ir.Operation.create(
+        "pto.tile_buf_array_get",
+        results=[arr_ty.element_type],
+        operands=[arr_val, idx_val],
+        loc=loc,
+        ip=ip,
+    )
+    return op.results[0]
+
+
+class TileBufArray:
+    def __init__(self, value):
+        v = _pto_ops_gen._get_op_result_or_value(value)
+        self._value = v
+        self._type = TileBufArrayType(v.type)
+
+    @classmethod
+    def from_elements(cls, elements, *, loc=None, ip=None):
+        return cls(make_tile_buf_array(elements, loc=loc, ip=ip))
+
+    @property
+    def value(self):
+        return self._value
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def size(self):
+        return int(self._type.size)
+
+    @property
+    def element_type(self):
+        return self._type.element_type
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, index):
+        return tile_buf_array_get(self._value, index)
 
 # -----------------------------------------------------------------------------
 # Export enum aliases for terse calls: pto.record_event(TLOAD, TLOAD, EVENT_ID0)
