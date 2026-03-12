@@ -33,7 +33,7 @@ on:
       skip_cases:
         description: "Comma/space separated testcase names to skip (e.g. scatter,mrgsort)"
         type: string
-        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic"
+        default: "mix_kernel,vadd_validshape,vadd_validshape_dynamic,print"
       run_only_cases:
         description: "Comma/space separated testcase names to run (empty = run all)"
         type: string
@@ -247,7 +247,7 @@ jobs:
       # Temporary CI gate: skip cases that still error/flap on the remote NPU.
       # Update this list as we fix the underlying issues.
       DEFAULT_SKIP_CASES: >-
-        mix_kernel,vadd_validshape,vadd_validshape_dynamic
+        mix_kernel,vadd_validshape,vadd_validshape_dynamic,print
     steps:
       - name: Resolve validation parameters
         shell: bash

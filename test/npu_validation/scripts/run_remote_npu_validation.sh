@@ -74,7 +74,14 @@ for f in "$HOME/.bash_profile" "$HOME/.bashrc"; do
   source_rc "$f"
 done
 
-if [[ -f "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh" ]]; then
+if [[ -f "/usr/local/Ascend/cann/set_env.sh" ]]; then
+  log "Sourcing /usr/local/Ascend/cann/set_env.sh"
+  set +e +u +o pipefail
+  # shellcheck disable=SC1091
+  source "/usr/local/Ascend/cann/set_env.sh" || true
+  set -euo pipefail
+  set -o pipefail
+elif [[ -f "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh" ]]; then
   log "Sourcing /usr/local/Ascend/ascend-toolkit/latest/set_env.sh"
   set +e +u +o pipefail
   # shellcheck disable=SC1091
@@ -94,7 +101,7 @@ command -v bisheng || true
 bisheng --version || true
 
 if [[ -z "${ASCEND_HOME_PATH:-}" ]]; then
-  for d in /usr/local/Ascend/ascend-toolkit/latest /usr/local/Ascend/cann-*; do
+  for d in /usr/local/Ascend/cann /usr/local/Ascend/cann-* /usr/local/Ascend/ascend-toolkit/latest; do
     [[ -d "$d" ]] || continue
     export ASCEND_HOME_PATH="$d"
     break
