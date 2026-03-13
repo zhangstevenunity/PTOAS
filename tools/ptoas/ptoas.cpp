@@ -638,6 +638,8 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertCVMovPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOConvertToDPSPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOInsertLoadStoreForMixCVPass());
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOLowerTPopPass());
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVerifyTFreePass());
   pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
   
   if (!disableInferLayout)
@@ -654,6 +656,10 @@ int main(int argc, char **argv) {
     pm.addPass(pto::createPlanMemoryPass(planMemoryOption));
   }
 
+  std::string arch = ptoTargetArch;
+  for (char &c : arch)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
   // Conditionally add Sync pass based on flag
   if (enableInsertSync) {
     if (effectiveLevel == PTOBuildLevel::Level3) {
@@ -669,9 +675,7 @@ int main(int argc, char **argv) {
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());
 
   pm.addPass(createCSEPass());
-  std::string arch = ptoTargetArch;
-  for (char &c : arch)
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
   if (arch == "a3") {
     pm.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
   } else if (arch == "a5") {

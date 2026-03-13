@@ -38,6 +38,7 @@ enum class PTOArch {
 std::unique_ptr<Pass> createPTOHighDimLoweringPass();
 std::unique_ptr<Pass> createPTOVFloopGatherPass();
 std::unique_ptr<Pass> createLoweringSyncToPipePass();
+std::unique_ptr<Pass> createPTOLowerTPopPass();
 
 // Creates a pass for ...
 std::unique_ptr<Pass> createPTOInsertSyncPass();
@@ -64,7 +65,8 @@ std::unique_ptr<Pass> createPTORemoveRedundantBarrierPass();
 std::unique_ptr<Pass> createPTOViewToMemrefPass();
 std::unique_ptr<mlir::Pass> createPTOInsertLoadStoreForMixCVPass();
 std::unique_ptr<Pass> createInferPTOLayoutPass();
-// Declare register function
+std::unique_ptr<Pass> createPTOVerifyTFreePass();
+
 void registerPTOPasses();
 
 } // namespace pto

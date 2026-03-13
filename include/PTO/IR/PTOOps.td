@@ -3645,4 +3645,222 @@ def TPrintOp: PTO_TOp<"tprint", [
   }];
  }
 
+//===----------------------------------------------------------------------===//
+// TPUSH/TPOP Ring Buffer Communication Ops
+//===----------------------------------------------------------------------===//
+
+// --- Initialization ---
+
+def InitializeL2G2LPipeOp : PTO_Op<"initialize_l2g2l_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize a local-to-global-to-local pipe handle";
+  let description = [{
+    Called once at kernel startup. Binds a pipe whose producer writes through GM
+    and whose consumer exposes a local FIFO slot.
+
+    - gm_addr is required and must be a memref with gm address space.
+    - local_addr is optional; if omitted, plan memory allocates it.
+    - local_fifo_depth is optional; if present, it must be positive.
+    - dir_mask must be 1 (C2V) or 2 (V2C).
+  }];
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      OptionalAttr<I8Attr>:$local_fifo_depth,
+      AnyType:$gm_addr,
+      Optional<AnyType>:$local_addr
+  );
+
+  let results = (outs PipeType:$pipe);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask
+    (`,` `local_fifo_depth` `=` $local_fifo_depth^)? `}`
+    `(` $gm_addr `:` type($gm_addr)
+    (`,` $local_addr^ `:` type($local_addr))? `)`
+    attr-dict `->` qualified(type($pipe))
+  }];
+}
+
+def InitializeL2LPipeOp : PTO_Op<"initialize_l2l_pipe", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Initialize a local-to-local pipe handle";
+  let description = [{
+    Called once at kernel startup. Binds a pipe whose producer and consumer
+    communicate through local FIFO storage.
+
+    - local_addr is optional; if omitted, plan memory allocates it.
+    - dir_mask must be 1 (C2V) or 2 (V2C).
+  }];
+
+  let arguments = (ins
+      I8Attr:$dir_mask,
+      Variadic<AnyType>:$local_addrs
+  );
+
+  let results = (outs PipeType:$pipe);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `{` `dir_mask` `=` $dir_mask `}`
+    (`(` $local_addrs^ `:` type($local_addrs) `)`)?
+    attr-dict `->` qualified(type($pipe))
+  }];
+}
+
+// --- Data Transfer: Push (producer, no DPS) ---
+
+def TPushOp : PTO_TOp<"tpush", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Push tile data via unified pipe handle";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+  }];
+}
+
+// --- Data Transfer: Frontend consumer ops ---
+
+def TPopOp : PTO_Op<"tpop", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Wait for a consumer slot and return its slot id";
+
+  let arguments = (ins
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs Index:$slot_id);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `:` qualified(type($pipe_handle)) `)`
+    attr-dict `->` type($slot_id)
+  }];
+}
+
+def GetFifoTileOp : PTO_Op<"get_fifo_tile", [
+    ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Map a tpop slot id to the corresponding FIFO tile view";
+
+  let arguments = (ins
+      PipeType:$pipe_handle,
+      Index:$slot_id
+  );
+
+  let results = (outs PTODpsType:$tile);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `,` $slot_id `:` qualified(type($pipe_handle)) `,` type($slot_id) `)`
+    attr-dict `->` qualified(type($tile))
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getPipeHandle(); }
+  }];
+}
+
+def TFreeOp : PTO_Op<"tfree", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Release a consumer slot after the borrowed FIFO tile is no longer needed";
+
+  let arguments = (ins
+      PipeType:$pipe_handle,
+      Index:$slot_id
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `,` $slot_id `:` qualified(type($pipe_handle)) `,` type($slot_id) `)`
+    attr-dict
+  }];
+}
+
+// --- Data Transfer: Internal lowered consumer ops ---
+
+def DeclareTileOp : PTO_Op<"declare_tile", [Pure]> {
+  let summary = "Declare a tile value whose address will be rebound later";
+
+  let results = (outs PTODpsType:$tile);
+
+  let assemblyFormat = [{
+    attr-dict `->` qualified(type($tile))
+  }];
+}
+
+def TPopInternalOp : PTO_TOp<"tpop_internal", [
+    PTO_DpsInitOpInterface,
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Lowered consumer pop that binds a declared tile to a FIFO slot";
+
+  let arguments = (ins
+      PTODpsType:$tile,
+      PipeType:$pipe_handle,
+      PTO_PipeAttr:$assigned_pipe
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
+    `{` `assigned_pipe` `=` $assigned_pipe `}`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return getAssignedPipe().getPipe(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
+  }];
+}
+
+def TFreeInternalOp : PTO_TOp<"tfree_internal", [
+    OpPipeInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Lowered consumer slot release";
+
+  let arguments = (ins
+      PipeType:$pipe_handle
+  );
+
+  let results = (outs);
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $pipe_handle `:` qualified(type($pipe_handle)) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
+}
+
 #endif // MLIR_DIALECT_PTO_IR_PTOOPS

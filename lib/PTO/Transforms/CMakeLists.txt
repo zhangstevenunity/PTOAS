@@ -17,6 +17,7 @@ add_mlir_dialect_library(PTOTransforms
   ConvertToPTOOp.cpp
   PTOHighDimLowering.cpp
   PTOVFloopGather.cpp
+  PTOLowerTPopPass.cpp
   InsertSync/PTOIRTranslator.cpp
   InsertSync/SyncCommon.cpp
   InsertSync/InsertSyncAnalysis.cpp
@@ -26,6 +27,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncEventIdAllocation.cpp
   InsertSync/SyncCodegen.cpp
   LoweringSyncToPipe.cpp
+  PTOVerifyTFreePass.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO

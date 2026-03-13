@@ -160,6 +160,11 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       UpdateOpGenInfo(curOpInfo, llvm::to_vector(gpuLaunchOp->getOperands()));
       // UpdateOpTempGenInfo(curOpInfo);
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (isa<pto::DeclareTileOp, pto::InitializeL2G2LPipeOp,
+                   pto::InitializeL2LPipeOp, pto::TPushOp,
+                   pto::TFreeInternalOp>(op)) {
+      UpdateOpGenInfo(curOpInfo, llvm::to_vector(op->getOperands()));
+      OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }

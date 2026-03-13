@@ -116,4 +116,38 @@ def PTOLoweringSyncToPipe : Pass<"pto-lowering-sync-to-pipe", "func::FuncOp"> {
   ];
 }
 
+def PTOLowerTPop : Pass<"pto-lower-tpop", "func::FuncOp"> {
+  let summary = "Lower slot-based tpop/get_fifo_tile/tfree to internal pipe consumer ops";
+  let description = [{
+    Rewrites frontend pipe-consumer IR into internal ops:
+    - `pto.tpop + pto.get_fifo_tile` -> `pto.declare_tile + pto.tpop_internal`
+    - `pto.tfree` -> `pto.tfree_internal`
+    Before lowering, verifies that each `pto.tpop` result has exactly one
+    matching `pto.get_fifo_tile` and exactly one explicit `pto.tfree`.
+  }];
+
+  let constructor = "mlir::pto::createPTOLowerTPopPass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
+def PTOVerifyTFree : Pass<"pto-verify-tfree", "func::FuncOp"> {
+  let summary = "Verify lowered pto.tfree_internal placement for explicit tpop/tfree pairs";
+  let description = [{
+    For each lowered `pto.tpop_internal` in section.cube / section.vector, this
+    pass verifies that there is a matching explicit
+    `pto.tfree_internal(pipe_handle)` later in the same block, that the
+    borrowed tile is not used after that free, and that the same pipe does not
+    accumulate multiple outstanding pops before the matching free.
+  }];
+
+  let constructor = "mlir::pto::createPTOVerifyTFreePass()";
+
+  let dependentDialects = [
+    "mlir::pto::PTODialect"
+  ];
+}
+
 #endif // MLIR_DIALECT_PTO_PASSES

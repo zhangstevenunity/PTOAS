@@ -1,0 +1,61 @@
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+module {
+  func.func @pipe_emitc_a5_dirmask(
+      %c2v_consumer_buf: i32,
+      %v2c_consumer_buf: i32) {
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c32 = arith.constant 32 : index
+
+    %acc_mem = memref.alloc() : memref<64x128xf32, #pto.address_space<acc>>
+    %cube_mem = memref.alloc() : memref<64x128xf32, #pto.address_space<mat>>
+    %vec_mem = memref.alloc() : memref<32x128xf32, #pto.address_space<vec>>
+    %acc_tile = pto.bind_tile %acc_mem, %c64, %c128 {
+      config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=1024, pad=#pto.pad_value<null>>
+    } : memref<64x128xf32, #pto.address_space<acc>> -> memref<64x128xf32, #pto.address_space<acc>>
+    %cube_tile = pto.bind_tile %cube_mem, %c64, %c128 {
+      config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=512, pad=#pto.pad_value<null>>
+    } : memref<64x128xf32, #pto.address_space<mat>> -> memref<64x128xf32, #pto.address_space<mat>>
+    %vec_tile = pto.bind_tile %vec_mem, %c32, %c128 {
+      config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
+    } : memref<32x128xf32, #pto.address_space<vec>> -> memref<32x128xf32, #pto.address_space<vec>>
+
+    %pipe_c2v = pto.initialize_l2l_pipe {dir_mask = 1}
+      (%c2v_consumer_buf : i32)
+      -> !pto.pipe<memref<64x128xf32, #pto.address_space<acc>>, memref<32x128xf32, #pto.address_space<vec>>>
+
+    %pipe_v2c = pto.initialize_l2l_pipe {dir_mask = 2}
+      (%v2c_consumer_buf : i32)
+      -> !pto.pipe<memref<32x128xf32, #pto.address_space<vec>>, memref<64x128xf32, #pto.address_space<mat>>>
+
+    pto.section.cube {
+      pto.tpush(%acc_tile, %pipe_c2v : memref<64x128xf32, #pto.address_space<acc>>, !pto.pipe<memref<64x128xf32, #pto.address_space<acc>>, memref<32x128xf32, #pto.address_space<vec>>>)
+      %slot_id_v2c = pto.tpop(%pipe_v2c : !pto.pipe<memref<32x128xf32, #pto.address_space<vec>>, memref<64x128xf32, #pto.address_space<mat>>>) -> index
+      %cube_fifo_tile = pto.get_fifo_tile(%pipe_v2c, %slot_id_v2c : !pto.pipe<memref<32x128xf32, #pto.address_space<vec>>, memref<64x128xf32, #pto.address_space<mat>>>, index)
+        -> memref<64x128xf32, #pto.address_space<mat>>
+      pto.tmov ins(%cube_fifo_tile : memref<64x128xf32, #pto.address_space<mat>>) outs(%cube_tile : memref<64x128xf32, #pto.address_space<mat>>)
+      pto.tfree(%pipe_v2c, %slot_id_v2c : !pto.pipe<memref<32x128xf32, #pto.address_space<vec>>, memref<64x128xf32, #pto.address_space<mat>>>, index)
+    }
+
+    pto.section.vector {
+      %slot_id_c2v = pto.tpop(%pipe_c2v : !pto.pipe<memref<64x128xf32, #pto.address_space<acc>>, memref<32x128xf32, #pto.address_space<vec>>>) -> index
+      %vec_fifo_tile = pto.get_fifo_tile(%pipe_c2v, %slot_id_c2v : !pto.pipe<memref<64x128xf32, #pto.address_space<acc>>, memref<32x128xf32, #pto.address_space<vec>>>, index)
+        -> memref<32x128xf32, #pto.address_space<vec>>
+      pto.tmov ins(%vec_fifo_tile : memref<32x128xf32, #pto.address_space<vec>>) outs(%vec_tile : memref<32x128xf32, #pto.address_space<vec>>)
+      pto.tfree(%pipe_c2v, %slot_id_c2v : !pto.pipe<memref<64x128xf32, #pto.address_space<acc>>, memref<32x128xf32, #pto.address_space<vec>>>, index)
+      pto.tpush(%vec_tile, %pipe_v2c : memref<32x128xf32, #pto.address_space<vec>>, !pto.pipe<memref<32x128xf32, #pto.address_space<vec>>, memref<64x128xf32, #pto.address_space<mat>>>)
+    }
+    return
+  }
+}
+
+// CHECK: __global__ AICORE void pipe_emitc_a5_dirmask
+// CHECK: auto {{.*}} = TPipe<0, FIFOType::VEC_FIFO
+// CHECK-SAME: Tile<TileType::Acc, float, 64, 128, BLayout::ColMajor, 64, 128, SLayout::RowMajor, 1024, PadValue::Null>
+// CHECK: auto {{.*}} = TPipe<2, FIFOType::MAT_FIFO
+// CHECK-SAME: Tile<TileType::Vec
+// CHECK-SAME: Tile<TileType::Mat, float, 64, 128, BLayout::ColMajor, 64, 128, SLayout::RowMajor, 512, PadValue::Null>
+// CHECK-DAG: TPUSH(
+// CHECK-DAG: TPOP(
+// CHECK-DAG: TFREE(
