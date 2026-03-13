@@ -317,6 +317,66 @@ process_one_dir() {
       fi
     fi
 
+    # Scalar sync regression: scalar load/store should participate in PIPE_S
+    # auto-sync and correctly connect with supported DMA directions.
+    if [[ "$base" == "test_inject_sync_scalar_cross_pipe" ]]; then
+      if ! grep -Eq "set_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_MTE2->PIPE_S"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_MTE2,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_MTE2->PIPE_S"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing set_flag PIPE_S->PIPE_MTE3"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE3,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing wait_flag PIPE_S->PIPE_MTE3"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_MTE2,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_S->PIPE_MTE2 event in scalar cross-pipe case"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_MTE3,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_MTE3->PIPE_S event in scalar cross-pipe case"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Scalar intra-pipe regression: PIPE_S local dependency should not inject
+    # extra sync (PIPE_S is in-order); only function-tail PIPE_ALL remains.
+    if [[ "$base" == "test_inject_sync_scalar_intra_pipe_barrier" ]]; then
+      local bar_all_cnt
+      bar_all_cnt="$(grep -Fc "pipe_barrier(PIPE_ALL)" "$cpp" || true)"
+      if grep -Fq "pipe_barrier(PIPE_S)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected pipe_barrier(PIPE_S) for scalar intra-pipe dependency"
+        overall=1
+        continue
+      fi
+      if grep -Eq "set_flag\\(PIPE_S,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp" || \
+         grep -Eq "wait_flag\\(PIPE_S,[[:space:]]*PIPE_S,[[:space:]]*EVENT_ID[0-7]\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_S<->PIPE_S event sync for scalar intra-pipe dependency"
+        overall=1
+        continue
+      fi
+      if [[ "${bar_all_cnt}" -ne 1 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected PIPE_ALL barrier count=${bar_all_cnt} (expect 1 tail barrier)"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard for issue #185: barrier_sync must support op types
     # beyond TMATMUL/TVEC and lower to the expected per-pipe barrier.
     if [[ "$base" == "test_barrier_sync" ]]; then

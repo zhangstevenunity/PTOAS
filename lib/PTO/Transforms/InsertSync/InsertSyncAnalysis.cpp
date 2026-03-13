@@ -1,4 +1,5 @@
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -121,9 +122,9 @@ bool InsertSyncAnalysis::IsNoNeedToInsertSync(
   const PipelineType frontPipe = frontCompound->kPipeValue;
   const PipelineType nowPipe = nowCompound->kPipeValue;
 
-  if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
+  // Scalar pipe is in-order on target hardware; skip same-pipe sync.
+  if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S)
     return true;
-  }
 
   if (nowCompound->elementOp == frontCompound->elementOp && !isBackwardDep) {
     return true;

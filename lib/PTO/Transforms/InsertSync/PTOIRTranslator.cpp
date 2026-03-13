@@ -7,6 +7,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Matchers.h"
+#include <algorithm>
 // [P0 新增] 引入副作用接口和 PTO 接口
 #include "mlir/Interfaces/SideEffectInterfaces.h"
  
@@ -15,18 +16,41 @@
 using namespace mlir;
 using namespace mlir::pto;
  
+static int64_t getElementSizeInBytes(Type elemType) {
+  if (auto intTy = dyn_cast<IntegerType>(elemType)) {
+    return std::max<int64_t>(1, intTy.getWidth() / 8);
+  }
+  if (auto floatTy = dyn_cast<FloatType>(elemType)) {
+    return std::max<int64_t>(1, floatTy.getWidth() / 8);
+  }
+  if (isa<IndexType>(elemType)) {
+    return 8;
+  }
+  return 1;
+}
+
 // [辅助函数] 尝试从 Operation 中计算相对于 Source 的字节偏移量和新大小
 // 返回值: pair<offsetInBytes, sizeInBytes>
 // 如果无法计算静态值，返回 {-1, -1} 表示这是动态的
 static std::pair<int64_t, int64_t> getStaticOffsetAndSize(Operation *op, Value src) {
-  auto srcType = dyn_cast<MemRefType>(src.getType());
-  if (!srcType) return {0, 0};
-  
-  int64_t elemSize = srcType.getElementType().getIntOrFloatBitWidth() / 8;
-  if (elemSize == 0) elemSize = 1;
+  Type srcElemType = nullptr;
+  if (auto srcType = dyn_cast<MemRefType>(src.getType())) {
+    srcElemType = srcType.getElementType();
+  } else if (auto ptrType = dyn_cast<pto::PtrType>(src.getType())) {
+    srcElemType = ptrType.getElementType();
+  } else {
+    return {0, 0};
+  }
+
+  const int64_t elemSize = getElementSizeInBytes(srcElemType);
  
   // === Case 1: memref.subview ===
   if (auto subView = dyn_cast<memref::SubViewOp>(op)) {
+    auto srcType = dyn_cast<MemRefType>(src.getType());
+    if (!srcType) {
+      return {-1, -1};
+    }
+
     int64_t baseOffset;
     SmallVector<int64_t, 4> strides;
     if (failed(mlir::getStridesAndOffset(srcType, strides, baseOffset))) {
@@ -70,6 +94,15 @@ static std::pair<int64_t, int64_t> getStaticOffsetAndSize(Operation *op, Value s
         return {0, 0};
     }
     return {staticOffsets[0] * elemSize, 0}; 
+  }
+
+  // === Case 3: pto.addptr ===
+  if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
+    llvm::APInt apIntValue;
+    if (!matchPattern(addPtrOp.getOffset(), m_ConstantInt(&apIntValue))) {
+      return {-1, -1};
+    }
+    return {apIntValue.getSExtValue() * elemSize, 0};
   }
  
   return {0, 0};
@@ -137,6 +170,9 @@ void PTOIRTranslator::RecursionIR(Region *region) {
     } 
     else if (auto bindTileOp = dyn_cast<pto::BindTileOp>(op)) {
       UpdateAliasBufferInfo(bindTileOp.getResult(), bindTileOp.getSource());
+    }
+    else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
+      UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
     }
     else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
       UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
@@ -496,28 +532,38 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
   if (!buffer2MemInfoMap_.contains(source)) return;
  
   int64_t deltaOffset = 0;
-  int64_t newSize = -1; 
+  int64_t newSize = -1;
+  bool hasUnknownAliasRange = false;
  
   if (auto op = result.getDefiningOp()) {
     auto info = getStaticOffsetAndSize(op, source);
-    if (info.first != -1) {
-        deltaOffset = info.first;
-        if (info.second > 0) newSize = info.second;
-    } 
+    if (info.first == -1) {
+      hasUnknownAliasRange = true;
+    } else {
+      deltaOffset = info.first;
+      if (info.second > 0) newSize = info.second;
+    }
   }
  
   auto &resultMemInfoVec = buffer2MemInfoMap_[result];
   
   for (auto &parentInfo : buffer2MemInfoMap_[source]) {
     auto newInfo = parentInfo->clone(result);
- 
-    if (!newInfo->baseAddresses.empty()) {
-        newInfo->baseAddresses[0] += deltaOffset;
+
+    if (hasUnknownAliasRange) {
+      // Dynamic pointer arithmetic cannot be modeled precisely here.
+      // Keep root/scope aliasing, but drop concrete range info conservatively.
+      newInfo->baseAddresses.clear();
+      newInfo->allocateSize = 0;
     } else {
+      if (!newInfo->baseAddresses.empty()) {
+        newInfo->baseAddresses[0] += deltaOffset;
+      } else {
         newInfo->baseAddresses.push_back(deltaOffset);
+      }
     }
- 
-    if (newSize > 0) {
+
+    if (!hasUnknownAliasRange && newSize > 0) {
         newInfo->allocateSize = newSize;
     }
  
