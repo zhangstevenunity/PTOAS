@@ -303,6 +303,7 @@ static constexpr unsigned kPTOIndexBitWidth =
     32; // keep consistent with IndexType conversion
 
 // Forward declarations (definitions below).
+static inline std::string pipeTokFromPipeAttr(mlir::pto::PipeAttr a);
 static emitc::OpaqueType getSignedIntOpaqueType(MLIRContext *ctx,
                                                 unsigned bitWidth);
 static emitc::OpaqueType getUnsignedIntOpaqueType(MLIRContext *ctx,
@@ -321,6 +322,104 @@ static Value emitCCast(ConversionPatternRewriter &rewriter, Location loc,
 static Value castSignlessIntToUnsignedSameWidth(ConversionPatternRewriter &rewriter,
                                                 Location loc, Value v,
                                                 unsigned bitWidth);
+
+static bool isSetFFTsPointerLikeType(Type ty) {
+  if (isa<emitc::PointerType>(ty))
+    return true;
+  if (auto opaqueTy = dyn_cast<emitc::OpaqueType>(ty))
+    return opaqueTy.getValue().ends_with("*");
+  return false;
+}
+
+struct InterCoreSyncCallDesc {
+  const char *callee = nullptr;
+  ArrayAttr args;
+  SmallVector<Value, 2> operands;
+};
+
+static InterCoreSyncCallDesc buildInterCoreSyncSetCall(
+    ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
+    pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
+  auto *ctx = rewriter.getContext();
+  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
+
+  if (targetArch == PTOArch::A3) {
+    auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
+    Value eventVal =
+        makeEmitCIntConstant(rewriter, loc, i32Ty, eventIdAttr.getInt());
+
+    auto msgTy = emitc::OpaqueType::get(ctx, "uint16_t");
+    auto msgArgs = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, "FFTS_MODE_VAL"),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+    Value msgVal =
+        rewriter
+            .create<emitc::CallOpaqueOp>(loc, msgTy, "getFFTSMsg",
+                                         /*args=*/msgArgs,
+                                         /*templateArgs=*/ArrayAttr{},
+                                         /*operands=*/ValueRange{eventVal})
+            .getResult(0);
+
+    InterCoreSyncCallDesc desc;
+    desc.callee = "ffts_cross_core_sync";
+    desc.args = rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(ctx, pipeTok),
+        IntegerAttr::get(IndexType::get(ctx), 0),
+    });
+    desc.operands.push_back(msgVal);
+    return desc;
+  }
+
+  InterCoreSyncCallDesc desc;
+  desc.callee = "set_intra_block";
+  desc.args = rewriter.getArrayAttr(
+      {emitc::OpaqueAttr::get(ctx, pipeTok), eventIdAttr});
+  return desc;
+}
+
+static InterCoreSyncCallDesc buildInterCoreSyncWaitCall(
+    ConversionPatternRewriter &rewriter, PTOArch targetArch,
+    pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
+  auto *ctx = rewriter.getContext();
+  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
+
+  InterCoreSyncCallDesc desc;
+  if (targetArch == PTOArch::A3) {
+    desc.callee = "wait_flag_dev";
+    desc.args = rewriter.getArrayAttr({eventIdAttr});
+    return desc;
+  }
+
+  desc.callee = "wait_intra_block";
+  desc.args = rewriter.getArrayAttr(
+      {emitc::OpaqueAttr::get(ctx, pipeTok), eventIdAttr});
+  return desc;
+}
+
+static bool hasInterCoreSyncOp(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](Operation *op) {
+    if (isa<pto::SyncSetOp, pto::SyncWaitOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
+
+static bool hasSetFFTsOp(func::FuncOp func) {
+  bool found = false;
+  func.walk([&](Operation *op) {
+    if (isa<pto::SetFFTsOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return found;
+}
 
 //===----------------------------------------------------------------------===//
 // Arith -> EmitC (full dialect coverage for scalar ops)
@@ -3686,6 +3785,41 @@ struct PTORlsBufToEmitC : public OpConversionPattern<mlir::pto::RlsBufOp> {
   }
 };
 
+struct PTOSetFFTsToEmitC : public OpConversionPattern<mlir::pto::SetFFTsOp> {
+  using OpConversionPattern<mlir::pto::SetFFTsOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(mlir::pto::SetFFTsOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto *ctx = rewriter.getContext();
+    auto loc = op.getLoc();
+
+    Value fftsAddr = peelUnrealized(adaptor.getFfts());
+    auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+
+    if (isSetFFTsPointerLikeType(fftsAddr.getType())) {
+      auto castTyAttr =
+          rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+      fftsAddr =
+          rewriter
+              .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                           /*args=*/ArrayAttr{},
+                                           /*templateArgs=*/castTyAttr,
+                                           /*operands=*/ValueRange{fftsAddr})
+              .getResult(0);
+    } else if (fftsAddr.getType() != u64Ty) {
+      fftsAddr =
+          rewriter.create<emitc::CastOp>(loc, u64Ty, fftsAddr).getResult();
+    }
+
+    rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{}, "set_ffts_base_addr",
+        /*args=*/ArrayAttr{},
+        /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{fftsAddr});
+    return success();
+  }
+};
+
 struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   PTOSyncSetToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
                     PTOArch targetArch)
@@ -3696,19 +3830,13 @@ struct PTOSyncSetToEmitC : public OpConversionPattern<mlir::pto::SyncSetOp> {
   matchAndRewrite(mlir::pto::SyncSetOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    auto *ctx = rewriter.getContext();
     auto loc = op->getLoc();
-
-    std::string pipeTok = pipeTokFromPipeAttr(op.getPipe());
-    auto argsAttr = rewriter.getArrayAttr(
-        {emitc::OpaqueAttr::get(ctx, pipeTok), op.getEventIdAttr()});
-    const char *kSyncSetCallee = (targetArch == PTOArch::A3)
-                                     ? "ffts_cross_core_sync"
-                                     : "set_intra_block";
-    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, kSyncSetCallee,
-                                         /*args=*/argsAttr,
+    auto desc = buildInterCoreSyncSetCall(rewriter, loc, targetArch, op.getPipe(),
+                                          op.getEventIdAttr());
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, desc.callee,
+                                         /*args=*/desc.args,
                                          /*templateArgs=*/ArrayAttr{},
-                                         /*operands=*/ValueRange{});
+                                         /*operands=*/desc.operands);
 
     rewriter.eraseOp(op);
     return success();
@@ -3727,16 +3855,11 @@ struct PTOSyncWaitToEmitC : public OpConversionPattern<mlir::pto::SyncWaitOp> {
   matchAndRewrite(mlir::pto::SyncWaitOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    auto *ctx = rewriter.getContext();
     auto loc = op->getLoc();
-
-    std::string pipeTok = pipeTokFromPipeAttr(op.getPipe());
-    auto argsAttr = rewriter.getArrayAttr(
-        {emitc::OpaqueAttr::get(ctx, pipeTok), op.getEventIdAttr()});
-    const char *kSyncWaitCallee =
-        (targetArch == PTOArch::A3) ? "wait_flag_dev" : "wait_intra_block";
-    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, kSyncWaitCallee,
-                                         argsAttr, ArrayAttr{}, ValueRange{});
+    auto desc = buildInterCoreSyncWaitCall(rewriter, targetArch, op.getPipe(),
+                                           op.getEventIdAttr());
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, desc.callee,
+                                         desc.args, ArrayAttr{}, desc.operands);
 
     rewriter.eraseOp(op);
     return success();
@@ -7258,6 +7381,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOWaitFlagToEmitC>(typeConverter, ctx);
   patterns.add<PTOGetBufToEmitC>(typeConverter, ctx);
   patterns.add<PTORlsBufToEmitC>(typeConverter, ctx);
+  patterns.add<PTOSetFFTsToEmitC>(typeConverter, ctx);
   patterns.add<PTOXORSToEmitC>(typeConverter, ctx);
   patterns.add<PTOSYNCToEmitC>(typeConverter, ctx);
   patterns.add<PTOSubSToEmitC>(typeConverter, ctx);
@@ -7455,6 +7579,23 @@ struct EmitPTOManualPass
 	    llvm::errs() << "DEBUG: Start PTOToEmitC Pass\n";
 	    MLIRContext *ctx = &getContext();
 	    ModuleOp mop = getOperation();
+
+    // A3 requires explicit FFTS base setup for inter-core sync ops.
+    if (targetArch == PTOArch::A3) {
+      bool hasMissingSetFFTs = false;
+      for (auto func : mop.getOps<func::FuncOp>()) {
+        if (!hasInterCoreSyncOp(func))
+          continue;
+        if (hasSetFFTsOp(func))
+          continue;
+        hasMissingSetFFTs = true;
+        func.emitError()
+            << "A3 inter-core sync requires explicit `pto.set_ffts` in the "
+               "same function when using `pto.sync.set`/`pto.sync.wait`";
+      }
+      if (hasMissingSetFFTs)
+        return signalPassFailure();
+    }
 
 		    // 1. 插入头文件
 	    auto loc = mop->getLoc();
