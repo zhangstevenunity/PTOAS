@@ -32,7 +32,7 @@ def build(
         pto.register_dialect(ctx, load=True)
 
         module = builtin.ModuleOp()
-        module.attributes["pto.device-spec"] = StringAttr.get("Ascend910B1")
+        module.attributes["pto.target_arch"] = StringAttr.get("a5")
 
         # ---- element types ----
         t_out = F32Type.get()

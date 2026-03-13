@@ -1,4 +1,4 @@
-module attributes {"pto.device-spec" = "Ascend910B1"} {
+module attributes {"pto.target_arch" = "a3"} {
   func.func @RunTMATMULSplitK(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<f32>, %arg3: !pto.ptr<f32>, %arg4: i1) {
     pto.section.cube {
       %c0 = arith.constant 0 : index

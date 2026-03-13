@@ -3,7 +3,7 @@ set -euo pipefail
 
 STAGE="${STAGE:-run}"         # build|run
 RUN_MODE="${RUN_MODE:-npu}"   # npu|sim
-SOC_VERSION="${SOC_VERSION:-Ascend910}"
+PTO_ARCH="${PTO_ARCH:-a3}"
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 PTO_ISA_REPO="${PTO_ISA_REPO:-https://github.com/PTO-ISA/pto-isa.git}"
 PTO_ISA_COMMIT="${PTO_ISA_COMMIT:-}"
@@ -24,7 +24,7 @@ fi
 log() { echo "[$(date +'%F %T')] $*"; }
 
 log "=== Remote NPU Validation ==="
-log "STAGE=${STAGE} RUN_MODE=${RUN_MODE} SOC_VERSION=${SOC_VERSION}"
+log "STAGE=${STAGE} RUN_MODE=${RUN_MODE} PTO_ARCH=${PTO_ARCH}"
 log "GOLDEN_MODE=${GOLDEN_MODE}"
 log "DEVICE_ID=${DEVICE_ID}"
 log "PTO_ISA_REPO=${PTO_ISA_REPO}"
@@ -121,24 +121,23 @@ fi
 
 export LD_LIBRARY_PATH="${ASCEND_HOME_PATH}/lib64:${LD_LIBRARY_PATH:-}"
 
-# Some CANN installs do not provide a simulator directory named exactly
-# "Ascend910". Map it to a real directory so we can link/run camodel.
-SIM_SOC_VERSION="${SOC_VERSION}"
-if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
-  if [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910A/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910A"
-  elif [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910ProA/lib" ]]; then
-    SIM_SOC_VERSION="Ascend910ProA"
-  fi
-fi
-log "SIM_SOC_VERSION=${SIM_SOC_VERSION}"
+pto_arch_lc="$(printf '%s' "${PTO_ARCH}" | tr '[:upper:]' '[:lower:]')"
+case "${pto_arch_lc}" in
+  a5) SIM_SOC_DIR="Ascend910_9599" ;;
+  a3) SIM_SOC_DIR="Ascend910B1" ;;
+  *)
+    SIM_SOC_DIR="Ascend910B1"
+    pto_arch_lc="a3"
+    ;;
+esac
+log "SIM_SOC_DIR=${SIM_SOC_DIR}"
 
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH}"
 LD_LIBRARY_PATH_SIM="${LD_LIBRARY_PATH}"
 for d in \
-  "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_VERSION}/lib" \
-  "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_VERSION}/lib" \
-  "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_VERSION}/lib"; do
+  "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_DIR}/lib" \
+  "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_DIR}/lib" \
+  "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_DIR}/lib"; do
   [[ -d "$d" ]] && LD_LIBRARY_PATH_SIM="$d:${LD_LIBRARY_PATH_SIM}"
 done
 
@@ -216,7 +215,7 @@ while IFS= read -r -d '' cpp; do
     --testcase "${testcase}" \
     --output-root "${OUTPUT_ROOT}" \
     --run-mode "${RUN_MODE}" \
-    --soc-version "${SIM_SOC_VERSION}"
+    --pto-arch "${PTO_ARCH}"
   gen_rc=$?
   set -euo pipefail
   if [[ $gen_rc -ne 0 ]]; then
@@ -236,7 +235,7 @@ while IFS= read -r -d '' cpp; do
     enable_sim_golden="OFF"
     [[ "${GOLDEN_MODE}" == "sim" ]] && enable_sim_golden="ON"
     cmake -S . -B ./build \
-      -DSOC_VERSION="${SIM_SOC_VERSION}" \
+      -DPTO_ARCH="${PTO_ARCH}" \
       -DENABLE_SIM_GOLDEN="${enable_sim_golden}" \
       -DPTO_ISA_ROOT="${PTO_ISA_ROOT}"
     cmake --build ./build --parallel

@@ -240,7 +240,7 @@ python3 ./tmatmulk.py > ./tmatmulk.pto
 python3 test/npu_validation/scripts/generate_testcase.py \
   --input test/samples/Abs/abs-pto.cpp \
   --run-mode npu \
-  --soc-version Ascend910B1
+  --pto-arch a3
 
 # 2) 运行验证（run.sh 无需额外参数）
 test/samples/Abs/npu_validation/run.sh

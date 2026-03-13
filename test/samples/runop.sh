@@ -187,13 +187,11 @@ process_one_dir() {
     esac
 
     # A5-only sample: buffer-id synchronization ops lower to CCEC get_buf/rls_buf
-    # intrinsics, which are not supported on older SoCs (e.g. Ascend910(A3)).
-    # Skip this python sample unless SOC_VERSION indicates an A5 target.
+    # intrinsics, which are not supported on A2/A3 (--pto-arch=a3).
+    # Skip this python sample unless --pto-arch indicates an A5 target.
     if [[ "$base" == "test_a5_buf_sync" ]]; then
-      soc="${SOC_VERSION:-}"
-      soc_lc="$(printf '%s' "${soc}" | tr '[:upper:]' '[:lower:]')"
-      if [[ "$soc_lc" != *"a5"* && "$soc_lc" != *"950"* ]]; then
-        echo -e "${A}(${base}.py)\tSKIP\trequires A5 (set SOC_VERSION to A5/950)"
+      if [[ "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
+        echo -e "${A}(${base}.py)\tSKIP\trequires A5 (set --pto-arch=a5)"
         continue
       fi
     fi

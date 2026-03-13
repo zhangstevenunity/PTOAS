@@ -332,11 +332,11 @@ def _inject_packed_pred_mask_preload(
     return kernel_text[:insert_at] + block + kernel_text[insert_at:]
 
 
-def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
+def _infer_aicore_arch(kernel_text: str, pto_arch: Optional[str]) -> str:
     # Heuristic: kernels that touch cube/L0/L1 tile types or cbuf memories need
     # the "cube" arch; pure vector kernels can use the vector arch.
     #
-    # IMPORTANT: the default arch depends on the Ascend SoC.
+    # IMPORTANT: the default arch depends on the target architecture.
     cube_markers = (
         "TileType::Mat",
         "TileType::Left",
@@ -354,17 +354,23 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     )
     needs_cube = any(m in kernel_text for m in cube_markers)
 
-    sv = (soc_version or "").lower()
-    if "950" in sv or "a5" in sv:
-        # Ascend950 (A5) uses A5 instruction set. pto-isa examples build A5
-        # kernels with dav-c310-{vec|cube}.
+    arch = (pto_arch or "").strip().lower()
+    if arch == "a5":
+        # A5 uses A5 instruction set. pto-isa examples build A5 kernels with
+        # dav-c310-{vec|cube}.
         return "dav-c310-cube" if needs_cube else "dav-c310-vec"
-    if "910b" in sv:
-        # Ascend910B* (e.g. Ascend910B1) uses dav-c310 toolchain arch.
-        return "dav-c310-cube" if needs_cube else "dav-c310-vec"
-
-    # Default to Ascend910 (dav-c220) when SoC is unknown.
+    if arch == "a3":
+        # A2/A3 uses dav-c220 toolchain arch.
+        return "dav-c220-cube" if needs_cube else "dav-c220-vec"
+    # Default to Ascend910 (dav-c220) when arch is unknown.
     return "dav-c220-cube" if needs_cube else "dav-c220-vec"
+
+
+def _soc_version_for_arch(arch: Optional[str]) -> str:
+    a = (arch or "").strip().lower()
+    if a == "a5":
+        return "Ascend910_9599"
+    return "Ascend910B1"
 
 
 def _parse_int_list(blob: str):
@@ -811,7 +817,7 @@ def generate_testcase(
     output_root: Optional[Path],
     testcase: str,
     run_mode: str,
-    soc_version: str,
+    pto_arch: Optional[str] = None,
     aicore_arch: Optional[str] = None,
 ):
     sample_dir = input_cpp.parent
@@ -837,15 +843,15 @@ def generate_testcase(
         # may be unavailable; build with a vector arch and explicitly enable the
         # section macros instead.
         if has_dav_cube or has_dav_vec:
-            sv = (soc_version or "").lower()
-            if "950" in sv or "a5" in sv:
+            arch = (pto_arch or "").strip().lower()
+            if arch == "a5":
                 aicore_arch = "dav-c310-vec"
-            elif "910b" in sv:
-                aicore_arch = "dav-c310-vec"
+            elif arch == "a3":
+                aicore_arch = "dav-c220-vec"
             else:
                 aicore_arch = "dav-c220-vec"
         else:
-            aicore_arch = _infer_aicore_arch(raw_kernel, soc_version)
+            aicore_arch = _infer_aicore_arch(raw_kernel, pto_arch)
 
     # Force-define DAV section macros so both sections are compiled into the
     # same binary. This keeps the generated validation executable self-contained
@@ -1195,10 +1201,10 @@ def generate_testcase(
     (output_dir / "launch.cpp").write_text(launch_cpp, encoding="utf-8")
 
     # pto-isa selects instruction implementations based on MEMORY_BASE vs
-    # REGISTER_BASE. Ascend A5 (e.g. Ascend950) and Ascend910B use REGISTER_BASE.
+    # REGISTER_BASE. A5 uses REGISTER_BASE.
     mem_base_define = "MEMORY_BASE"
-    sv = (soc_version or "").lower()
-    if "910b" in sv or "950" in sv or "a5" in sv:
+    arch = (pto_arch or "").strip().lower()
+    if arch == "a5":
         mem_base_define = "REGISTER_BASE"
 
     # CCE printing support is gated behind `--cce-enable-print` on some bisheng
@@ -1225,8 +1231,14 @@ project({testcase}_npu_validation)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if(NOT DEFINED SOC_VERSION)
-    set(SOC_VERSION Ascend910)
+if(NOT DEFINED PTO_ARCH)
+    set(PTO_ARCH a3)
+endif()
+string(TOLOWER "${PTO_ARCH}" PTO_ARCH_LC)
+if(PTO_ARCH_LC STREQUAL "a5")
+    set(SIM_SOC_DIR Ascend910_9599)
+else()
+    set(SIM_SOC_DIR Ascend910B1)
 endif()
 option(ENABLE_SIM_GOLDEN "Build Ascend simulator (camodel) executable" ON)
 
@@ -1333,9 +1345,9 @@ if(ENABLE_SIM_GOLDEN)
     )
     target_link_directories({testcase}_sim PUBLIC
         ${{ASCEND_HOME_PATH}}/lib64
-        ${{ASCEND_HOME_PATH}}/aarch64-linux/simulator/${{SOC_VERSION}}/lib
-        ${{ASCEND_HOME_PATH}}/simulator/${{SOC_VERSION}}/lib
-        ${{ASCEND_HOME_PATH}}/tools/simulator/${{SOC_VERSION}}/lib
+        ${{ASCEND_HOME_PATH}}/aarch64-linux/simulator/${{SIM_SOC_DIR}}/lib
+        ${{ASCEND_HOME_PATH}}/simulator/${{SIM_SOC_DIR}}/lib
+        ${{ASCEND_HOME_PATH}}/tools/simulator/${{SIM_SOC_DIR}}/lib
     )
     target_link_libraries({testcase}_sim PRIVATE
         {testcase}_kernel
@@ -1390,10 +1402,11 @@ endif()
         encoding="utf-8",
     )
 
+    arch_for_runsh = (pto_arch or "a3").strip().lower()
     run_sh = (templates_root / "run_sh_template.sh").read_text(encoding="utf-8")
     run_sh = run_sh.replace("@EXECUTABLE@", testcase)
     run_sh = run_sh.replace("@RUN_MODE@", run_mode)
-    run_sh = run_sh.replace("@SOC_VERSION@", soc_version)
+    run_sh = run_sh.replace("@PTO_ARCH@", arch_for_runsh)
     run_path = output_dir / "run.sh"
     run_path.write_text(run_sh, encoding="utf-8")
     run_path.chmod(0o755)
@@ -1405,7 +1418,7 @@ def main():
     parser.add_argument("--testcase", default=None, help="Testcase name (default: derived from input filename)")
     parser.add_argument("--output-root", default=None, help="Output testcases root directory")
     parser.add_argument("--run-mode", default="npu", choices=["sim", "npu"], help="Run mode for run.sh")
-    parser.add_argument("--soc-version", default="Ascend910", help="SOC version for run.sh")
+    parser.add_argument("--pto-arch", default="a3", help="Target PTO arch (a3 or a5).")
     parser.add_argument(
         "--aicore-arch",
         default=None,
@@ -1420,7 +1433,7 @@ def main():
         output_root,
         testcase,
         args.run_mode,
-        args.soc_version,
+        pto_arch=args.pto_arch,
         aicore_arch=args.aicore_arch,
     )
 

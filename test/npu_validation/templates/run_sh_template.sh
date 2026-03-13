@@ -2,7 +2,15 @@
 set -euo pipefail
 
 RUN_MODE="@RUN_MODE@"
-SOC_VERSION="@SOC_VERSION@"
+PTO_ARCH="${PTO_ARCH:-@PTO_ARCH@}"
+if [[ -z "${PTO_ARCH}" || "${PTO_ARCH}" == "@PTO_ARCH@" ]]; then
+  PTO_ARCH="a3"
+fi
+
+case "${PTO_ARCH,,}" in
+  a5) SIM_SOC_DIR="Ascend910_9599" ;;
+  *) SIM_SOC_DIR="Ascend910B1" ;;
+esac
 GOLDEN_MODE="${GOLDEN_MODE:-npu}"  # sim|npu|skip
 BUILD_DIR="${BUILD_DIR:-build}"
 
@@ -56,19 +64,10 @@ fi
 LD_LIBRARY_PATH_NPU="${LD_LIBRARY_PATH:-}"
 LD_LIBRARY_PATH_SIM="${LD_LIBRARY_PATH_NPU}"
 if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then
-  SIM_SOC_VERSION="${SOC_VERSION}"
-  if [[ "${SOC_VERSION}" == "Ascend910" ]]; then
-    if [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910A/lib" ]]; then
-      SIM_SOC_VERSION="Ascend910A"
-    elif [[ -d "${ASCEND_HOME_PATH}/aarch64-linux/simulator/Ascend910ProA/lib" ]]; then
-      SIM_SOC_VERSION="Ascend910ProA"
-    fi
-  fi
-
   for d in \
-    "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_VERSION}/lib" \
-    "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_VERSION}/lib" \
-    "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_VERSION}/lib"; do
+    "${ASCEND_HOME_PATH}/aarch64-linux/simulator/${SIM_SOC_DIR}/lib" \
+    "${ASCEND_HOME_PATH}/simulator/${SIM_SOC_DIR}/lib" \
+    "${ASCEND_HOME_PATH}/tools/simulator/${SIM_SOC_DIR}/lib"; do
     [[ -d "$d" ]] && LD_LIBRARY_PATH_SIM="$d:${LD_LIBRARY_PATH_SIM}"
   done
 fi
@@ -78,9 +77,9 @@ cd "${ROOT_DIR}/${BUILD_DIR}"
 ENABLE_SIM_GOLDEN="OFF"
 [[ "${GOLDEN_MODE}" == "sim" ]] && ENABLE_SIM_GOLDEN="ON"
 if [[ -n "${PTO_ISA_ROOT:-}" ]]; then
-  cmake -DSOC_VERSION="${SIM_SOC_VERSION:-${SOC_VERSION}}" -DENABLE_SIM_GOLDEN="${ENABLE_SIM_GOLDEN}" -DPTO_ISA_ROOT="${PTO_ISA_ROOT}" ..
+  cmake -DPTO_ARCH="${PTO_ARCH}" -DENABLE_SIM_GOLDEN="${ENABLE_SIM_GOLDEN}" -DPTO_ISA_ROOT="${PTO_ISA_ROOT}" ..
 else
-  cmake -DSOC_VERSION="${SIM_SOC_VERSION:-${SOC_VERSION}}" -DENABLE_SIM_GOLDEN="${ENABLE_SIM_GOLDEN}" ..
+  cmake -DPTO_ARCH="${PTO_ARCH}" -DENABLE_SIM_GOLDEN="${ENABLE_SIM_GOLDEN}" ..
 fi
 make -j
 
