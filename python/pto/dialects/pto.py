@@ -79,6 +79,8 @@ __all__ = [
     "TileConfig",
     # High-level sync helpers
     "record_event", "wait_event", "barrier",
+    # Inter-core sync helpers
+    "sync_set", "sync_wait", "set_ffts",
     # A5 buffer-id sync helpers
     "get_buf", "rls_buf",
     # Scalar pointer helpers
@@ -167,6 +169,41 @@ def barrier(op, *, loc=None, ip=None):
         return _pto_ops_gen.barrier_sync(op_attr, loc=loc, ip=ip)
     # Otherwise fall back to low-level barrier expecting PipeAttr
     return _pto_ops_gen.barrier(op, loc=loc, ip=ip)
+
+# -----------------------------------------------------------------------------
+# Inter-core sync helpers (pto.sync.set / pto.sync.wait / pto.set_ffts)
+# -----------------------------------------------------------------------------
+def sync_set(pipe, event_id, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    return _ods_ir.Operation.create(
+        "pto.sync.set",
+        attributes={
+            "pipe": _ensure_pipe_attr(pipe, ctx),
+            "event_id": _ensure_i32_attr(event_id, "event_id", ctx),
+        },
+        loc=loc,
+        ip=ip,
+    )
+
+def sync_wait(pipe, event_id, *, loc=None, ip=None):
+    ctx = loc.context if loc else _ods_ir.Context.current
+    return _ods_ir.Operation.create(
+        "pto.sync.wait",
+        attributes={
+            "pipe": _ensure_pipe_attr(pipe, ctx),
+            "event_id": _ensure_i32_attr(event_id, "event_id", ctx),
+        },
+        loc=loc,
+        ip=ip,
+    )
+
+def set_ffts(ffts, *, loc=None, ip=None):
+    return _ods_ir.Operation.create(
+        "pto.set_ffts",
+        operands=[_pto_ops_gen._get_op_result_or_value(ffts)],
+        loc=loc,
+        ip=ip,
+    )
 
 # -----------------------------------------------------------------------------
 # A5 buffer-id sync helpers
