@@ -4,6 +4,7 @@
 import argparse
 import ast
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -264,6 +265,33 @@ def _derive_testcase_name(input_cpp: Path) -> str:
     if name.endswith("_pto"):
         name = name[:-4]
     return name
+
+
+def _resolve_sample_root(input_cpp: Path) -> Path:
+    parent = input_cpp.parent
+    if parent.name == "npu_validation":
+        return parent.parent
+    if parent.parent.name == "npu_validation":
+        return parent.parent.parent
+    return parent
+
+
+def _find_custom_case_asset(sample_root: Path, testcase: str, filename: str) -> Optional[Path]:
+    candidates = (
+        sample_root / f"{testcase}_{filename}",
+        sample_root / "npu_validation" / testcase / filename,
+        sample_root / "npu_validation" / filename,
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _copy_asset_if_needed(src: Path, dst: Path):
+    if src.resolve() == dst.resolve():
+        return
+    shutil.copy2(src, dst)
 
 
 def _replace_includes(text: str) -> str:
@@ -814,12 +842,16 @@ def generate_testcase(
     soc_version: str,
     aicore_arch: Optional[str] = None,
 ):
-    sample_dir = input_cpp.parent
+    sample_root = _resolve_sample_root(input_cpp)
     if output_root:
-        output_dir = output_root / sample_dir.name / testcase
+        output_dir = output_root / sample_root.name / testcase
     else:
-        output_dir = sample_dir / "npu_validation" / testcase
+        output_dir = sample_root / "npu_validation" / testcase
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    custom_golden = _find_custom_case_asset(sample_root, testcase, "golden.py")
+    custom_compare = _find_custom_case_asset(sample_root, testcase, "compare.py")
+    shared_validation_runtime = sample_root.parent / "validation_runtime.py"
 
     raw_kernel = input_cpp.read_text(encoding="utf-8")
     raw_kernel_for_analysis = raw_kernel
@@ -1137,8 +1169,14 @@ def generate_testcase(
             input_generate.append(f"    {name} = np.random.random(size=({size},)).astype({np_dtype})")
             input_generate.append(f"    {name}.tofile(\"{name}.bin\")")
 
-    golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
-    (output_dir / "golden.py").write_text(golden_py, encoding="utf-8")
+    golden_dst = output_dir / "golden.py"
+    if custom_golden is not None:
+        _copy_asset_if_needed(custom_golden, golden_dst)
+    else:
+        golden_py = golden_template.replace("@INPUT_GENERATE@", "\n".join(input_generate))
+        golden_dst.write_text(golden_py, encoding="utf-8")
+    if (custom_golden is not None or custom_compare is not None) and shared_validation_runtime.is_file():
+        _copy_asset_if_needed(shared_validation_runtime, output_dir / "validation_runtime.py")
 
     # Emit the kernel source, optionally injecting a packed-predicate preload to
     # make TCMP/TCMPS outputs deterministic for byte-wise compares.
@@ -1381,8 +1419,23 @@ endif()
                 compare_lines.append(
                     f"    ok = compare_bin(\"golden_{name}.bin\", \"{name}.bin\", {np_dtype}, {eps}) and ok"
                 )
-    compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
-    (output_dir / "compare.py").write_text(compare_py, encoding="utf-8")
+    compare_dst = output_dir / "compare.py"
+    if custom_compare is not None:
+        _copy_asset_if_needed(custom_compare, compare_dst)
+    else:
+        compare_py = compare_template.replace("@COMPARES@", "\n".join(compare_lines))
+        compare_dst.write_text(compare_py, encoding="utf-8")
+
+    (output_dir / "validation_meta.env").write_text(
+        "\n".join(
+            [
+                f"CUSTOM_GOLDEN={1 if custom_golden is not None else 0}",
+                f"CUSTOM_COMPARE={1 if custom_compare is not None else 0}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
     # Let the runner know which bins are outputs (for sim->golden copying).
     (output_dir / "outputs.txt").write_text(

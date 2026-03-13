@@ -204,6 +204,15 @@ jobs:
           cp test/npu_validation/scripts/generate_testcase.py "${PAYLOAD_DIR}/test/npu_validation/scripts/"
           cp test/npu_validation/scripts/run_remote_npu_validation.sh "${PAYLOAD_DIR}/test/npu_validation/scripts/"
           cp test/npu_validation/templates/* "${PAYLOAD_DIR}/test/npu_validation/templates/"
+          while IFS= read -r -d '' file; do
+            dst="${PAYLOAD_DIR}/${file}"
+            mkdir -p "$(dirname "${dst}")"
+            cp "${file}" "${dst}"
+          done < <(
+            find test/samples \
+              \( -path '*/npu_validation/*' -o -name '*_golden.py' -o -name '*_compare.py' -o -name 'validation_runtime.py' \) \
+              -type f -print0
+          )
           chmod +x "${PAYLOAD_DIR}/test/npu_validation/scripts/run_remote_npu_validation.sh"
           tar -czf "${PAYLOAD_TGZ}" -C "${PAYLOAD_DIR}" .
 
@@ -270,7 +279,7 @@ jobs:
           # suite (RUN_ONLY_CASES is empty), skip the non-matching variant based
           # on SOC_VERSION to keep the remote validation portable.
           A3_ONLY_CASES="partition5d,partition5d_dynamic,mrgsort,tmatmulk_autosync"
-          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5"
+          A5_ONLY_CASES="partition5d_a5,partition5d_dynamic_a5,mrgsort_a5,tmatmulk_autosync_a5,plan_memory_scopes_independent"
 
           sv_lc="$(printf '%s' "${SOC_VERSION}" | tr '[:upper:]' '[:lower:]')"
           is_a5=0

@@ -233,6 +233,13 @@ while IFS= read -r -d '' cpp; do
     cd "${nv_dir}"
     export ACL_DEVICE_ID="${DEVICE_ID}"
 
+    CUSTOM_GOLDEN=0
+    CUSTOM_COMPARE=0
+    if [[ -f "./validation_meta.env" ]]; then
+      # shellcheck disable=SC1091
+      source "./validation_meta.env"
+    fi
+
     enable_sim_golden="OFF"
     [[ "${GOLDEN_MODE}" == "sim" ]] && enable_sim_golden="ON"
     cmake -S . -B ./build \
@@ -264,12 +271,23 @@ while IFS= read -r -d '' cpp; do
     case "${GOLDEN_MODE}" in
       sim)
         python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
-        copy_outputs_as_golden
-        if [[ "${RUN_MODE}" == "npu" ]]; then
-          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        if [[ "${CUSTOM_GOLDEN}" == "1" ]]; then
+          log "Using custom golden for ${testcase}"
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
+          COMPARE_STRICT=1 python3 ./compare.py
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            python3 ./golden.py
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+            COMPARE_STRICT=1 python3 ./compare.py
+          fi
+        else
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_SIM}" ./build/${testcase}_sim
+          copy_outputs_as_golden
+          if [[ "${RUN_MODE}" == "npu" ]]; then
+            LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+          fi
+          COMPARE_STRICT=1 python3 ./compare.py
         fi
-        COMPARE_STRICT=1 python3 ./compare.py
         ;;
       npu)
         if [[ "${RUN_MODE}" != "npu" ]]; then
@@ -278,9 +296,13 @@ while IFS= read -r -d '' cpp; do
         fi
         python3 ./golden.py
         LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
-        copy_outputs_as_golden
-        python3 ./golden.py
-        LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        if [[ "${CUSTOM_GOLDEN}" != "1" ]]; then
+          copy_outputs_as_golden
+          python3 ./golden.py
+          LD_LIBRARY_PATH="${LD_LIBRARY_PATH_NPU}" ./build/${testcase}
+        else
+          log "Using custom golden for ${testcase}"
+        fi
         COMPARE_STRICT=1 python3 ./compare.py
         ;;
       skip)
