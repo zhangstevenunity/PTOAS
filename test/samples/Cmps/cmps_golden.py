@@ -8,7 +8,17 @@ for search_root in (Path(__file__).resolve().parent, Path(__file__).resolve().pa
         sys.path.insert(0, str(search_root))
         break
 
-from validation_runtime import ROWS, default_buffers, float_values, load_case_meta, matrix32, pack_predicate_mask, rng, single_output, write_buffers, write_golden
+from validation_runtime import (
+    default_buffers,
+    float_values,
+    load_case_meta,
+    matrix32,
+    pack_predicate_mask_for_buffer,
+    rng,
+    single_output,
+    write_buffers,
+    write_golden,
+)
 
 
 def main():
@@ -21,8 +31,7 @@ def main():
     buffers[src_name] = src
     write_buffers(meta, buffers)
     out_name = single_output(meta)
-    storage_cols = meta.elem_counts[out_name] // 32
-    packed = pack_predicate_mask(pred, storage_cols=storage_cols)
+    packed = pack_predicate_mask_for_buffer(pred, elem_count=meta.elem_counts[out_name], dtype=meta.np_types[out_name])
     write_golden(meta, {out_name: packed})
 
 

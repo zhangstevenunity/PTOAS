@@ -8,16 +8,29 @@ for search_root in (Path(__file__).resolve().parent, Path(__file__).resolve().pa
         sys.path.insert(0, str(search_root))
         break
 
-from validation_runtime import ROWS, COLS, default_buffers, float_values, load_case_meta, matrix32, pack_predicate_mask, rng, single_output, write_buffers, write_golden
+from validation_runtime import (
+    ROWS,
+    COLS,
+    default_buffers,
+    float_values,
+    load_case_meta,
+    matrix32,
+    pack_predicate_mask_for_buffer,
+    rng,
+    single_output,
+    write_buffers,
+    write_golden,
+)
 
 
 def main():
     meta = load_case_meta()
     mask_name, src0_name, src1_name = meta.inputs
     generator = rng()
-    storage_cols = meta.elem_counts[mask_name] // ROWS
     mask_bits = generator.integers(0, 2, size=(ROWS, COLS), dtype=np.uint8).astype(np.bool_)
-    mask = pack_predicate_mask(mask_bits, storage_cols=storage_cols)
+    mask = pack_predicate_mask_for_buffer(
+        mask_bits, elem_count=meta.elem_counts[mask_name], dtype=meta.np_types[mask_name]
+    )
     src0 = float_values(generator, meta.elem_counts[src0_name], style='signed')
     src1 = float_values(generator, meta.elem_counts[src1_name], style='signed')
     buffers = default_buffers(meta)

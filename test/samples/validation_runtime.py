@@ -150,6 +150,17 @@ def packed_row_bytes(cols: int) -> int:
     return (cols + 7) // 8
 
 
+def packed_mask_storage_bytes(elem_count: int, dtype) -> int:
+    return int(elem_count) * np.dtype(dtype).itemsize
+
+
+def packed_mask_storage_cols(*, elem_count: int, dtype, rows: int = ROWS) -> int:
+    storage_bytes = packed_mask_storage_bytes(elem_count, dtype)
+    if storage_bytes % rows != 0:
+        raise ValueError(f'packed mask storage {storage_bytes} bytes is not divisible by rows={rows}')
+    return storage_bytes // rows
+
+
 def pack_predicate_mask(bits: np.ndarray, *, storage_cols: int) -> np.ndarray:
     bits = np.asarray(bits, dtype=np.bool_)
     if bits.ndim != 2:
@@ -168,6 +179,18 @@ def pack_predicate_mask(bits: np.ndarray, *, storage_cols: int) -> np.ndarray:
                     packed_byte |= 1 << bit_index
             packed[row, byte_index] = packed_byte
     return packed.reshape(-1)
+
+
+def pack_predicate_mask_for_buffer(bits: np.ndarray, *, elem_count: int, dtype, rows: int = ROWS) -> np.ndarray:
+    dtype = np.dtype(dtype)
+    storage_cols = packed_mask_storage_cols(elem_count=elem_count, dtype=dtype, rows=rows)
+    packed_bytes = pack_predicate_mask(bits, storage_cols=storage_cols)
+    expected_bytes = packed_mask_storage_bytes(elem_count, dtype)
+    if packed_bytes.nbytes != expected_bytes:
+        raise ValueError(
+            f'packed mask byte size mismatch: expected {expected_bytes}, got {packed_bytes.nbytes}'
+        )
+    return np.frombuffer(packed_bytes.tobytes(), dtype=dtype).copy()
 
 
 def _report_compare_failure(golden: np.ndarray, output: np.ndarray, golden_path: str, output_path: str):
