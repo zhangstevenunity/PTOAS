@@ -1686,6 +1686,193 @@ static Value makeEmitCIntConstant(ConversionPatternRewriter &rewriter,
   return makeEmitCOpaqueConstant(rewriter, loc, type, std::to_string(value));
 }
 
+static bool isEmitCTileOpaqueType(Type type) {
+  auto opaqueType = dyn_cast<emitc::OpaqueType>(type);
+  if (!opaqueType)
+    return false;
+  StringRef typeName = opaqueType.getValue();
+  return typeName.starts_with("Tile<") && typeName.ends_with(">");
+}
+
+static LogicalResult parseEmitCTileType(Value exemplar,
+                                        SmallVectorImpl<std::string> &parts) {
+  auto tileTy = dyn_cast<emitc::OpaqueType>(exemplar.getType());
+  if (!tileTy)
+    return failure();
+
+  StringRef tileTypeStr = tileTy.getValue();
+  if (!tileTypeStr.starts_with("Tile<") || !tileTypeStr.ends_with(">"))
+    return failure();
+
+  StringRef body = tileTypeStr.drop_front(5).drop_back(1);
+  size_t partBegin = 0;
+  int angleDepth = 0;
+  for (size_t i = 0; i < body.size(); ++i) {
+    char c = body[i];
+    if (c == '<') {
+      ++angleDepth;
+    } else if (c == '>') {
+      if (angleDepth > 0)
+        --angleDepth;
+    } else if (c == ',' && angleDepth == 0) {
+      parts.push_back(body.slice(partBegin, i).trim().str());
+      partBegin = i + 1;
+    }
+  }
+  parts.push_back(body.drop_front(partBegin).trim().str());
+  return success(parts.size() >= 10);
+}
+
+static FailureOr<int64_t> getEmitCTileStorageSizeBytes(Value exemplar) {
+  SmallVector<std::string, 12> parts;
+  if (failed(parseEmitCTileType(exemplar, parts)))
+    return failure();
+
+  int64_t rows = 0;
+  int64_t cols = 0;
+  if (StringRef(parts[2]).trim().getAsInteger(10, rows) ||
+      StringRef(parts[3]).trim().getAsInteger(10, cols))
+    return failure();
+
+  int64_t elemBytes = 0;
+  StringRef elemTok = StringRef(parts[1]).trim();
+  if (elemTok == "half" || elemTok == "float16_t" || elemTok == "bfloat16_t" ||
+      elemTok == "int16_t" || elemTok == "uint16_t") {
+    elemBytes = 2;
+  } else if (elemTok == "float" || elemTok == "int32_t" ||
+             elemTok == "uint32_t") {
+    elemBytes = 4;
+  } else if (elemTok == "double" || elemTok == "int64_t" ||
+             elemTok == "uint64_t") {
+    elemBytes = 8;
+  } else if (elemTok == "int8_t" || elemTok == "uint8_t" ||
+             elemTok == "bool") {
+    elemBytes = 1;
+  } else {
+    return failure();
+  }
+
+  return rows * cols * elemBytes;
+}
+
+static FailureOr<Value>
+buildIntegralAddressFromTileLike(Location loc, Value sourceValue,
+                                 ConversionPatternRewriter &rewriter) {
+  auto *ctx = rewriter.getContext();
+  auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+  auto rcU64 =
+      rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "uint64_t")});
+
+  if (auto castOp = sourceValue.getDefiningOp<emitc::CastOp>())
+    sourceValue = castOp.getOperand();
+
+  Value rawPtr = sourceValue;
+  if (isEmitCTileOpaqueType(sourceValue.getType())) {
+    SmallVector<std::string, 12> parts;
+    if (failed(parseEmitCTileType(sourceValue, parts)))
+      return failure();
+
+    StringRef roleTok = StringRef(parts[0]).trim();
+    StringRef elemTok = StringRef(parts[1]).trim();
+    std::string qualifier;
+    if (roleTok == "TileType::Vec") {
+      qualifier = "__ubuf__";
+    } else if (roleTok == "TileType::Mat") {
+      qualifier = "__cbuf__";
+    } else if (roleTok == "TileType::Left") {
+      qualifier = "__ca__";
+    } else if (roleTok == "TileType::Right") {
+      qualifier = "__cb__";
+    } else if (roleTok == "TileType::Acc") {
+      qualifier = "__cc__";
+    } else if (roleTok == "TileType::Scaling") {
+      qualifier = "__fbuf__";
+    } else {
+      qualifier = "__gm__";
+    }
+
+    auto rawPtrTy =
+        emitc::OpaqueType::get(ctx, qualifier + " " + elemTok.str() + "*");
+    rawPtr = rewriter
+                 .create<emitc::CallOpaqueOp>(loc, rawPtrTy, "PTOAS__TILE_DATA",
+                                              ArrayAttr{}, ArrayAttr{},
+                                              ValueRange{sourceValue})
+                 .getResult(0);
+  }
+
+  if (isa<emitc::PointerType>(rawPtr.getType()) ||
+      (isa<emitc::OpaqueType>(rawPtr.getType()) &&
+       cast<emitc::OpaqueType>(rawPtr.getType()).getValue().ends_with("*"))) {
+    return rewriter
+        .create<emitc::CallOpaqueOp>(loc, u64Ty, "reinterpret_cast",
+                                     ArrayAttr{}, rcU64, ValueRange{rawPtr})
+        .getResult(0);
+  }
+
+  if (rawPtr.getType() == u64Ty)
+    return rawPtr;
+  return rewriter.create<emitc::CastOp>(loc, u64Ty, rawPtr).getResult();
+}
+
+static FailureOr<Value>
+createSiblingTileValue(Location loc, Value exemplar,
+                       ConversionPatternRewriter &rewriter) {
+  auto opaqueTy = dyn_cast<emitc::OpaqueType>(exemplar.getType());
+  if (!opaqueTy || !isEmitCTileOpaqueType(opaqueTy))
+    return failure();
+
+  SmallVector<std::string, 12> parts;
+  if (failed(parseEmitCTileType(exemplar, parts)))
+    return failure();
+  if (StringRef(parts[5]).trim() == "-1" || StringRef(parts[6]).trim() == "-1")
+    return failure();
+
+  return rewriter
+      .create<emitc::VariableOp>(loc, opaqueTy,
+                                 emitc::OpaqueAttr::get(rewriter.getContext(), ""))
+      .getResult();
+}
+
+static FailureOr<Value>
+materializeDisjointTempTile(Location loc, Value exemplar,
+                            ArrayRef<Value> occupiedValues,
+                            ConversionPatternRewriter &rewriter) {
+  if (occupiedValues.empty())
+    return failure();
+
+  auto tmpTile = createSiblingTileValue(loc, exemplar, rewriter);
+  auto tileBytes = getEmitCTileStorageSizeBytes(exemplar);
+  if (failed(tmpTile) || failed(tileBytes))
+    return failure();
+
+  auto *ctx = rewriter.getContext();
+  auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+  SmallVector<Value, 4> addrs;
+  addrs.reserve(occupiedValues.size());
+  for (Value value : occupiedValues) {
+    auto addr = buildIntegralAddressFromTileLike(loc, value, rewriter);
+    if (failed(addr))
+      return failure();
+    addrs.push_back(*addr);
+  }
+
+  Value maxAddr = addrs.front();
+  for (Value addr : ArrayRef<Value>(addrs).drop_front()) {
+    Value isLess = rewriter.create<emitc::CmpOp>(
+        loc, rewriter.getI1Type(), emitc::CmpPredicate::lt, maxAddr, addr);
+    maxAddr = rewriter.create<emitc::ConditionalOp>(loc, u64Ty, isLess, addr,
+                                                    maxAddr);
+  }
+
+  Value tmpAddr = rewriter.create<emitc::AddOp>(
+      loc, u64Ty, maxAddr,
+      makeEmitCIntConstant(rewriter, loc, u64Ty, *tileBytes));
+  rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN", ArrayAttr{},
+                                       ArrayAttr{},
+                                       ValueRange{*tmpTile, tmpAddr});
+  return *tmpTile;
+}
+
 static Value emitCCast(ConversionPatternRewriter &rewriter, Location loc,
                        Type dstType, Value src) {
   if (src.getType() == dstType)
@@ -5420,18 +5607,44 @@ struct PTOPreluToEmitC : public OpConversionPattern<pto::TPReluOp> {
   LogicalResult matchAndRewrite(pto::TPReluOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
 
     Value src0 = peelUnrealized(adaptor.getSrc0());
     Value src1 = peelUnrealized(adaptor.getSrc1());
-    Value tmp  = peelUnrealized(adaptor.getTmp());
     Value dst  = peelUnrealized(adaptor.getDst());
+    auto tmp = materializeDisjointTempTile(loc, dst, {src0, src1, dst}, rewriter);
+    if (failed(tmp))
+      return op.emitOpError("failed to materialize disjoint temp tile");
 
-    // C++ interface: TPRELU(dst, src0, src1, tmp) — last parameter is tmp.
-    SmallVector<Value, 4> operands{dst, src0, src1, tmp};
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TPRELU",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/operands);
+    SmallVector<std::string, 12> parts;
+    if (failed(parseEmitCTileType(dst, parts)))
+      return op.emitOpError("failed to infer element type for tprelu lowering");
+
+    auto scalarTy =
+        emitc::OpaqueType::get(ctx, StringRef(parts[1]).trim().str());
+    auto zero = rewriter.create<emitc::ConstantOp>(
+        loc, scalarTy, emitc::OpaqueAttr::get(ctx, "0"));
+    auto pipeVArgs =
+        rewriter.getArrayAttr({emitc::OpaqueAttr::get(ctx, "PIPE_V")});
+
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TMINS",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{*tmp, src0, zero});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "pipe_barrier",
+                                         pipeVArgs, ArrayAttr{}, ValueRange{});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TMUL",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{dst, *tmp, src1});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "pipe_barrier",
+                                         pipeVArgs, ArrayAttr{}, ValueRange{});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TMAXS",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{*tmp, src0, zero});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "pipe_barrier",
+                                         pipeVArgs, ArrayAttr{}, ValueRange{});
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TADD",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{dst, dst, *tmp});
 
     rewriter.eraseOp(op);
     return success();
@@ -5910,11 +6123,25 @@ struct PTOSelSToEmitC : public OpConversionPattern<pto::TSelSOp> {
     Value selectMode = peelUnrealized(adaptor.getSelectMode());
     Value dst  = peelUnrealized(adaptor.getDst());
 
-    SmallVector<Value, 4> operands{dst, src0, src1, selectMode};
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TSELS",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/operands);
+    auto src0Addr = buildIntegralAddressFromTileLike(loc, src0, rewriter);
+    auto src1Addr = buildIntegralAddressFromTileLike(loc, src1, rewriter);
+    if (failed(src0Addr) || failed(src1Addr))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to materialize selected tile address");
+
+    Value selectOne =
+        makeEmitCIntConstant(rewriter, loc, selectMode.getType(), 1);
+    Value chooseSrc0 = rewriter.create<emitc::CmpOp>(
+        loc, rewriter.getI1Type(), emitc::CmpPredicate::eq, selectMode,
+        selectOne);
+    auto *ctx = rewriter.getContext();
+    auto u64Ty = emitc::OpaqueType::get(ctx, "uint64_t");
+    Value selectedAddr = rewriter.create<emitc::ConditionalOp>(
+        loc, u64Ty, chooseSrc0, *src0Addr, *src1Addr);
+
+    rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN",
+                                         ArrayAttr{}, ArrayAttr{},
+                                         ValueRange{dst, selectedAddr});
 
     rewriter.eraseOp(op);
     return success();
@@ -6218,9 +6445,12 @@ struct PTOXORToEmitC : public OpConversionPattern<pto::TXorOp> {
     Value src1 = peelUnrealized(adaptor.getSrc1());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    // pto-isa TXOR requires a tmp tile argument. Current NPU implementation
-    // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src0, src1, dst};
+    auto tmp = materializeDisjointTempTile(loc, dst, {src0, src1, dst}, rewriter);
+    if (failed(tmp))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to materialize disjoint tmp tile for TXOR");
+
+    SmallVector<Value, 4> operands{dst, src0, src1, *tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXOR",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
@@ -6266,9 +6496,12 @@ struct PTOXORSToEmitC : public OpConversionPattern<pto::TXorSOp> {
     Value scalar = peelUnrealized(adaptor.getScalar());
     Value dst = peelUnrealized(adaptor.getDst());
 
-    // pto-isa TXORS requires a tmp tile argument. Current NPU implementation
-    // does not use tmp, so we safely pass dst as tmp for compatibility.
-    SmallVector<Value, 4> operands{dst, src, scalar, dst};
+    auto tmp = materializeDisjointTempTile(loc, dst, {src, dst}, rewriter);
+    if (failed(tmp))
+      return rewriter.notifyMatchFailure(op,
+                                         "failed to materialize disjoint tmp tile for TXORS");
+
+    SmallVector<Value, 4> operands{dst, src, scalar, *tmp};
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TXORS",
         /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},

@@ -2566,7 +2566,8 @@ mlir::LogicalResult mlir::pto::TPReluOp::verify() {
   Type e0 = getElemTy(t0), e1 = getElemTy(t1), et = getElemTy(tt), ed = getElemTy(td);
   if (!e0 || !e1 || !et || !ed)
     return emitOpError("failed to get element type for operands");
-  // TPRELU C++ API (TPreluCheck): dst/src0/src1 same type (half or float); tmp must be uint8_t.
+  // TPRELU C++ API (TPreluCheck): dst/src0/src1 same type (half or float);
+  // tmp must be uint8_t.
   if (e0 != e1 || e0 != ed)
     return emitOpError("expects src0/src1/dst to have the same element type (f16 or f32)");
   if (!e0.isa<FloatType>() || (!e0.isF16() && !e0.isF32()))
@@ -2793,6 +2794,42 @@ mlir::LogicalResult mlir::pto::TRowExpandOp::verify() {
     return emitOpError("expects src/dst to have the same element type");
   return mlir::success();
 }
+
+static mlir::LogicalResult verifyTRowExpandLike(Operation *op, Type src0Ty,
+                                                Type src1Ty, Type dstTy,
+                                                Type elemTy) {
+  auto s0 = getShapeVec(src0Ty), s1 = getShapeVec(src1Ty), sd = getShapeVec(dstTy);
+  if (s0.size() != 2 || s1.size() != 2 || sd.size() != 2)
+    return op->emitError("expects rank-2 shaped operands");
+  auto elemBytes = getElemBytes(elemTy);
+  if (!elemBytes || *elemBytes <= 0)
+    return op->emitError("unsupported element type");
+
+  int64_t blockCols = 32 / *elemBytes;
+  auto isPerRowShape = [&](ArrayRef<int64_t> shape) {
+    return shape[0] == sd[0] && (shape[1] == 1 || shape[1] == blockCols);
+  };
+
+  bool src0EqDst = s0 == sd;
+  bool src1EqDst = s1 == sd;
+  if (src0EqDst == src1EqDst)
+    return op->emitError(
+        "expects exactly one source to match dst shape and the other to provide one scalar per row");
+
+  if (src0EqDst) {
+    if (!isPerRowShape(s1))
+      return op->emitError() << "expects src1 shape to be [" << sd[0]
+                             << " x 1] or [" << sd[0] << " x " << blockCols
+                             << "] when src0 matches dst";
+    return success();
+  }
+
+  if (!isPerRowShape(s0))
+    return op->emitError() << "expects src0 shape to be [" << sd[0]
+                           << " x 1] or [" << sd[0] << " x " << blockCols
+                           << "] when src1 matches dst";
+  return success();
+}
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWEXPANDDIV DPS/tilebuf op)
 //===----------------------------------------------------------------------===//
@@ -2811,7 +2848,7 @@ mlir::LogicalResult mlir::pto::TRowExpandDivOp::verify() {
   auto elemTy = e0.dyn_cast<mlir::FloatType>();
   if (!elemTy || (!elemTy.isF16() && !elemTy.isF32()))
     return emitOpError("expects element type to be f16 or f32");
-  return mlir::success();
+  return verifyTRowExpandLike(getOperation(), t0, t1, td, e0);
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWEXPANDMUL DPS/tilebuf op)
@@ -2831,7 +2868,7 @@ mlir::LogicalResult mlir::pto::TRowExpandMulOp::verify() {
   auto ft = e0.dyn_cast<mlir::FloatType>();
   if (!ft || (!ft.isF16() && !ft.isF32()))
     return emitOpError("expects element type to be f16 or f32");
-  return mlir::success();
+  return verifyTRowExpandLike(getOperation(), t0, t1, td, e0);
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWEXPANDSUB DPS/tilebuf op)
@@ -2851,7 +2888,7 @@ mlir::LogicalResult mlir::pto::TRowExpandSubOp::verify() {
   auto ft = e0.dyn_cast<mlir::FloatType>();
   if (!ft || (!ft.isF16() && !ft.isF32()))
     return emitOpError("expects element type to be f16 or f32");
-  return mlir::success();
+  return verifyTRowExpandLike(getOperation(), t0, t1, td, e0);
 }
 //===----------------------------------------------------------------------===//
 // PTO.cpp  (add verifier for TROWMAX DPS/tilebuf op)
@@ -3013,19 +3050,22 @@ mlir::LogicalResult mlir::pto::TSelSOp::verify() {
   Type td = getDst().getType();
   if (!isPTOShapedLike(t0) || !isPTOShapedLike(t1) || !isPTOShapedLike(td))
     return emitOpError("expects src0/src1/dst to be memref/tensor/tile_buf/tile_view types");
-  Type es = getElemTy(t0), ed = getElemTy(td);
-  if (!es || !ed)
+  Type e0 = getElemTy(t0), e1 = getElemTy(t1), ed = getElemTy(td);
+  if (!e0 || !e1 || !ed)
     return emitOpError("failed to get element type for operands");
-  if (es != ed)
-    return emitOpError("expects src0 and dst to have the same element type");
+  if (e0 != e1 || e0 != ed)
+    return emitOpError("expects src0/src1/dst to have the same element type");
+  auto s0 = getShapeVec(t0), s1 = getShapeVec(t1), sd = getShapeVec(td);
+  if (s0 != s1 || s0 != sd)
+    return emitOpError("expects src0/src1/dst to have the same shape");
   auto isAllowedElem = [&](mlir::Type t) -> bool {
     if (t.isF16() || t.isF32() || t.isBF16()) return true;
     if (auto it = mlir::dyn_cast<mlir::IntegerType>(t))
       return (it.getWidth() == 8 || it.getWidth() == 16 || it.getWidth() == 32);
     return false;
   };
-  if (!isAllowedElem(es))
-    return emitOpError("expects src0 and dst element type to be i8/i16/i32/f16/bf16/f32");
+  if (!isAllowedElem(e0))
+    return emitOpError("expects src0/src1/dst element type to be i8/i16/i32/f16/bf16/f32");
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//

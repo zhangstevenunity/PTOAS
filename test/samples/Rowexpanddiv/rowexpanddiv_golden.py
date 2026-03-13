@@ -16,10 +16,12 @@ def main():
     src0_name, src1_name = meta.inputs
     generator = rng()
     src0 = float_values(generator, meta.elem_counts[src0_name], style='signed')
-    src1 = float_values(generator, meta.elem_counts[src1_name], style='nonzero_signed' if 'Rowexpanddiv/rowexpanddiv_golden.py' == 'Rowexpanddiv/rowexpanddiv_golden.py' else 'signed')
+    src1 = float_values(generator, meta.elem_counts[src1_name], style='nonzero_signed')
     src0_m = matrix32(src0)
-    src1_m = matrix32(src1)
-    row_scalars = src1_m.reshape(-1)[:ROWS].astype(np.float32)
+    row_scalars = src1.astype(np.float32).reshape(-1)
+    if row_scalars.size < ROWS:
+        raise ValueError(f'expected at least {ROWS} row scalars, got {row_scalars.size}')
+    row_scalars = row_scalars[:ROWS]
     buffers = default_buffers(meta)
     buffers[src0_name] = src0
     buffers[src1_name] = src1
