@@ -10,6 +10,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
@@ -23,7 +24,9 @@ using namespace mlir::pto;
 namespace {
 
 static PTOArch getTargetArch(Operation *op) {
-  auto module = op->getParentOfType<ModuleOp>();
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module)
+    module = op->getParentOfType<ModuleOp>();
   if (!module)
     return PTOArch::A3;
   auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
@@ -104,29 +107,117 @@ static TileBufConfigAttr inferMemRefTileConfig(Type memrefLikeType, PTOArch arch
                     : PadValueAttr());
 }
 
+static Type normalizeType(Type type, PTOArch arch) {
+  auto tileTy = dyn_cast<TileBufType>(type);
+  if (!tileTy)
+    return type;
+  auto normalizedTy = normalizeTileBufType(tileTy, arch);
+  return normalizedTy ? Type(normalizedTy) : type;
+}
+
+static bool normalizeValue(Value value, PTOArch arch) {
+  Type currentType = value.getType();
+  Type normalizedType = normalizeType(currentType, arch);
+  if (normalizedType == currentType)
+    return false;
+  value.setType(normalizedType);
+  return true;
+}
+
+static LogicalResult syncFunctionSignature(func::FuncOp func, PTOArch arch) {
+  SmallVector<Type> newInputs;
+  SmallVector<Type> newResults;
+
+  if (func.isExternal()) {
+    llvm::transform(func.getArgumentTypes(), std::back_inserter(newInputs),
+                    [&](Type type) { return normalizeType(type, arch); });
+    llvm::transform(func.getResultTypes(), std::back_inserter(newResults),
+                    [&](Type type) { return normalizeType(type, arch); });
+  } else {
+    Block &entry = func.front();
+    newInputs.assign(entry.getArgumentTypes().begin(), entry.getArgumentTypes().end());
+
+    if (func.getNumResults() != 0) {
+      bool sawReturn = false;
+      func.walk([&](func::ReturnOp ret) {
+        SmallVector<Type> operandTypes(ret.getOperandTypes().begin(),
+                                       ret.getOperandTypes().end());
+        if (!sawReturn) {
+          newResults = operandTypes;
+          sawReturn = true;
+          return;
+        }
+        if (newResults != operandTypes) {
+          ret.emitOpError("all return ops must agree on result types after "
+                          "tile config inference");
+          func.emitError("inconsistent function result types after tile config "
+                         "inference");
+        }
+      });
+      if (!sawReturn)
+        return func.emitOpError("non-external function with results must have "
+                                "a return op after tile config inference");
+    }
+  }
+
+  auto newFunctionType = FunctionType::get(func.getContext(), newInputs, newResults);
+  if (newFunctionType != func.getFunctionType())
+    func.setFunctionType(newFunctionType);
+  return success();
+}
+
+static LogicalResult syncCallSites(ModuleOp module, func::FuncOp callee) {
+  auto uses = callee.getSymbolUses(module);
+  if (!uses)
+    return success();
+
+  for (SymbolTable::SymbolUse use : *uses) {
+    auto call = dyn_cast<func::CallOp>(use.getUser());
+    if (!call)
+      continue;
+
+    auto expectedInputs = callee.getFunctionType().getInputs();
+    if (call.getNumOperands() != expectedInputs.size())
+      return call.emitOpError("operand count does not match updated callee "
+                              "signature for ")
+             << callee.getSymName();
+
+    for (auto [idx, operand] : llvm::enumerate(call.getArgOperands())) {
+      if (operand.getType() != expectedInputs[idx]) {
+        return call.emitOpError("operand type does not match updated callee "
+                                "signature at index ")
+               << idx << " for " << callee.getSymName();
+      }
+    }
+
+    if (llvm::equal(call.getResultTypes(), callee.getResultTypes()))
+      continue;
+
+    OpBuilder builder(call);
+    auto newCall =
+        builder.create<func::CallOp>(call.getLoc(), callee, call.getArgOperands());
+    newCall->setAttrs(call->getAttrs());
+    call.replaceAllUsesWith(newCall.getResults());
+    call.erase();
+  }
+
+  return success();
+}
+
 struct InferPTOTileConfigPass
     : public impl::InferPTOTileConfigBase<InferPTOTileConfigPass> {
   void runOnOperation() override {
-    func::FuncOp func = getOperation();
-    PTOArch arch = getTargetArch(func);
-
-    auto normalizeValue = [&](Value value) {
-      auto tileTy = dyn_cast<TileBufType>(value.getType());
-      if (!tileTy)
-        return;
-      auto normalizedTy = normalizeTileBufType(tileTy, arch);
-      if (normalizedTy && normalizedTy != tileTy)
-        value.setType(normalizedTy);
-    };
+    ModuleOp module = getOperation();
+    PTOArch arch = getTargetArch(module);
 
     auto normalizeRegion = [&](Region &region, auto &self) -> void {
       for (Block &block : region) {
         for (BlockArgument arg : block.getArguments())
-          normalizeValue(arg);
+          (void)normalizeValue(arg, arch);
 
         for (Operation &op : block) {
           for (Value result : op.getResults())
-            normalizeValue(result);
+            (void)normalizeValue(result, arch);
 
           if (auto bind = dyn_cast<pto::BindTileOp>(op)) {
             auto currentConfig = bind.getConfigAttr();
@@ -154,7 +245,21 @@ struct InferPTOTileConfigPass
       }
     };
 
-    normalizeRegion(func.getBody(), normalizeRegion);
+    for (func::FuncOp func : module.getOps<func::FuncOp>()) {
+      if (!func.isExternal())
+        normalizeRegion(func.getBody(), normalizeRegion);
+      if (failed(syncFunctionSignature(func, arch))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
+    for (func::FuncOp func : module.getOps<func::FuncOp>()) {
+      if (failed(syncCallSites(module, func))) {
+        signalPassFailure();
+        return;
+      }
+    }
   }
 };
 
