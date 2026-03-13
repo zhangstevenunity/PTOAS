@@ -66,6 +66,16 @@ def load_case_meta(main_cpp: str = 'main.cpp', outputs_txt: str = 'outputs.txt')
     return CaseMeta(elem_counts=elem_counts, np_types=np_types, read_order=read_order, outputs=outputs)
 
 
+def load_scalar_assignments(ctype: str, main_cpp: str = 'main.cpp') -> List[int]:
+    text = Path(main_cpp).read_text(encoding='utf-8')
+    pattern = rf'{re.escape(ctype)}\s+\w+\s*=\s*(-?\d+);'
+    return [int(value) for value in re.findall(pattern, text)]
+
+
+def load_int32_assignments(main_cpp: str = 'main.cpp') -> List[int]:
+    return load_scalar_assignments('int32_t', main_cpp=main_cpp)
+
+
 def rng():
     return np.random.default_rng(SEED)
 
