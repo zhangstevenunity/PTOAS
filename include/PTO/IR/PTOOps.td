@@ -1165,6 +1165,32 @@ def WaitFlagOp : PTO_Op<"wait_flag"> {
   }];
 }
 
+def SetFlagDynOp : PTO_Op<"set_flag_dyn"> {
+  let summary = "Set synchronization flag between pipes (dynamic event id)";
+  let arguments = (ins
+    PTO_PipeAttr:$src_pipe,
+    PTO_PipeAttr:$dst_pipe,
+    Index:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
+  }];
+}
+
+def WaitFlagDynOp : PTO_Op<"wait_flag_dyn"> {
+  let summary = "Wait for synchronization flag (dynamic event id)";
+  let arguments = (ins
+    PTO_PipeAttr:$src_pipe,
+    PTO_PipeAttr:$dst_pipe,
+    Index:$event_id
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    `[` $src_pipe `,` $dst_pipe `,` $event_id `]` attr-dict
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Buffer-ID Synchronization (A5)
 //===----------------------------------------------------------------------===//

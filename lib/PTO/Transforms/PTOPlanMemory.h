@@ -257,7 +257,7 @@ public:
   MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode)
       : func_(func), planMode(planMode) {}
 
-  void build();
+  LogicalResult build();
 
   /// linear operation info.
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
@@ -287,6 +287,7 @@ public:
   bool isGlobalWorkSpaceMemPlan() const;
 
 private:
+  bool walkFailed{false};
   void RecursionIR(Region *region, Liveness live);
 
   /// Get the buffer used within the loop and defined outside the loop.

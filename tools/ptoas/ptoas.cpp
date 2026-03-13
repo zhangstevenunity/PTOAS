@@ -723,6 +723,9 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Materialize ping/pong selection for planned multi-buffer pointer_cast ops.
+  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOEnableMultiBufferPass());
+
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveRedundantBarrierPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOHighDimLoweringPass());
   // pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOVFloopGatherPass());

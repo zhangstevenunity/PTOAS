@@ -299,6 +299,86 @@ process_one_dir() {
       fi
     fi
 
+    # Regression guard: planned ping/pong buffers must be materialized as a
+    # loop-local selector + dynamic event-id set/wait on back-edge deps.
+    if [[ "$base" == "test_inject_sync_multibuf_pingpong" ]]; then
+      if ! grep -Fq "static_cast<event_t>" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic event-id (static_cast<event_t>) in generated C++"
+        overall=1
+        continue
+      fi
+      # Ensure the dynamic event id is actually passed to set/wait flag calls.
+      # (CallOpaqueOp requires an IntegerAttr placeholder, otherwise the operand
+      # is silently dropped and we emit a 2-arg wait_flag/set_flag.)
+      if ! grep -Eq "wait_flag\\(PIPE_MTE3, PIPE_MTE2, v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic wait_flag(..., <var>) for ping/pong back-edge"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "set_flag\\(PIPE_MTE3, PIPE_MTE2, v[0-9]+\\)" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing dynamic set_flag(..., <var>) for ping/pong back-edge"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "?" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing ternary select for ping/pong buffer selection"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "TASSIGN(" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing TASSIGN for selected ping/pong address"
+        overall=1
+        continue
+      fi
+      local uniq_i64_count
+      uniq_i64_count="$(awk '/^[[:space:]]*int64_t v[0-9]+ = -?[0-9]+;[[:space:]]*$/{print $4}' "$cpp" | tr -d ';' | sort -u | wc -l | tr -d ' ')"
+      if [[ -z "${uniq_i64_count}" || "${uniq_i64_count}" -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected >=2 distinct int64 constants for ping/pong addresses"
+        overall=1
+        continue
+      fi
+      if ! grep -Eq "int64_t v[0-9]+ = .*\\? .* : .*;" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing int64 ternary selection for ping/pong address"
+        overall=1
+        continue
+      fi
+      if grep -Fq "(__ubuf__" "$cpp"; then
+        echo -e "${A}(${base}.py)\tFAIL\tunexpected Tile->pointer cast (may break NPU compilation)"
+        overall=1
+        continue
+      fi
+    fi
+
+    # Regression guard: handwritten multibuffer (subset ping/pong) should keep
+    # subset-based slot split and branch-local load/store structure.
+    if [[ "$base" == "test_inject_sync_multibuf_subset_pingpong" ]]; then
+      if ! grep -Fq "pto.subset" "$pto_input"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pto.subset in source PTO IR"
+        overall=1
+        continue
+      fi
+      if ! grep -Fq "pto.multi_buffer = 2 : i32" "$pto_input"; then
+        echo -e "${A}(${base}.py)\tFAIL\tmissing pto.multi_buffer=2 annotation for subset ping/pong"
+        overall=1
+        continue
+      fi
+      local tassign_count
+      tassign_count="$(grep -c "TASSIGN(" "$cpp" || true)"
+      if [[ -z "${tassign_count}" || "${tassign_count}" -lt 3 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected workspace+ping+pong TASSIGN lowering"
+        overall=1
+        continue
+      fi
+      local tload_count tstore_count
+      tload_count="$(grep -c "TLOAD(" "$cpp" || true)"
+      tstore_count="$(grep -c "TSTORE(" "$cpp" || true)"
+      if [[ -z "${tload_count}" || "${tload_count}" -lt 2 || -z "${tstore_count}" || "${tstore_count}" -lt 2 ]]; then
+        echo -e "${A}(${base}.py)\tFAIL\texpected ping/pong branch-local TLOAD/TSTORE"
+        overall=1
+        continue
+      fi
+    fi
+
     # Regression guard: intra-pipe dependencies must be serialized by a
     # per-pipe barrier (PyPTO expects `bar_v` / `bar_m` behavior).
     if [[ "$base" == "test_inject_sync_intra_pipe_barrier" ]]; then

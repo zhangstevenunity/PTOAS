@@ -142,32 +142,20 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
  
   // 2. Local Memory (UB/L1)
-  
-  if (a->rootBuffer == b->rootBuffer) {
-    if (a->baseAddresses.empty() || b->baseAddresses.empty()) return true;
-    return isBufferAddressRangeOverlap(a, b);
+  //
+  // After PlanMemory, distinct SSA buffers may legally alias the same physical
+  // storage. Root-buffer identity is not sufficient: rely on planned addresses.
+  if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
+    if (isTraceEnabled())
+      llvm::errs() << "    -> Unknown baseAddresses. Conservative overlap.\n";
+    return true;
   }
- 
-  // 2.2 深层比较：穿透 View
-  Value realRootA = GetRealRoot(a->rootBuffer);
-  Value realRootB = GetRealRoot(b->rootBuffer);
- 
-  if (isTraceEnabled()) {
-    llvm::errs() << "    [Deep Check] Surface Roots differ. Digging deeper...\n";
-    printValueDebug("      Real Root A", realRootA);
-    printValueDebug("      Real Root B", realRootB);
+  if (a->allocateSize == 0 || b->allocateSize == 0) {
+    if (isTraceEnabled())
+      llvm::errs() << "    -> Unknown allocateSize. Conservative overlap.\n";
+    return true;
   }
- 
-  if (realRootA == realRootB && realRootA != nullptr) {
-      if (isTraceEnabled())
-        llvm::errs() << "      -> MATCH! Real roots are the same.\n";
-      return true;
-  } else {
-      if (isTraceEnabled())
-        llvm::errs() << "      -> Mismatch. Real roots differ.\n";
-  }
- 
-  return false;
+  return isBufferAddressRangeOverlap(a, b);
 }
  
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,

@@ -71,14 +71,17 @@ namespace {
 
 } // namespace
 
-void MemLivenessAnalysis::build() {
+LogicalResult MemLivenessAnalysis::build() {
   Region &funcRegion = func_.getBody();
   Liveness live(func_);
   // Recursively obtaining IR information.
   RecursionIR(&funcRegion, live);
+  if (walkFailed)
+    return failure();
   // the lifetime of the buffer.
   GenerateBufferLife();
   //InitializeInplacePairList();
+  return success();
 }
 
 bool MemLivenessAnalysis::isLocalMemPlan() const {
@@ -90,13 +93,21 @@ bool MemLivenessAnalysis::isGlobalWorkSpaceMemPlan() const {
 }
 
 void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
+  if (walkFailed)
+    return;
   auto result = region->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (walkFailed)
+      return WalkResult::interrupt();
     // recursive control flow
     if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
       RecursiveIfOp(ifOp, live);
+      if (walkFailed)
+        return WalkResult::interrupt();
       return WalkResult::skip();
     } else if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       RecursiveForOp(forOp, live);
+      if (walkFailed)
+        return WalkResult::interrupt();
       return WalkResult::skip();
     }
 
@@ -115,6 +126,29 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       if (failed(CheckLocalBufferAllocOp(op))) {
         return WalkResult::interrupt();
       }
+
+      // Optional multi-buffer intent: when present, PlanMemory will allocate
+      // ping/pong addresses for this buffer and materialize them via
+      // `pto.pointer_cast(addrs=[...,...])`.
+      if (auto mb = op->getAttr("pto.multi_buffer")) {
+        auto intAttr = dyn_cast<IntegerAttr>(mb);
+        if (!intAttr) {
+          op->emitError("expected 'pto.multi_buffer' to be an integer attribute");
+          return WalkResult::interrupt();
+        }
+        int64_t num = intAttr.getInt();
+        if (num == 1) {
+          // Explicitly marked as single-buffer: no action needed.
+        } else if (num == 2) {
+          // Record the multi-buffer factor for this alloc result.
+          if (!op->getResults().empty())
+            buffer2MultiNum[op->getResult(0)] = 2;
+        } else {
+          op->emitError("only 'pto.multi_buffer = 2' is supported currently");
+          return WalkResult::interrupt();
+        }
+      }
+
       UpdateOpBufferInfo(op, op->getResults());
       return WalkResult::advance();
     // } else if (isGlobalWorkSpaceMemPlan() &&
@@ -166,7 +200,8 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     return WalkResult::advance();
   });
   if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PlanMemory Traverse IR Failed! ");
+    walkFailed = true;
+    return;
   }
 }
 
@@ -216,6 +251,8 @@ void MemLivenessAnalysis::UpdateForOpBufferAlias(scf::ForOp forOp) {
 }
 
 void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
+  if (walkFailed)
+    return;
   // Process the operation of ForOp as follows:
   // alloca %allocA
   // %0 = scf.for %arg4 = %c0 to %c1024 step %c128 iter_args(%arg5 = %4)->
@@ -228,6 +265,8 @@ void MemLivenessAnalysis::RecursiveForOp(scf::ForOp forOp, Liveness live) {
   UpdateOpGenInfo(forBeginSeq, GetLiveBuffersInLoop(forOp, live));
   UpdateForOpInitArgsAlias(forOp);
   RecursionIR(&forOp.getRegion(), live);
+  if (walkFailed)
+    return;
   UpdateForOpBufferAlias(forOp);
   auto forEndSeq = UpdateLinearOperation(forOp.getOperation());
   OpKillHandle(forEndSeq, live, forOp->getBlock());
@@ -257,6 +296,8 @@ void MemLivenessAnalysis::UpdateIfOpBufferAlias(scf::IfOp ifOp,
 }
 
 void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
+  if (walkFailed)
+    return;
   // Process the operation of IfOp as follows:
   // %0 = scf.if %cond -> (memref<16xf16, #pto.address_space<ub>>)
   //        scf.yield %alloc0: memref<16xf16, #pto.address_space<ub>>
@@ -264,12 +305,16 @@ void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
   //        scf.yield %alloc1 : memref<16xf16, #pto.address_space<ub>>
   auto curIfThen = UpdateLinearOperation(ifOp.getOperation());
   RecursionIR(&ifOp.getThenRegion(), live);
+  if (walkFailed)
+    return;
   auto curIfElse = UpdateLinearOperation(ifOp.getOperation());
   UpdateIfOpBufferAlias(ifOp, ifOp.thenYield());
 
   auto curIfEnd = curIfElse;
   if (ifOp.elseBlock()) {
     RecursionIR(&ifOp.getElseRegion(), live);
+    if (walkFailed)
+      return;
     curIfEnd = UpdateLinearOperation(ifOp.getOperation());
     UpdateIfOpBufferAlias(ifOp, ifOp.elseYield());
   }
@@ -1968,7 +2013,8 @@ void PlanMemoryPass::runOnOperation() {
     // }
 
     MemLivenessAnalysis memLiveness(funcOp, this->memMode);
-    memLiveness.build();
+    if (failed(memLiveness.build()))
+      return signalPassFailure();
 
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enablePrintMemoryAllocatedSize,
