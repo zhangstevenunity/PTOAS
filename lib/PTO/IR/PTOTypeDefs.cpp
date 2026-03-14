@@ -61,9 +61,13 @@ Type TileBufType::parse(AsmParser &parser) {
   Type dtype;
   int64_t rows = 0, cols = 0;
   int64_t vrow = -1, vcol = -1;
-  std::string blayoutStr, slayoutStr;
-  int64_t fractal = 0;
-  uint32_t padInt;
+  TileBufConfigAttr defaultConfig = TileBufConfigAttr::getDefault(ctx);
+  std::string blayoutStr = stringifyBLayout(
+      llvm::cast<BLayoutAttr>(defaultConfig.getBLayout()).getValue()).str();
+  std::string slayoutStr = stringifySLayout(
+      llvm::cast<SLayoutAttr>(defaultConfig.getSLayout()).getValue()).str();
+  int64_t fractal = defaultConfig.getSFractalSize().getInt();
+  uint32_t padInt = 0;
 
   auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
     if (failed(parser.parseKeyword(expectedKey)))
@@ -133,39 +137,69 @@ Type TileBufType::parse(AsmParser &parser) {
             return Type();
         }
     }
-    if (failed(parser.parseComma())) return Type();
   }
 
-  // blayout=RowMajor
-  {
-    if (failed(parseKeyEq("blayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&blayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
+  if (failed(parser.parseOptionalGreater())) {
+    if (failed(parser.parseComma()))
+      return Type();
+
+    bool seenBLayout = false;
+    bool seenSLayout = false;
+    bool seenFractal = false;
+    bool seenPad = false;
+
+    while (true) {
+      StringRef key;
+      if (failed(parser.parseKeyword(&key)))
+        return Type();
+      if (failed(parser.parseEqual()))
+        return Type();
+
+      if (key == "blayout") {
+        if (seenBLayout) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate blayout");
+          return Type();
+        }
+        seenBLayout = true;
+        if (failed(parser.parseKeywordOrString(&blayoutStr)))
+          return Type();
+      } else if (key == "slayout") {
+        if (seenSLayout) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate slayout");
+          return Type();
+        }
+        seenSLayout = true;
+        if (failed(parser.parseKeywordOrString(&slayoutStr)))
+          return Type();
+      } else if (key == "fractal") {
+        if (seenFractal) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate fractal");
+          return Type();
+        }
+        seenFractal = true;
+        if (failed(parser.parseInteger(fractal)))
+          return Type();
+      } else if (key == "pad") {
+        if (seenPad) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate pad");
+          return Type();
+        }
+        seenPad = true;
+        if (failed(parser.parseInteger(padInt)))
+          return Type();
+      } else {
+        parser.emitError(parser.getCurrentLocation(),
+                         "unknown key in tile_buf type: ")
+            << key;
+        return Type();
+      }
+
+      if (succeeded(parser.parseOptionalGreater()))
+        break;
+      if (failed(parser.parseComma()))
+        return Type();
+    }
   }
-
-
-  // slayout=NoneBox
-  {
-    if (failed(parseKeyEq("slayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&slayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // fractal=512
-  {
-    if (failed(parseKeyEq("fractal"))) return Type();
-    if (failed(parser.parseInteger(fractal))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // pad=Null
-  {
-    if (failed(parseKeyEq("pad"))) return Type();
-    if (failed(parser.parseInteger(padInt))) return Type();
-  }
-
-  if (failed(parser.parseGreater()))
-    return Type();
 
   // -------- 语义校验/构造 --------
   if (rows < 0 || cols < 0) {
@@ -280,6 +314,11 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     printer << ", v_col=";
     if (vcol < 0) printer << "?";
     else printer << vcol;
+
+    if (cfg.isDefault()) {
+        printer << ">";
+        return;
+    }
 
     printer << ", blayout=" << stringifyBLayout(blayout.getValue())
         << ", slayout=" << stringifySLayout(slayout.getValue())
