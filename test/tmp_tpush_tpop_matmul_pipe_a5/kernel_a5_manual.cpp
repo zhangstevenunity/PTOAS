@@ -25,15 +25,14 @@ __global__ AICORE void matmul_tpush_tpop_print(__gm__ float *gm_a, __gm__ float 
 
     Tile<TileType::Acc, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 1024, PadValue::Null> accC;
     TASSIGN(accC, base0);
-    Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512, PadValue::Null> vecOut;
+    Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512, PadValue::Null> vecOut;
     TASSIGN(vecOut, base0);
 
     auto pipe = TPipe<0, FIFOType::VEC_FIFO, 8, 8,
                       Tile<TileType::Acc, float, 16, 16, BLayout::ColMajor, 16, 16, SLayout::RowMajor, 1024,
                            PadValue::Null>,
-                      Tile<TileType::Vec, float, 16, 16, BLayout::RowMajor, 16, 16, SLayout::NoneBox, 512,
-                           PadValue::Null>,
-                      TSyncOpType::TMOV_C2UB, TSyncOpType::NONE, VecCubeRatio::V2C1_VECS>(c2v_consumer_buf);
+                      Tile<TileType::Vec, float, 8, 16, BLayout::RowMajor, 8, 16, SLayout::NoneBox, 512,
+                           PadValue::Null>>(c2v_consumer_buf);
 
 #if defined(__DAV_CUBE__)
     using GTShape = pto::Shape<1, 1, 1, 16, 16>;

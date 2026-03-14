@@ -7,7 +7,7 @@
 - `kernel.mlir`
   - PTOAS 源 IR，表达目标链路：
     - Cube: `tload(gm->mat)` -> `tmov(mat->left/right)` -> `tmatmul` -> `tpush(acc, pipe)`
-    - Vector: `tpop(vec, pipe)` -> `tprint`
+    - Vector: `tpop(pipe)` -> `get_fifo_tile(pipe, slot)` -> `tmov(fifo->print tile)` -> `tprint`
 - `kernel_a5_manual.cpp`
   - 可运行的 A5 kernel C++（保留 `TPRINT`）
 - `main.cpp`
@@ -36,12 +36,13 @@ awk 'BEGIN{emit=0} /^#include "pto\/pto-inst.hpp"/{emit=1} emit{print}' /tmp/tpu
 将 `kernel_a5_manual.cpp` + `main.cpp` 按你现有 A5 st 工程的 CMake 方式接入并编译。
 
 运行后，Vector 段执行 `TPRINT(vecOut)`，日志里应可看到打印输出。
-本样例里理论结果应是全 `1.0`（`A * B = I * Ones = Ones`）。
+本样例里理论打印结果应是全 `1.0`（`A * B = I * Ones = Ones`）。
+由于 A5 C2V 示例里 consumer tile 为 `8x16` Vec tile，因此打印的是对应的 `8x16` 结果块。
 
 ## 3. 参数约定
 
 - Tile 形状：`16x16`
 - 输入类型：`f32`
 - 输出累加类型：`f32`
-- `pipe`：`dir_mask = 1`，C2V，A5 下映射 UB `VEC_FIFO`
+- `pipe`：`initialize_l2l_pipe {dir_mask = 1}`，C2V，A5 下映射 UB `VEC_FIFO`
 - `main.cpp` 里 `c2vBuf = 0x10000` 为示例 UB 基址
