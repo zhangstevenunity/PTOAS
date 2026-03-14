@@ -1,4 +1,5 @@
 // RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync %s 2>&1 | FileCheck %s --check-prefix=SYNC
 
 module {
   func.func @pipe_emitc_a5_dirmask(
@@ -59,3 +60,8 @@ module {
 // CHECK-DAG: TPUSH(
 // CHECK-DAG: TPOP(
 // CHECK-DAG: TFREE(
+
+// SYNC-NOT: assigned_pipe
+// SYNC: pto.tpop_internal(
+// SYNC: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
+// SYNC: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]

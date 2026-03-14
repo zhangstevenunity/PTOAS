@@ -3733,7 +3733,34 @@ def TPushOp : PTO_TOp<"tpush", [
   }];
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_MTE1; }
+    ::mlir::pto::PIPE getPipe() {
+      auto isAddressSpace = [](Type ty, ::mlir::pto::AddressSpace target) -> bool {
+        if (auto tb = ::mlir::dyn_cast<::mlir::pto::TileBufType>(ty)) {
+          if (auto as = ::mlir::dyn_cast_or_null<::mlir::pto::AddressSpaceAttr>(
+                  tb.getMemorySpace()))
+            return as.getAddressSpace() == target;
+          return false;
+        }
+        if (auto mr = ::mlir::dyn_cast<::mlir::MemRefType>(ty)) {
+          if (auto ms = mr.getMemorySpace()) {
+            if (auto as = ::mlir::dyn_cast<::mlir::pto::AddressSpaceAttr>(ms))
+              return as.getAddressSpace() == target;
+          }
+          return false;
+        }
+        return false;
+      };
+
+      auto pipeTy = ::mlir::dyn_cast<::mlir::pto::PipeType>(getPipeHandle().getType());
+      if (!pipeTy)
+        return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+
+      if (isAddressSpace(pipeTy.getSrcTileType(), ::mlir::pto::AddressSpace::ACC))
+        return ::mlir::pto::PIPE::PIPE_FIX;
+      if (isAddressSpace(pipeTy.getSrcTileType(), ::mlir::pto::AddressSpace::VEC))
+        return ::mlir::pto::PIPE::PIPE_MTE3;
+      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+    }
   }];
 }
 
@@ -3821,8 +3848,7 @@ def TPopInternalOp : PTO_TOp<"tpop_internal", [
 
   let arguments = (ins
       PTODpsType:$tile,
-      PipeType:$pipe_handle,
-      PTO_PipeAttr:$assigned_pipe
+      PipeType:$pipe_handle
   );
 
   let results = (outs);
@@ -3830,12 +3856,17 @@ def TPopInternalOp : PTO_TOp<"tpop_internal", [
 
   let assemblyFormat = [{
     `(` $tile `,` $pipe_handle `:` qualified(type($tile)) `,` qualified(type($pipe_handle)) `)`
-    `{` `assigned_pipe` `=` $assigned_pipe `}`
     attr-dict
   }];
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return getAssignedPipe().getPipe(); }
+    ::mlir::pto::PIPE getPipe() {
+      if (getPipeHandle().getDefiningOp<::mlir::pto::InitializeL2G2LPipeOp>())
+        return ::mlir::pto::PIPE::PIPE_MTE2;
+      if (getPipeHandle().getDefiningOp<::mlir::pto::InitializeL2LPipeOp>())
+        return ::mlir::pto::PIPE::PIPE_S;
+      return ::mlir::pto::PIPE::PIPE_UNASSIGNED;
+    }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getTileMutable(); }
   }];
 }

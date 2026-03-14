@@ -18,14 +18,6 @@ using namespace mlir::pto;
 
 namespace {
 
-static FailureOr<pto::PIPE> getAssignedPipeForConsumer(Value pipeHandle) {
-  if (pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>())
-    return pto::PIPE::PIPE_MTE2;
-  if (pipeHandle.getDefiningOp<InitializeL2LPipeOp>())
-    return pto::PIPE::PIPE_S;
-  return failure();
-}
-
 static LogicalResult validateSlotUsers(func::FuncOp funcOp) {
   WalkResult walkResult = funcOp.walk([&](TPopOp op) {
     GetFifoTileOp getFifoTileOp;
@@ -105,17 +97,10 @@ struct LowerGetFifoTilePattern : public OpRewritePattern<GetFifoTileOp> {
     if (!tpopOp)
       return rewriter.notifyMatchFailure(op, "slot_id must come from pto.tpop");
 
-    auto assignedPipe = getAssignedPipeForConsumer(op.getPipeHandle());
-    if (failed(assignedPipe)) {
-      return rewriter.notifyMatchFailure(
-          op, "pipe_handle must be produced by a pipe initialization op");
-    }
-
     auto declaredTile =
         rewriter.create<DeclareTileOp>(op.getLoc(), op.getTile().getType());
-    rewriter.create<TPopInternalOp>(
-        op.getLoc(), declaredTile.getTile(), op.getPipeHandle(),
-        PipeAttr::get(rewriter.getContext(), *assignedPipe));
+    rewriter.create<TPopInternalOp>(op.getLoc(), declaredTile.getTile(),
+                                    op.getPipeHandle());
     rewriter.replaceOp(op, declaredTile.getTile());
     return success();
   }

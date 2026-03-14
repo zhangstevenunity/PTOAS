@@ -2092,16 +2092,13 @@ static LogicalResult verifyPipeTileType(Operation *op, Type pipeType,
 LogicalResult TPushOp::verify() {
   if (!isInsideSectionCube(getOperation()) && !isInsideSectionVector(getOperation()))
     return emitOpError("must be inside a section.cube or section.vector");
-  return verifyPipeTileType(getOperation(), getPipeHandle().getType(),
-                            getTile().getType(), /*isPush=*/true);
-}
-
-static FailureOr<pto::PIPE> getConsumerAssignedPipe(Value pipeHandle) {
-  if (pipeHandle.getDefiningOp<InitializeL2G2LPipeOp>())
-    return pto::PIPE::PIPE_MTE2;
-  if (pipeHandle.getDefiningOp<InitializeL2LPipeOp>())
-    return pto::PIPE::PIPE_S;
-  return failure();
+  if (failed(verifyPipeTileType(getOperation(), getPipeHandle().getType(),
+                                getTile().getType(), /*isPush=*/true)))
+    return failure();
+  if (getPipe() == pto::PIPE::PIPE_UNASSIGNED)
+    return emitOpError(
+        "pipe_handle source tile type must map to a supported producer pipe");
+  return success();
 }
 
 LogicalResult TPopOp::verify() {
@@ -2144,18 +2141,10 @@ LogicalResult TPopInternalOp::verify() {
                                 getTile().getType(), /*isPush=*/false)))
     return failure();
 
-  pto::PIPE assignedPipe = getAssignedPipe().getPipe();
-  if (assignedPipe == pto::PIPE::PIPE_ALL ||
-      assignedPipe == pto::PIPE::PIPE_UNASSIGNED) {
+  pto::PIPE pipe = getPipe();
+  if (pipe == pto::PIPE::PIPE_ALL || pipe == pto::PIPE::PIPE_UNASSIGNED)
     return emitOpError(
-        "assigned_pipe must be a concrete pipe, not PIPE_ALL/PIPE_UNASSIGNED");
-  }
-
-  auto expectedPipe = getConsumerAssignedPipe(getPipeHandle());
-  if (failed(expectedPipe))
-    return emitOpError("pipe_handle must be produced by a pipe initialization op");
-  if (assignedPipe != *expectedPipe)
-    return emitOpError("assigned_pipe does not match the pipe_handle kind");
+        "pipe_handle must be produced by a supported pipe initialization op");
   return success();
 }
 
