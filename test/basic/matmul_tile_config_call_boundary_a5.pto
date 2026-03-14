@@ -13,6 +13,6 @@ module attributes {"pto.device-spec" = "Ascend910B1"} {
 }
 
 // CHECK: __global__ AICORE __ca__ float* callee()
-// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null>
+// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null>
 // CHECK: __global__ AICORE __ca__ float* caller()
 // CHECK: __ca__ float* v1 = callee();

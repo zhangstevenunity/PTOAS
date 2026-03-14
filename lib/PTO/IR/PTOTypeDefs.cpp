@@ -18,8 +18,15 @@ TileBufConfigAttr TileBufType::getConfigAttr() const {
     return cfg;
   }
 }
+
+bool TileBufType::hasExplicitConfig() const {
+  if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>)
+    return static_cast<bool>(getConfig());
+  return static_cast<bool>(llvm::dyn_cast_or_null<TileBufConfigAttr>(getConfig()));
+}
+
 bool TileBufType::hasNonDefaultConfig() const {
-  return !getConfigAttr().isDefault();
+  return hasExplicitConfig() && !getConfigAttr().isDefault();
 }
 
 mlir::Attribute TileBufType::getBLayoutAttr() const { return getConfigAttr().getBLayout(); }
@@ -68,6 +75,7 @@ Type TileBufType::parse(AsmParser &parser) {
       llvm::cast<SLayoutAttr>(defaultConfig.getSLayout()).getValue()).str();
   int64_t fractal = defaultConfig.getSFractalSize().getInt();
   uint32_t padInt = 0;
+  bool hasExplicitConfig = false;
 
   auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
     if (failed(parser.parseKeyword(expectedKey)))
@@ -140,6 +148,7 @@ Type TileBufType::parse(AsmParser &parser) {
   }
 
   if (failed(parser.parseOptionalGreater())) {
+    hasExplicitConfig = true;
     if (failed(parser.parseComma()))
       return Type();
 
@@ -243,7 +252,9 @@ Type TileBufType::parse(AsmParser &parser) {
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
   auto padAttr = PadValueAttr::get(ctx, pv.value());
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
+  TileBufConfigAttr cfg;
+  if (hasExplicitConfig)
+    cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
@@ -284,8 +295,9 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     int64_t rows = shape.size() > 0 ? shape[0] : 0;
     int64_t cols = shape.size() > 1 ? shape[1] : 0;
 
-    auto cfg = getConfigAttr();
-    if (!cfg) cfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
+    bool hasExplicit = hasExplicitConfig();
+    auto cfg = hasExplicit ? getConfigAttr()
+                           : mlir::pto::TileBufConfigAttr::getDefault(getContext());
 
     llvm::StringRef locStr = stringifyLocFromMemorySpace(getMemorySpace());
 
@@ -315,7 +327,7 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     if (vcol < 0) printer << "?";
     else printer << vcol;
 
-    if (cfg.isDefault()) {
+    if (!hasExplicit) {
         printer << ">";
         return;
     }

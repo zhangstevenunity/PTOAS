@@ -1,0 +1,14 @@
+// RUN: ptoas --pto-arch=a5 %s 2>&1 1>/dev/null | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @preserve_explicit_a5() {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=1024, pad=0>
+    return
+  }
+}
+
+// CHECK: pto.bind_tile {{.*}}config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<none_box>, s_fractal_size=512, pad=#pto.pad_value<null>>
+// CHECK: pto.bind_tile {{.*}}config = #pto.tile_buf_config<blayout=#pto.blayout<col_major>, slayout=#pto.slayout<row_major>, s_fractal_size=512, pad=#pto.pad_value<null>>
+// CHECK: pto.bind_tile {{.*}}config = #pto.tile_buf_config<blayout=#pto.blayout<row_major>, slayout=#pto.slayout<col_major>, s_fractal_size=1024, pad=#pto.pad_value<null>>

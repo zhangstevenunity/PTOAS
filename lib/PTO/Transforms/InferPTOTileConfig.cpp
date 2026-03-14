@@ -72,6 +72,9 @@ static TileBufConfigAttr inferTileConfigForSpace(MLIRContext *ctx,
 }
 
 static TileBufType normalizeTileBufType(TileBufType tileTy, PTOArch arch) {
+  if (tileTy.hasExplicitConfig())
+    return tileTy;
+
   auto spaceAttr =
       dyn_cast_or_null<AddressSpaceAttr>(tileTy.getMemorySpace());
   if (!spaceAttr)
@@ -219,24 +222,15 @@ struct InferPTOTileConfigPass
           for (Value result : op.getResults())
             (void)normalizeValue(result, arch);
 
-          if (auto bind = dyn_cast<pto::BindTileOp>(op)) {
-            auto currentConfig = bind.getConfigAttr();
-            if (!currentConfig)
-              currentConfig = TileBufConfigAttr::getDefault(&getContext());
-            auto desiredConfig = inferMemRefTileConfig(
-                bind.getResult().getType(), arch, &getContext(), currentConfig);
-            if (desiredConfig && desiredConfig != currentConfig)
-              bind->setAttr("config", desiredConfig);
-          } else if (auto pointerCast = dyn_cast<pto::PointerCastOp>(op)) {
-            auto currentConfig =
-                dyn_cast_or_null<TileBufConfigAttr>(pointerCast->getAttr("config"));
-            if (!currentConfig)
-              currentConfig = TileBufConfigAttr::getDefault(&getContext());
-            auto desiredConfig = inferMemRefTileConfig(
-                pointerCast.getResult().getType(), arch, &getContext(),
-                currentConfig);
-            if (desiredConfig && desiredConfig != currentConfig)
-              pointerCast->setAttr("config", desiredConfig);
+          if (auto pointerCast = dyn_cast<pto::PointerCastOp>(op)) {
+            auto currentConfig = pointerCast.getConfig();
+            if (!currentConfig) {
+              auto desiredConfig = inferMemRefTileConfig(
+                  pointerCast.getResult().getType(), arch, &getContext(),
+                  TileBufConfigAttr());
+              if (desiredConfig)
+                pointerCast->setAttr("config", desiredConfig);
+            }
           }
 
           for (Region &nested : op.getRegions())

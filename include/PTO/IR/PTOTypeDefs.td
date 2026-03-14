@@ -115,7 +115,7 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     "mlir::Type":$elementType,
     "mlir::Attribute":$memorySpace,
     ArrayRefParameter<"int64_t">:$validShape,
-    "mlir::pto::TileBufConfigAttr":$config // TileBufConfigAttr (or null -> default)
+    "mlir::pto::TileBufConfigAttr":$config // nullable: null means config omitted in source
   );
 
   let hasCustomAssemblyFormat = 1;
@@ -170,6 +170,7 @@ def TileBufType : TypeDef<PTO_Dialect, "TileBuf"> {
     }
 
     mlir::pto::TileBufConfigAttr getConfigAttr() const;
+    bool hasExplicitConfig() const;
     bool hasNonDefaultConfig() const;
 
     // ✅ 返回强类型 Attr，而不是 enum
