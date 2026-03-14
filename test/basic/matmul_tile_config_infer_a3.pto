@@ -1,0 +1,15 @@
+// RUN: ptoas --pto-arch=a3 %s | FileCheck %s
+
+module attributes {"pto.device-spec" = "Ascend910B1"} {
+  func.func @matmul_tile_config_infer_a3() {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>
+    pto.tmatmul ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>, !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32>)
+    return
+  }
+}
+
+// CHECK: Tile<TileType::Left, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::RowMajor, 512, PadValue::Null>
+// CHECK: Tile<TileType::Right, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::ColMajor, 512, PadValue::Null>
+// CHECK: Tile<TileType::Acc, float, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor, 1024, PadValue::Null>

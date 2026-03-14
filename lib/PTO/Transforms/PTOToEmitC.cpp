@@ -2082,6 +2082,11 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     emitcFunc.setSpecifiersAttr(
         rewriter.getStrArrayAttr({"__global__ AICORE"}));
 
+    if (op.isExternal()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+
     // Inline the original body, then convert region/block argument types to
     // match the converted signature (also covers CFG blocks introduced by
     // pre-lowering, e.g. scf.while -> cf.br/cf.cond_br).
@@ -2104,6 +2109,26 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     }
 
     rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+struct CallToEmitC : public OpConversionPattern<func::CallOp> {
+  using OpConversionPattern<func::CallOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(func::CallOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    SmallVector<Type> resultTypes;
+    if (failed(getTypeConverter()->convertTypes(op.getResultTypes(), resultTypes)))
+      return rewriter.notifyMatchFailure(op, "failed to convert call result types");
+
+    auto callee = op.getCalleeAttr();
+    if (!callee)
+      return rewriter.notifyMatchFailure(op, "expected direct callee symbol");
+
+    auto newCall = rewriter.create<emitc::CallOpaqueOp>(
+        op.getLoc(), resultTypes, callee.getValue(), adaptor.getOperands());
+    rewriter.replaceOp(op, newCall.getResults());
     return success();
   }
 };
@@ -7306,6 +7331,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOOrsToEmitC>(typeConverter, ctx);
   patterns.add<PTOLogToEmitC>(typeConverter, ctx);
   patterns.add<FuncToEmitC>(typeConverter, ctx);
+  patterns.add<CallToEmitC>(typeConverter, ctx);
   patterns.add<PTOMovToEmitC>(typeConverter, ctx);
   patterns.add<ArithConstantToEmitC>(typeConverter, ctx);
   patterns.add<ArithAddUIExtendedToEmitC>(typeConverter, ctx);

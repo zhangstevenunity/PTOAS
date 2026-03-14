@@ -69,6 +69,19 @@ def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
   let dependentDialects = ["pto::PTODialect", "arith::ArithDialect"];
 }
 
+def InferPTOTileConfig : Pass<"pto-infer-tile-config", "ModuleOp"> {
+  let summary = "Infer arch-aware tile config for matmul memory spaces";
+  let description = [{
+    Normalizes LEFT/RIGHT/ACC tile buffer configs based on `pto.target_arch`
+    so users do not need to manually thread BLayout/SLayout/fractal choices.
+    This updates both high-level tile_buf values and pre-lowered
+    pto.pointer_cast/pto.bind_tile config attributes, while keeping
+    func.func / func.call interfaces in sync.
+  }];
+  let constructor = "mlir::pto::createInferPTOTileConfigPass()";
+  let dependentDialects = ["pto::PTODialect", "func::FuncDialect"];
+}
+
 
 def InferPTOMemScope : Pass<"pto-infer-mem-scope"> {
   let summary = "Infer memory scope for PTO Ops";

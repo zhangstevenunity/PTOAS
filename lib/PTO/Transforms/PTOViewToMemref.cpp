@@ -407,6 +407,79 @@ static Type convertPTOTypeToMemRef(Type t) {
   return t;
 }
 
+static FunctionType convertFunctionTypeToMemRef(FunctionType fnTy,
+                                                MLIRContext *ctx) {
+  SmallVector<Type> newInputs;
+  newInputs.reserve(fnTy.getNumInputs());
+  for (Type t : fnTy.getInputs())
+    newInputs.push_back(convertPTOTypeToMemRef(t));
+
+  SmallVector<Type> newResults;
+  newResults.reserve(fnTy.getNumResults());
+  for (Type t : fnTy.getResults())
+    newResults.push_back(convertPTOTypeToMemRef(t));
+
+  return FunctionType::get(ctx, newInputs, newResults);
+}
+
+static LogicalResult rewriteFunctionInterfacesToMemRef(ModuleOp mod,
+                                                       MLIRContext *ctx) {
+  for (auto func : mod.getOps<func::FuncOp>()) {
+    auto newFnTy = convertFunctionTypeToMemRef(func.getFunctionType(), ctx);
+
+    if (!func.isExternal()) {
+      Block &entry = func.front();
+      if (entry.getNumArguments() != newFnTy.getNumInputs()) {
+        return func.emitOpError(
+            "entry block argument count does not match rewritten signature");
+      }
+
+      for (unsigned i = 0; i < entry.getNumArguments(); ++i) {
+        if (entry.getArgument(i).getType() != newFnTy.getInput(i))
+          entry.getArgument(i).setType(newFnTy.getInput(i));
+      }
+    }
+
+    if (func.getFunctionType() != newFnTy)
+      func.setFunctionType(newFnTy);
+  }
+
+  SmallVector<func::CallOp> callOps;
+  mod.walk([&](func::CallOp call) { callOps.push_back(call); });
+
+  for (func::CallOp call : callOps) {
+    auto callee = mod.lookupSymbol<func::FuncOp>(call.getCallee());
+    if (!callee)
+      continue;
+
+    auto calleeTy = callee.getFunctionType();
+    if (call.getNumOperands() != calleeTy.getNumInputs()) {
+      return call.emitOpError("operand count does not match rewritten callee "
+                              "signature for ")
+             << callee.getSymName();
+    }
+
+    bool needsRewrite = !llvm::equal(call.getResultTypes(), calleeTy.getResults());
+    for (auto [idx, operand] : llvm::enumerate(call.getOperands())) {
+      if (operand.getType() != calleeTy.getInput(idx)) {
+        needsRewrite = true;
+        break;
+      }
+    }
+    if (!needsRewrite)
+      continue;
+
+    OpBuilder builder(call);
+    auto newCall =
+        builder.create<func::CallOp>(call.getLoc(), callee, call.getOperands());
+    newCall->setAttrs(call->getAttrs());
+    call.replaceAllUsesWith(newCall.getResults());
+    call.erase();
+  }
+
+  return success();
+}
+
 // Ensure scf.if result types follow the rewritten yield operand types.
 // PTOViewToMemref rewrites tile values to memref in branch bodies, but scf.if
 // result types are not auto-updated by those op-local rewrites.
@@ -475,6 +548,11 @@ struct PTOViewToMemrefPass
 
     // Debug output before pass
     // dumpPretty(mod.getOperation(), llvm::errs());
+
+    if (failed(rewriteFunctionInterfacesToMemRef(mod, ctx))) {
+      signalPassFailure();
+      return;
+    }
 
     for (auto func : mod.getOps<func::FuncOp>()) {
       if (func.isExternal()) continue;

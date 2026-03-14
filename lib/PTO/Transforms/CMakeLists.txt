@@ -13,6 +13,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOPlanMemory.cpp
   PTORemoveRedundantBarrier.cpp
   InferPTOLayout.cpp
+  InferPTOTileConfig.cpp
   BufferizableOpInterfaceImpl.cpp
   ConvertToPTOOp.cpp
   PTOHighDimLowering.cpp

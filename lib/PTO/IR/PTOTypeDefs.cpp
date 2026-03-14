@@ -18,8 +18,15 @@ TileBufConfigAttr TileBufType::getConfigAttr() const {
     return cfg;
   }
 }
+
+bool TileBufType::hasExplicitConfig() const {
+  if constexpr (std::is_same_v<decltype(getConfig()), TileBufConfigAttr>)
+    return static_cast<bool>(getConfig());
+  return static_cast<bool>(llvm::dyn_cast_or_null<TileBufConfigAttr>(getConfig()));
+}
+
 bool TileBufType::hasNonDefaultConfig() const {
-  return !getConfigAttr().isDefault();
+  return hasExplicitConfig() && !getConfigAttr().isDefault();
 }
 
 mlir::Attribute TileBufType::getBLayoutAttr() const { return getConfigAttr().getBLayout(); }
@@ -61,9 +68,14 @@ Type TileBufType::parse(AsmParser &parser) {
   Type dtype;
   int64_t rows = 0, cols = 0;
   int64_t vrow = -1, vcol = -1;
-  std::string blayoutStr, slayoutStr;
-  int64_t fractal = 0;
-  uint32_t padInt;
+  TileBufConfigAttr defaultConfig = TileBufConfigAttr::getDefault(ctx);
+  std::string blayoutStr = stringifyBLayout(
+      llvm::cast<BLayoutAttr>(defaultConfig.getBLayout()).getValue()).str();
+  std::string slayoutStr = stringifySLayout(
+      llvm::cast<SLayoutAttr>(defaultConfig.getSLayout()).getValue()).str();
+  int64_t fractal = defaultConfig.getSFractalSize().getInt();
+  uint32_t padInt = 0;
+  bool hasExplicitConfig = false;
 
   auto parseKeyEq = [&](StringRef expectedKey) -> LogicalResult {
     if (failed(parser.parseKeyword(expectedKey)))
@@ -133,39 +145,70 @@ Type TileBufType::parse(AsmParser &parser) {
             return Type();
         }
     }
-    if (failed(parser.parseComma())) return Type();
   }
 
-  // blayout=RowMajor
-  {
-    if (failed(parseKeyEq("blayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&blayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
+  if (failed(parser.parseOptionalGreater())) {
+    hasExplicitConfig = true;
+    if (failed(parser.parseComma()))
+      return Type();
+
+    bool seenBLayout = false;
+    bool seenSLayout = false;
+    bool seenFractal = false;
+    bool seenPad = false;
+
+    while (true) {
+      StringRef key;
+      if (failed(parser.parseKeyword(&key)))
+        return Type();
+      if (failed(parser.parseEqual()))
+        return Type();
+
+      if (key == "blayout") {
+        if (seenBLayout) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate blayout");
+          return Type();
+        }
+        seenBLayout = true;
+        if (failed(parser.parseKeywordOrString(&blayoutStr)))
+          return Type();
+      } else if (key == "slayout") {
+        if (seenSLayout) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate slayout");
+          return Type();
+        }
+        seenSLayout = true;
+        if (failed(parser.parseKeywordOrString(&slayoutStr)))
+          return Type();
+      } else if (key == "fractal") {
+        if (seenFractal) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate fractal");
+          return Type();
+        }
+        seenFractal = true;
+        if (failed(parser.parseInteger(fractal)))
+          return Type();
+      } else if (key == "pad") {
+        if (seenPad) {
+          parser.emitError(parser.getCurrentLocation(), "duplicate pad");
+          return Type();
+        }
+        seenPad = true;
+        if (failed(parser.parseInteger(padInt)))
+          return Type();
+      } else {
+        parser.emitError(parser.getCurrentLocation(),
+                         "unknown key in tile_buf type: ")
+            << key;
+        return Type();
+      }
+
+      if (succeeded(parser.parseOptionalGreater()))
+        break;
+      if (failed(parser.parseComma()))
+        return Type();
+    }
   }
-
-
-  // slayout=NoneBox
-  {
-    if (failed(parseKeyEq("slayout"))) return Type();
-    if (failed(parser.parseKeywordOrString(&slayoutStr))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // fractal=512
-  {
-    if (failed(parseKeyEq("fractal"))) return Type();
-    if (failed(parser.parseInteger(fractal))) return Type();
-    if (failed(parser.parseComma())) return Type();
-  }
-
-  // pad=Null
-  {
-    if (failed(parseKeyEq("pad"))) return Type();
-    if (failed(parser.parseInteger(padInt))) return Type();
-  }
-
-  if (failed(parser.parseGreater()))
-    return Type();
 
   // -------- 语义校验/构造 --------
   if (rows < 0 || cols < 0) {
@@ -209,7 +252,9 @@ Type TileBufType::parse(AsmParser &parser) {
       IntegerAttr::get(IntegerType::get(ctx, 32), fractal);
   auto padAttr = PadValueAttr::get(ctx, pv.value());
   auto memorySpaceAttr = AddressSpaceAttr::get(ctx, memorySpace.value());
-  auto cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
+  TileBufConfigAttr cfg;
+  if (hasExplicitConfig)
+    cfg = TileBufConfigAttr::get(ctx, blAttr, slAttr, fractalAttr, padAttr);
 
   SmallVector<int64_t, 2> shape{rows, cols};
   SmallVector<int64_t, 2> validShape{vrow, vcol};
@@ -250,8 +295,9 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     int64_t rows = shape.size() > 0 ? shape[0] : 0;
     int64_t cols = shape.size() > 1 ? shape[1] : 0;
 
-    auto cfg = getConfigAttr();
-    if (!cfg) cfg = mlir::pto::TileBufConfigAttr::getDefault(getContext());
+    bool hasExplicit = hasExplicitConfig();
+    auto cfg = hasExplicit ? getConfigAttr()
+                           : mlir::pto::TileBufConfigAttr::getDefault(getContext());
 
     llvm::StringRef locStr = stringifyLocFromMemorySpace(getMemorySpace());
 
@@ -280,6 +326,11 @@ void mlir::pto::TileBufType::print(mlir::AsmPrinter &printer) const {
     printer << ", v_col=";
     if (vcol < 0) printer << "?";
     else printer << vcol;
+
+    if (!hasExplicit) {
+        printer << ">";
+        return;
+    }
 
     printer << ", blayout=" << stringifyBLayout(blayout.getValue())
         << ", slayout=" << stringifySLayout(slayout.getValue())
