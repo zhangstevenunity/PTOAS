@@ -4743,6 +4743,31 @@ struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
   }
 };
 //===----------------------------------------------------------------------===//
+// pto.tassemble lowering -> TINSERT(dst, src, indexRow, indexCol)
+//===----------------------------------------------------------------------===//
+
+struct PTOAssembleToEmitC : public OpConversionPattern<pto::TAssembleOp> {
+  using OpConversionPattern<pto::TAssembleOp>::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::TAssembleOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+
+    Value src = peelUnrealized(adaptor.getSrc());
+    Value dst = peelUnrealized(adaptor.getDst());
+    Value r0  = peelUnrealized(adaptor.getIndexRow());
+    Value c0  = peelUnrealized(adaptor.getIndexCol());
+
+    rewriter.create<emitc::CallOpaqueOp>(
+        loc, TypeRange{}, "TINSERT",
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/ValueRange{dst, src, r0, c0});
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+//===----------------------------------------------------------------------===//
 // pto.tfillpad lowering -> TFILLPAD(dst, src)
 //===----------------------------------------------------------------------===//
 
@@ -7298,7 +7323,7 @@ static void populatePTOToEmitCPatterns(RewritePatternSet &patterns,
   patterns.add<PTOExpandsToEmitC>(typeConverter, ctx);
   patterns.add<PTOOrToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartAddToEmitC>(typeConverter, ctx);
-  patterns.add<PTOExtractToEmitC>(typeConverter, ctx);
+  patterns.add<PTOExtractToEmitC, PTOAssembleToEmitC>(typeConverter, ctx);
   patterns.add<PTOFillPadToEmitC, PTOFillPadExpandToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherToEmitC>(typeConverter, ctx);
   patterns.add<PTOGatherbToEmitC>(typeConverter, ctx);

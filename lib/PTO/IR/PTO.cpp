@@ -1528,6 +1528,75 @@ mlir::LogicalResult mlir::pto::TExtractOp::verify() {
   return mlir::success();
 }
 //===----------------------------------------------------------------------===//
+// TAssembleOp_DPS verifier
+//===----------------------------------------------------------------------===//
+
+mlir::LogicalResult mlir::pto::TAssembleOp::verify() {
+  Type srcTy = getSrc().getType();
+  Type dstTy = getDst().getType();
+  if (!isPTOShapedLike(srcTy) || !isPTOShapedLike(dstTy))
+    return emitOpError("expects src/dst to be PTO shaped-like types");
+
+  auto srcShape = getShapeVec(srcTy);
+  auto dstShape = getShapeVec(dstTy);
+  if (srcShape.size() != 2 || dstShape.size() != 2)
+    return emitOpError("expects rank-2 shaped types for src/dst");
+
+  Type srcElemTy = getElemTy(srcTy);
+  Type dstElemTy = getElemTy(dstTy);
+  bool sameElemTy = srcElemTy == dstElemTy;
+  bool castElemTy =
+      srcElemTy.isF32() && (dstElemTy.isF16() || dstElemTy.isBF16());
+  if (!sameElemTy && !castElemTy)
+    return emitOpError(
+        "expects src/dst element types to match, or src=f32 with dst=f16/bf16");
+
+  if (!getIndexRow().getType().isIndex() || !getIndexCol().getType().isIndex())
+    return emitOpError("expects indexRow/indexCol to be index type");
+
+  auto readConstIndex = [&](Value v, int64_t &out) -> bool {
+    if (auto cOp = v.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
+      out = cOp.value();
+      return true;
+    }
+    if (auto cInt = v.getDefiningOp<mlir::arith::ConstantIntOp>()) {
+      out = cInt.value();
+      return true;
+    }
+    if (auto cOp = v.getDefiningOp<mlir::arith::ConstantOp>()) {
+      if (auto ia = mlir::dyn_cast<mlir::IntegerAttr>(cOp.getValue())) {
+        out = ia.getInt();
+        return true;
+      }
+    }
+    return false;
+  };
+
+  int64_t r0 = 0;
+  int64_t c0 = 0;
+  bool rowConst = readConstIndex(getIndexRow(), r0);
+  bool colConst = readConstIndex(getIndexCol(), c0);
+  if (rowConst && r0 < 0)
+    return emitOpError("indexRow must be non-negative");
+  if (colConst && c0 < 0)
+    return emitOpError("indexCol must be non-negative");
+
+  int64_t srcRows = srcShape[0];
+  int64_t srcCols = srcShape[1];
+  int64_t dstRows = dstShape[0];
+  int64_t dstCols = dstShape[1];
+  if (rowConst && srcRows != mlir::ShapedType::kDynamic &&
+      dstRows != mlir::ShapedType::kDynamic &&
+      r0 + srcRows > dstRows)
+    return emitOpError("indexRow + src rows exceeds dst rows");
+  if (colConst && srcCols != mlir::ShapedType::kDynamic &&
+      dstCols != mlir::ShapedType::kDynamic &&
+      c0 + srcCols > dstCols)
+    return emitOpError("indexCol + src cols exceeds dst cols");
+
+  return mlir::success();
+}
+//===----------------------------------------------------------------------===//
 // TFillPadOp_DPS verifier
 //===----------------------------------------------------------------------===//
 
@@ -4277,6 +4346,13 @@ void TExpandsOp::getEffects(
 
 // TEXTRACT: Read(src) -> Write(dst)
 void TExtractOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(getSrcMutable());
+  PTO_ADD_WRITE(getDstMutable());
+}
+
+// TASSEMBLE: Read(src) -> Write(dst)
+void TAssembleOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
   PTO_ADD_READ(getSrcMutable());
   PTO_ADD_WRITE(getDstMutable());

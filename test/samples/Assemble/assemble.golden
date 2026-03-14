@@ -1,0 +1,4 @@
+# Regex patterns that must appear in emitted C++ for assemble.py
+TLOAD\(
+TINSERT\(
+TSTORE\(

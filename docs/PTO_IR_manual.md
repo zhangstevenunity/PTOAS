@@ -4517,6 +4517,44 @@ pto.treshape ins(%src : !pto.tile_buf<...>) outs(%dst : !pto.tile_buf<...>)
 
 ---
 
+##### `pto.tassemble` - Insert Sub-Tile Window
+
+**Summary:** Inserts a source tile into a destination tile at a given row/col offset.
+
+**Semantics:**
+
+```
+dst[i + indexRow, j + indexCol] = src[i, j]
+```
+
+**Arguments:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `src` | `pto.tile_buf` | Source tile |
+| `indexRow` | `Index` | Destination row offset |
+| `indexCol` | `Index` | Destination column offset |
+| `dst` | `pto.tile_buf` | Destination tile |
+
+**Results:** None. Writes into `dst` via DPS pattern.
+
+**Constraints & Verification:**
+
+- The operation has a custom verifier
+
+**Hardware Mapping:**
+
+- Lowers to **`TINSERT(dst, src, indexRow, indexCol)`**
+- Uses target data-movement pipeline (MTE1 by default; A5 UB->L1 path uses MTE3)
+
+**Basic Example:**
+
+```mlir
+pto.tassemble ins(%src, %row, %col : !pto.tile_buf<...>, index, index) outs(%dst : !pto.tile_buf<...>)
+```
+
+---
+
 ##### `pto.textract` - Extract Sub-Tile Window
 
 **Summary:** Extracts a sub-tile window from a source tile into a destination tile.

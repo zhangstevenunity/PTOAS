@@ -2027,6 +2027,50 @@ def TExtractOp : PTO_TOp<"textract", [
   }];
 }
 
+def TAssembleOp : PTO_TOp<"tassemble", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Insert src sub-tile into dst at (indexRow, indexCol) (tilebuf, DPS)";
+
+  let arguments = (ins
+    PTODpsType:$src,
+    Index:$indexRow,
+    Index:$indexCol,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `ins` `(` $src `,` $indexRow `,` $indexCol `:` qualified(type($src)) `,` type($indexRow) `,` type($indexCol) `)`
+    `outs` `(` $dst `:` qualified(type($dst) ) `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+    // TINSERT runs on different DMA pipes across targets.
+    // - A5 (Ascend950/910_95): UB->L1 path is MTE3 in pto-isa custom kernels.
+    // - Others: keep MTE1 for compatibility with existing data-movement sync.
+    ::mlir::pto::PIPE getPipe() {
+      auto moduleOp = getOperation()->getParentOfType<::mlir::ModuleOp>();
+      if (moduleOp) {
+        if (auto spec = moduleOp->getAttrOfType<::mlir::StringAttr>("pto.device-spec")) {
+          auto s = spec.getValue();
+          if (s.starts_with("Ascend950") || s.starts_with("Ascend910_95")) {
+            return ::mlir::pto::PIPE::PIPE_MTE3;
+          }
+        }
+      }
+      return ::mlir::pto::PIPE::PIPE_MTE1;
+    }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+
 def TFillPadOp : PTO_TOp<"tfillpad", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
