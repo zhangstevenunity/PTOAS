@@ -2082,6 +2082,11 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
     emitcFunc.setSpecifiersAttr(
         rewriter.getStrArrayAttr({"__global__ AICORE"}));
 
+    if (op.isExternal()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+
     // Inline the original body, then convert region/block argument types to
     // match the converted signature (also covers CFG blocks introduced by
     // pre-lowering, e.g. scf.while -> cf.br/cf.cond_br).
