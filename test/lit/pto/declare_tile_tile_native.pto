@@ -8,7 +8,7 @@
 
 // RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-resolve-reserved-buffers %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
 // RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
-// RUN: ptoas --pto-arch=a3 --plan-memory-impl=modern --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
 // RUN: ptoas --pto-arch=a3 --mlir-print-ir-before=pto-inline-backend-helpers %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NATIVE
 // RUN: ptoas --pto-arch=a3 %s -o - 2>&1 | FileCheck %s --check-prefix=EMITC
 

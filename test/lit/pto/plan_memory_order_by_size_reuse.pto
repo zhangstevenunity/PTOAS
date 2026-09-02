@@ -5,10 +5,10 @@
 // allocated last and lands at a high offset. With --plan-memory-order-by-size
 // (first-fit-decreasing) the largest tile is allocated first and gets offset 0.
 //
-// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=DEFAULT
-// RUN: ptoas --pto-arch=a3 --plan-memory-impl=modern --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
+// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size=false --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=DEFAULT
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
 // RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
-// RUN: ptoas --pto-arch=a3 --plan-memory-impl=modern --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
+// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
 
 module {
   func.func @order_by_size_reuse(%src_ptr: !pto.ptr<f32>, %idx_ptr: !pto.ptr<ui32>, %dst_ptr: !pto.ptr<f32>) attributes {pto.kernel} {

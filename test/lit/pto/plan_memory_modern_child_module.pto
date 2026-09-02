@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-level=level2 --pto-arch=a3 --pto-backend=vpto \
-// RUN:   --plan-memory-impl=modern \
+// RUN:   \
 // RUN:   --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s 2>&1 \
 // RUN:   | FileCheck %s
 

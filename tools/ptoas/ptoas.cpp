@@ -222,15 +222,8 @@ llvm::cl::opt<bool> planMemoryOrderBySize(
     "plan-memory-order-by-size",
     llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "
                    "before applying the basic SPEC_LEVEL_0 reuse strategy. "
-                   "Defaults to true when --plan-memory-impl=modern is "
-                   "explicitly selected"),
+                   "Defaults to true when no explicit value is given"),
     llvm::cl::init(false));
-
-llvm::cl::opt<std::string> planMemoryImpl(
-    "plan-memory-impl",
-    llvm::cl::desc("Select local memory planner implementation: legacy or "
-                   "modern"),
-    llvm::cl::init("legacy"));
 
 llvm::cl::opt<bool> enableBufidSync(
     "enable-bufid_sync",

@@ -92,11 +92,13 @@ module {
 // CHECK-LABEL: AICORE void tput_reuses_pong_after_call(
 // CHECK:      pto::comm::TPUT(
 // CHECK:      set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[TPUT:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[TPUT]]);
+// CHECK:      wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[TPUT]]);
+// CHECK-NOT:  TMOV(
 // CHECK-NEXT: TMOV(
 
 // CHECK-LABEL: AICORE void tbroadcast_reuses_pong_after_call(
 // CHECK:      pto::comm::TBROADCAST(
 // CHECK:      set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[BCAST:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[BCAST]]);
+// CHECK:      wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[BCAST]]);
+// CHECK-NOT:  TMOV(
 // CHECK-NEXT: TMOV(

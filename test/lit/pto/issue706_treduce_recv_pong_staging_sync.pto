@@ -57,5 +57,6 @@ module {
 // CHECK-LABEL: AICORE void treduce_reuses_recv_pong_after_call(
 // CHECK:      pto::comm::TREDUCE(
 // CHECK:      set_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[PONG:[0-9]+]]);
-// CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[PONG]]);
+// CHECK-NOT:  TMOV(
+// CHECK:      wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID[[PONG]]);
 // CHECK-NEXT: TMOV(

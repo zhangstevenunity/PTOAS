@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-level=level2 --pto-arch=a3 \
-// RUN:   --plan-memory-impl=modern --emit-pto-ir %s 2>&1 | FileCheck %s
+// RUN:   --emit-pto-ir %s 2>&1 | FileCheck %s
 
 module {
   func.func @unmodeled_execute_region() {

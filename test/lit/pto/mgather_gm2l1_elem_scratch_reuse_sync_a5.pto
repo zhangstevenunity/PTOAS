@@ -49,5 +49,6 @@ module {
 // CHECK-NEXT: set_flag(PIPE_S, PIPE_MTE2
 // CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_S
 // CHECK-NEXT: wait_flag(PIPE_MTE2, PIPE_S
+// CHECK-NEXT: pipe_barrier(PIPE_MTE2);
 // CHECK-NEXT: wait_flag(PIPE_S, PIPE_MTE2
 // CHECK:      MGATHER<pto::Coalesce::Elem>

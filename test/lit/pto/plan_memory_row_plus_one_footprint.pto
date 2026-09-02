@@ -9,7 +9,7 @@
 // RUN: ptoas --pto-level=level2 --pto-arch=a3 --emit-pto-ir \
 // RUN:   --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null \
 // RUN:   | FileCheck %s --check-prefix=LEGACY
-// RUN: ptoas --pto-level=level2 --pto-arch=a3 --plan-memory-impl=modern \
+// RUN: ptoas --pto-level=level2 --pto-arch=a3 \
 // RUN:   --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s 2>&1 \
 // RUN:   1>/dev/null | FileCheck %s --check-prefix=MODERN
 

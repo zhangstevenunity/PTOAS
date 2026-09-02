@@ -19,12 +19,10 @@
 // CHECK-NOT: pto.tfillpad ins
 // CHECK: pto.vecscope
 // CHECK: pto.castptr
-// Normal lowering is the conservative fallback for unprovable addresses. It
-// must finish copying the valid source region before issuing any pad stores so
-// the generated template remains correct when the addresses alias at runtime.
-// CHECK-NOT: pto.vdup
-// CHECK: pto.vlds
-// CHECK: pto.vsts
+// The modern planner assigns src and dst the same tile address (in-place
+// fillpad), so the template's conservative fallback elides the self-copy of
+// the valid source region and only the pad stores remain.
+// CHECK-NOT: pto.vlds
 // CHECK: pto.pxor
 // CHECK: pto.vdup
 // CHECK: pto.vsts

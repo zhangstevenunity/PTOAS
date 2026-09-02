@@ -1858,3 +1858,13 @@ std::unique_ptr<Pass>
 mlir::pto::createPlanMemoryModernPass(const PlanMemoryOptions &options) {
   return std::make_unique<PlanMemoryModernPass>(options);
 }
+
+// Anchor the generated pass base registration used by pto-test-opt and the
+// textual pass pipeline (`-pass-pipeline=...`), replacing the removed legacy
+// planner under the same `pto-plan-memory` argument.
+namespace mlir {
+namespace pto {
+#define GEN_PASS_DEF_PLANMEMORY
+#include "PTO/Transforms/Passes.h.inc"
+} // namespace pto
+} // namespace mlir
