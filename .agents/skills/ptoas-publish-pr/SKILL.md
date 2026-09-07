@@ -1,39 +1,42 @@
 ---
 name: ptoas-publish-pr
-description: Publish PTOAS changes to GitHub as a pull request. Use when turning intended local PTOAS edits into a branch, commit, push, and PR, especially when the worktree contains unrelated files, the repo uses `origin` as a personal fork and `upstream` as the canonical repository, or GitHub authentication may need to be checked with `gh auth status` and `gh auth login`.
+description: Publish PTOAS changes as a GitCode pull request by default, with GitHub supported as a compatibility path. Use when turning intended local PTOAS edits into a branch, commit, push, and PR.
 ---
 
 # PTOAS Publish PR
 
 ## Overview
 
-Use this skill to safely publish PTOAS work from the local checkout. Confirm the intended scope, keep unrelated files out of the commit, push the branch to `origin`, and open or update a PR against the canonical repository.
+Use this skill to safely publish PTOAS work from the local checkout. Unless the user explicitly requests otherwise, publish the source branch from the user's personal fork and open the PR against the canonical repository. Confirm the intended scope, keep unrelated files out of the commit, and never rewrite a protected canonical-repository branch.
+
+GitCode is the default PTOAS hosting platform: use a personal fork as the push remote and `gitcode` (`cann/pto-as`) as the canonical repository. Do not push feature branches directly to the canonical repository by default; canonical branches may reject force-pushes and complicate squash/review workflows. Use GitHub only when the user explicitly requests it or the task targets the GitHub mirror.
 
 ## Preconditions
 
-Check GitHub CLI first:
+For GitCode, inspect remotes and available repositories first:
+
+```bash
+git remote -v
+gc repo list
+```
+
+Create a personal GitCode fork when one is missing:
+
+```bash
+gc repo fork cann/pto-as
+```
+
+Add its SSH URL as `gitcode-fork` and use `gitcode` for the canonical repository.
+
+For GitHub compatibility, check authentication only when the user explicitly targets GitHub:
 
 ```bash
 gh auth status
 ```
 
-If GitHub CLI is not authenticated, ask the user to run:
-
-```bash
-gh auth login
-```
-
-Then re-run `gh auth status` before attempting PR operations that rely on `gh`.
-
-Inspect the repository wiring:
-
-```bash
-git remote -v
-```
-
 In this repository, expect:
 
-- `origin` to be the user's fork
+- `origin` to be the user's GitHub fork
 - `upstream` to be `hw-native-sys/PTOAS`
 
 ## Workflow
@@ -73,10 +76,16 @@ Use `git add -A` only when the entire worktree is intentionally part of the PR.
 git commit -m "<terse-summary>"
 ```
 
-6. Push to the fork:
+6. Push to the personal fork (unless the user explicitly requested a canonical-repository branch):
 
 ```bash
 git push -u origin "$(git branch --show-current)"
+```
+
+For GitCode:
+
+```bash
+git push -u gitcode-fork "$(git branch --show-current)"
 ```
 
 7. Open or update the PR:
@@ -84,6 +93,7 @@ git push -u origin "$(git branch --show-current)"
 - Prefer a draft PR unless the user explicitly wants ready-for-review.
 - If the current branch is already attached to an open PR, pushing new commits updates that PR automatically.
 - When creating a new PR, target `upstream/main` if the branch lives on the fork and the canonical repo is `hw-native-sys/PTOAS`.
+- For GitCode, create a cross-repository PR with `gc pr create -R cann/pto-as --fork <user>/pto-as --head <branch> --base master`.
 - Use the GitHub app connector when available. Use `gh pr create` as a fallback after `gh auth status` confirms login.
 
 Example fallback:
