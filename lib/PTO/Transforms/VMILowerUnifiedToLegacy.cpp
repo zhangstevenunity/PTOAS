@@ -943,7 +943,9 @@ static LogicalResult lowerVcmin(VMIvcminOp op, OpBuilder &builder) {
 /// Legacy fma is floating-point only; integer vmula has no legacy equivalent
 /// and is skipped (falls through to VMIToVPTO).
 static LogicalResult lowerVmula(VMIVmulaOp op, OpBuilder &builder) {
-  if (hasMergePmode(op)) {
+  // Legacy FMA has no predicate operand.  Keep masked vmula in the VMI
+  // pipeline so VMIToVPTO can preserve its predicate and zero-mode semantics.
+  if (hasMergePmode(op) || !op.getMask().empty()) {
     return failure();
   }
 

@@ -360,11 +360,10 @@ static FailureOr<StringRef> getVMIMaskPhysicalGranularity(VMIMaskType type) {
   if (bits == 0)
     return failure();
 
-  VMILayoutAttr layout = type.getLayoutAttr();
-  int64_t laneStride = layout && layout.hasLaneStride() ? layout.getLaneStride()
-                                                        : 1;
-  int64_t physicalBits = bits * laneStride;
-  StringRef physicalGranularity = getMaskGranularityForBits(physicalBits);
+  // VPTO masks are typed by the data element width.  VMI layouts may carry a
+  // lane stride for packed data, but that stride does not widen the predicate
+  // consumed by a vector instruction (e.g. i16 data still requires mask<b16>).
+  StringRef physicalGranularity = getMaskGranularityForBits(bits);
   if (physicalGranularity.empty())
     return failure();
   return physicalGranularity;
@@ -5992,6 +5991,30 @@ struct OneToNVMICreateMaskOpPattern
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
 
+    // A contiguous packed VMI vector maps to one regular VPTO mask chunk.
+    // Materialize the prefix in physical-lane space for any positive stride;
+    // do not special-case a particular packing factor (e.g. lane_stride=2).
+    if (layout.isContiguous() && layout.hasLaneStride() &&
+        layout.getLaneStride() > 0 && factor == 1 && resultTypes.size() == 1) {
+      auto maskType = dyn_cast<MaskType>(resultTypes.front());
+      if (!maskType)
+        return rewriter.notifyMatchFailure(op, "create_mask result must be mask");
+      // Each logical lane occupies lane_stride physical lanes in a contiguous
+      // packed layout, so predicate coverage scales with that stride.
+      int64_t activeInChunk = std::min<int64_t>(
+          activeLanes * layout.getLaneStride(), *lanesPerPart);
+      std::optional<std::string> pattern =
+          getPrefixPattern(activeInChunk, *lanesPerPart);
+      if (!pattern)
+        return rewriter.notifyMatchFailure(op, "unsupported packed create_mask prefix");
+      FailureOr<Value> mask = createPrefixMask(op.getLoc(), maskType, *pattern, rewriter);
+      if (failed(mask))
+        return rewriter.notifyMatchFailure(op, "failed to materialize packed create_mask");
+      results.push_back(*mask);
+      replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+      return success();
+    }
+
     for (int64_t part = 0; part < factor; ++part) {
       for (int64_t chunk = 0;; ++chunk) {
         bool anyLane = false;
@@ -9798,6 +9821,67 @@ struct OneToNVMIFmaOpPattern : OneToNOpConversionPattern<VMIFmaOp> {
   }
 };
 
+struct OneToNVMIVmulaOpPattern : OneToNOpConversionPattern<VMIVmulaOp> {
+  using OneToNOpConversionPattern<VMIVmulaOp>::OneToNOpConversionPattern;
+  LogicalResult matchAndRewrite(VMIVmulaOp op, OpAdaptor adaptor,
+                                OneToNPatternRewriter &rewriter) const override {
+    ValueRange acc = adaptor.getAcc();
+    ValueRange lhs = adaptor.getLhs();
+    ValueRange rhs = adaptor.getRhs();
+    ArrayRef<ValueRange> maskParts = adaptor.getMask();
+    FailureOr<SmallVector<Type>> converted =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(converted) || acc.size() != lhs.size() ||
+        acc.size() != rhs.size() || acc.size() != converted->size())
+      return rewriter.notifyMatchFailure(op, "vmula physical arity mismatch");
+    if (maskParts.size() > 1 ||
+        (!maskParts.empty() && maskParts.front().size() != acc.size()))
+      return rewriter.notifyMatchFailure(op, "vmula mask physical arity mismatch");
+    SmallVector<Value> results;
+    for (unsigned i = 0; i < acc.size(); ++i) {
+      auto type = dyn_cast<VRegType>((*converted)[i]);
+      if (!type || acc[i].getType() != (*converted)[i] ||
+          lhs[i].getType() != (*converted)[i] ||
+          rhs[i].getType() != (*converted)[i])
+        return rewriter.notifyMatchFailure(op, "vmula requires matching physical vreg parts");
+      Value mask;
+      if (maskParts.empty()) {
+        FailureOr<Value> allTrue = createAllTrueMaskForVReg(op.getLoc(), type, rewriter);
+        if (failed(allTrue))
+          return rewriter.notifyMatchFailure(op,
+                                             "unsupported element type for vmula");
+        mask = *allTrue;
+      } else {
+        mask = maskParts.front()[i];
+      }
+      auto vregType = dyn_cast<VRegType>((*converted)[i]);
+      if (!vregType)
+        return rewriter.notifyMatchFailure(op,
+                                           "vmula requires a vector result type");
+      Value result = rewriter
+                         .create<VmulaOp>(op.getLoc(), (*converted)[i], acc[i],
+                                          lhs[i], rhs[i], mask)
+                         .getResult();
+      // VPTO vmula preserves the accumulator on inactive lanes.  VMI's
+      // explicit zero mode instead requires inactive lanes to be cleared, so
+      // materialize that semantic difference after the fused operation.
+      if (op.getPmode().has_value() && *op.getPmode() == "zero") {
+        FailureOr<Value> zero = createZeroVector(op.getLoc(), vregType, rewriter);
+        if (failed(zero))
+          return rewriter.notifyMatchFailure(
+              op, "failed to materialize vmula zero-mode value");
+        result = rewriter
+                     .create<VselOp>(op.getLoc(), (*converted)[i], result, *zero,
+                                     mask)
+                     .getResult();
+      }
+      results.push_back(result);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+    return success();
+  }
+};
+
 struct OneToNVMIVexpdifOpPattern : OneToNOpConversionPattern<VMIVexpdifOp> {
   using OneToNOpConversionPattern<VMIVexpdifOp>::OneToNOpConversionPattern;
 
@@ -13256,6 +13340,7 @@ void populateVMIConversionPatterns(
       OneToNVMIVecScalarOpPattern<VMIMinSOp, VminsOp>,
       OneToNVMIVecScalarOpPattern<VMIShlSOp, VshlsOp>,
       OneToNVMIVecScalarOpPattern<VMIShrSOp, VshrsOp>, OneToNVMIVmullOpPattern,
+      OneToNVMIVmulaOpPattern,
       OneToNVMIFmaOpPattern, OneToNVMIVexpdifOpPattern,
       OneToNVMIBinaryOpPattern<VMIDivFOp, VdivOp>,
       OneToNVMIBinaryOpPattern<VMIMinFOp, VminOp>,
