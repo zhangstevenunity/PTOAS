@@ -52,15 +52,14 @@
 | 44 | `pto.vmi.vmula` | 7: SFU | A | Fused multiply-add |
 | 45 | `pto.vmi.vchist` | 7: SFU | B | Cumulative histogram (half-axis) |
 | 46 | `pto.vmi.vdhist` | 7: SFU | B | Distribution histogram (plain per-bin) |
-| 47 | `pto.vmi.vgather` | 7: SFU | C | Indexed gather (B32) |
-| 48 | `pto.vmi.vgatherb` | 7: SFU | C | Byte-granularity indexed gather |
-| 49 | `pto.vmi.vscatter` | 7: SFU | C | Indexed scatter |
-| 50 | `pto.vmi.create_mask` | 8: Predicate | gen | Prefix / first-N tail mask |
-| 51 | `pto.vmi.create_group_mask` | 8: Predicate | gen | Grouped predicate mask |
-| 52 | `pto.vmi.vintlv` | 9: Rearrange | A | Interleave two vectors |
-| 53 | `pto.vmi.vdintlv` | 9: Rearrange | A | Deinterleave two vectors |
-| 54 | `pto.vmi.vaddc` | 3: Eltwise | A | 32-bit integer add with per-lane carry output |
-| 55 | `pto.vmi.vaddcs` | 3: Eltwise | A | 32-bit integer add with carry input and output |
+| 47 | `pto.vmi.vgather` | 7: SFU | C | Indexed gather (B32/B16) |
+| 48 | `pto.vmi.vscatter` | 7: SFU | C | Indexed scatter |
+| 49 | `pto.vmi.create_mask` | 8: Predicate | gen | Prefix / first-N tail mask |
+| 50 | `pto.vmi.create_group_mask` | 8: Predicate | gen | Grouped predicate mask |
+| 51 | `pto.vmi.vintlv` | 9: Rearrange | A | Interleave two vectors |
+| 52 | `pto.vmi.vdintlv` | 9: Rearrange | A | Deinterleave two vectors |
+| 53 | `pto.vmi.vaddc` | 3: Eltwise | A | 32-bit integer add with per-lane carry output |
+| 54 | `pto.vmi.vaddcs` | 3: Eltwise | A | 32-bit integer add with carry input and output |
 
 ---
 

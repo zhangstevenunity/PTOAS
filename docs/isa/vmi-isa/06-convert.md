@@ -25,13 +25,13 @@
      (`|dst| == |src|`, e.g. `bf16 → f16`, `f16 → bf16`).
 
   3. **FpToSi** — `fp → signed int`. Supported pairs follow the contract
-     table `lookupVMIFpToSiContract`: `f32→s32`, `f16→s16`, `f32→s16`,
-     `f16→s8`, `f16→s32` (nosat), `bf16→s32`.
+     table `lookupVMIFpToSiContract`: `f32→si32`, `f16→si16`, `f32→si16`,
+     `f16→si8`, `f16→si32` (nosat), `bf16→si32`.
 
   4. **FpToUi** — `fp → unsigned int`. Supported pairs follow the contract
      table `lookupVMIFpToUIContract`: currently `f16→u8`.
 
-  5. **SiToFp** — `int → fp` (e.g. `i32 → f32`, `i8 → f16`).
+  5. **SiToFp** — `signed int → fp` (e.g. `si32 → f32`, `si8 → f16`).
 
   6. **IntWiden** — `int → int`, `|dst| > |src|`.
 
@@ -58,7 +58,7 @@
   | Attribute | Values | Valid for | Description |
   |---|---|---|---|
   | `rounding` | `"R"` (nearest-even), `"A"` (away-from-zero), `"H"` (half-up), `"Z"` (toward-zero); for the `bf16x2→f4x2` contract pair the allowed set is `"R"`,`"A"`,`"F"` (floor), `"C"` (ceil), `"Z"` (toward-zero) — `"H"` is **rejected** | fp narrowing | Rounding mode |
-  | `saturate` | `"SAT"`, `"NOSAT"` | required for fp-narrow / int-narrow; for fp→si / fp→ui the requirement follows the vcvt contract's `requiresSat` (e.g. `f16→s8` required, `f16→s32` **forbidden** — no overflow possible; same-width `bf16→f16` required, same-width `f16→bf16` **forbidden**); the `bf16x2→f4x2` narrow has `requiresSat=false` — any `saturate` is **forbidden** | For signed destinations, `SAT` clamps to `[min, max]`; for unsigned or signless destinations, it clamps to `[0, max]`. `NOSAT` performs a direct bit truncation of the result representation. |
+  | `saturate` | `"SAT"`, `"NOSAT"` | required for fp-narrow / int-narrow; for fp→si / fp→ui the requirement follows the vcvt contract's `requiresSat` (e.g. `f16→si8` required, `f16→si32` **forbidden** — no overflow possible; same-width `bf16→f16` required, same-width `f16→bf16` **forbidden**); the `bf16x2→f4x2` narrow has `requiresSat=false` — any `saturate` is **forbidden**; `si32→si8` int-narrow accepts only `"NOSAT"` | For signed destinations, `SAT` clamps to `[min, max]`; for unsigned or signless destinations, it clamps to `[0, max]`. `NOSAT` performs a direct bit truncation of the result representation. |
 
 - **datatypes:** Source and destination from `{f32, f16, bf16, fp8_e4m3, fp8_e5m2, i32, i16, i8, si32, si16, si8, ui32, ui16, ui8}`; packed carrier types `{!pto.bf16x2, !pto.f4E1M2x2, !pto.f4E2M1x2}` for the bf16x2↔f4x2 fp-to-fp pair (see contract `lookupVMIFpToFpContract`). `bf16x2` is **conversion-only** — it may not appear as a compute element type (`vfadd`/`vfmul`/`vcmp`/...). Signless `iN` is treated as unsigned; use `siN` for signed conversion semantics.
 - **lowering to `pto.mi`:**
@@ -99,9 +99,9 @@
   %t = pto.vmi.vcvt %v {saturate = "NOSAT"}
       : !pto.vmi.vreg<64×i32> -> !pto.vmi.vreg<64×i8>
 
-  // f32 → i32 fp-to-si (saturate required)
+  // f32 → si32 fp-to-si (saturate required)
   %r = pto.vmi.vcvt %x {saturate = "SAT"}
-      : !pto.vmi.vreg<64×f32> -> !pto.vmi.vreg<64×i32>
+      : !pto.vmi.vreg<64×f32> -> !pto.vmi.vreg<64×si32>
 
   // bf16 → f16 same-width fp-to-fp (VPTO contract pair, routed via FpNarrow;
   // saturate required)

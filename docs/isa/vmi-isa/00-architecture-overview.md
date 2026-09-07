@@ -88,9 +88,104 @@ type-construction choices.
 | `V<64×f16>` | 128B | 1 | 1 | low 64 f16 valid |
 | `V<64×i8>` | 64B | 1 | 1 | low 64 i8 valid |
 
-See the [Design Doc](../PTO-vmi-design.md) for detailed physical layout
-diagrams (contiguous, parity EVEN/ODD, sub-part, stride-4 interleave) for each
-logical type.
+### `V<256×f32>`: 4 physical regs (K=4)
+
+**Logical view**
+
+![V<256×f32> logical view — 256 lanes](assets/vmi-v256f32-logical.svg)
+
+**Physical view (contiguous)** — 4 physical regs, each BlockLane = 32B = 8 f32 lanes:
+
+![V<256×f32> contiguous layout across P0–P3](assets/vmi-v256f32-contiguous.svg)
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0/P2, odd
+lanes in P1/P3 (typical source: `V<256×f16> -> V<256×f32>` widening preserves
+parity; all 4 regs carry 64 valid lanes each):
+
+![V<256×f32> parity EVEN/ODD layout](assets/vmi-v256f32-parity.svg)
+
+> Restore contiguous: `INTLV_B32(P0, P1) -> [x0..x127]`, `INTLV_B32(P2, P3) -> [x128..x255]`, then concatenate in chunk order.
+
+**Physical view (non-contiguous, P0/P1/P2/P3)** — 4-way stride-4 interleave:
+every 4 logical elements land in one reg each (`x0,x4,...` -> P0; `x1,x5,...` -> P1;
+`x2,x6,...` -> P2; `x3,x7,...` -> P3); all 4 regs carry 64 valid lanes each
+(corresponds to the sub_part / part_T 4-way axis):
+
+![V<256×f32> 4-way stride-4 interleave layout](assets/vmi-v256f32-4way.svg)
+
+### `V<256×f16>`: 2 physical regs (K=2)
+
+**Logical view**
+
+![V<256×f16> logical view — 256 lanes](assets/vmi-v256f16-logical.svg)
+
+**Physical view (contiguous)** — 2 physical regs, each BlockLane = 32B = 16 fp16 lanes:
+
+![V<256×f16> contiguous layout across P0–P1](assets/vmi-v256f16-contiguous.svg)
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0, odd
+lanes in P1 (e.g. after a deinterleaved dual load, which preserves parity; both
+regs carry 128 valid lanes each):
+
+![V<256×f16> parity EVEN/ODD layout](assets/vmi-v256f16-parity.svg)
+
+### `V<256×i8>`: 1 physical reg (K=1)
+
+**Logical view**
+
+![V<256×i8> logical view — 256 lanes](assets/vmi-v256i8-logical.svg)
+
+**Physical view (contiguous)** — 1 physical reg, each BlockLane = 32B = 32 i8 lanes:
+
+![V<256×i8> contiguous layout in P0](assets/vmi-v256i8-contiguous.svg)
+
+### `V<128×f32>`: 2 physical regs (K=2)
+
+**Logical view**
+
+![V<128×f32> logical view — 128 lanes](assets/vmi-v128f32-logical.svg)
+
+**Physical view (contiguous)** — 2 physical regs, each BlockLane = 32B = 8 f32 lanes:
+
+![V<128×f32> contiguous layout across P0–P1](assets/vmi-v128f32-contiguous.svg)
+
+**Physical view (non-contiguous, parity EVEN/ODD)** — even lanes in P0, odd lanes in P1:
+
+![V<128×f32> parity EVEN/ODD layout](assets/vmi-v128f32-parity.svg)
+
+### `V<64×f16>`: 1 partial physical reg (K=1, low 64 lanes valid)
+
+**Logical view**
+
+![V<64×f16> logical view — 64 lanes](assets/vmi-v64f16-logical.svg)
+
+**Physical view (contiguous)** — 1 physical reg, low 64 lanes valid, each
+BlockLane = 16 fp16 lanes:
+
+![V<64×f16> contiguous layout — low 128B valid](assets/vmi-v64f16-contiguous.svg)
+
+**Physical view (non-contiguous, part EVEN/ODD)** — single `V<64×f32> -> V<64×f16>`
+narrowing carrier: the 64 valid fp16 sit on even/odd positions of the 128
+physical lanes:
+
+![V<64×f16> EVEN carrier layout](assets/vmi-v64f16-even-carrier.svg)
+
+### `V<64×fp8>`: 1 partial physical reg (K=1, low 64 lanes valid)
+
+**Logical view**
+
+![V<64×fp8> logical view — 64 lanes](assets/vmi-v64fp8-logical.svg)
+
+**Physical view (contiguous)** — 1 physical reg, low 64 lanes valid, each
+BlockLane = 32 fp8 lanes:
+
+![V<64×fp8> contiguous layout — low 64B valid](assets/vmi-v64fp8-contiguous.svg)
+
+**Physical view (non-contiguous, sub_part P0)** — from `V<64×f32> -> V<64×fp8>`
+via `vcvt`: instead of placing the low 64B contiguously, the 0th byte of each 4B
+group holds the valid fp8:
+
+![V<64×fp8> sub_part P0 carrier layout](assets/vmi-v64fp8-subpart-p0.svg)
 
 ### `!pto.vmi.mask<L>`
 
@@ -183,6 +278,6 @@ type's `C`).
 | 4 | **Broadcast** | `vbrc` | A (ungrouped) / B (grouped) | none |
 | 5 | **Reduce** | `vcadd`, `vcmax`, `vcmin` | B (VLane-aligned) / C (unaligned) | `Pg req` |
 | 6 | **Convert** | `vcvt`, `vinterpret_cast` | B / A | `Pg` / none |
-| 7 | **SFU** | `vexpdif`, `vaxpy`, `vlrelu`, `vprelu`, `vmull`, `vmula`, `vchist`, `vdhist`, `vgather`, `vgatherb`, `vscatter` | A (fused) / B (vmull, vchist, vdhist) / C (gather/scatter) | `Pg` (`vchist`/`vdhist`/SFU) / `Pg` (gather/scatter) |
+| 7 | **SFU** | `vexpdif`, `vaxpy`, `vlrelu`, `vprelu`, `vmull`, `vmula`, `vchist`, `vdhist`, `vgather`, `vscatter` | A (fused) / B (vmull, vchist, vdhist) / C (gather/scatter) | `Pg` (`vchist`/`vdhist`/SFU) / `Pg` (gather/scatter) |
 | 8 | **Predicate Ops** | `create_mask`, `create_group_mask` | gen | gen |
 | 9 | **Data Rearrange** | `vintlv`, `vdintlv` | A | `Pg` |

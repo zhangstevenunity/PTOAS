@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="744" height="104" viewBox="0 0 744 104">
+<text x="180.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL0</text>
+<text x="340.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL1</text>
+<text x="446.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL2</text>
+<text x="498.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL3</text>
+<text x="550.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL4</text>
+<text x="602.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL5</text>
+<text x="654.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL6</text>
+<text x="706.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL7</text>
+<text x="90.0" y="48.0" font-family="sans-serif" font-size="11" fill="#555" text-anchor="end" dominant-baseline="central">P0 (256B)</text>
+<rect x="100" y="34" width="160" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="180.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x0 ... x31</text>
+<rect x="260" y="34" width="160" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="340.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x32 ... x63</text>
+<rect x="420" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="472" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="524" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="576" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="628" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="680" y="34" width="52" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<line x1="102" y1="72" x2="418" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="102" y1="68" x2="102" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="418" y1="68" x2="418" y2="72" stroke="#555" stroke-width="1"/>
+<text x="260.0" y="87" font-family="sans-serif" font-size="11" fill="#555" text-anchor="middle">64B logical payload</text>
+<line x1="422" y1="72" x2="730" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="422" y1="68" x2="422" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="730" y1="68" x2="730" y2="72" stroke="#555" stroke-width="1"/>
+<text x="576.0" y="87" font-family="sans-serif" font-size="11" fill="#555" text-anchor="middle">192B outside logical value</text>
+</svg>

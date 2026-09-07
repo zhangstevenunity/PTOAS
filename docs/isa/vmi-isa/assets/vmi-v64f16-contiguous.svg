@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="744" height="104" viewBox="0 0 744 104">
+<text x="150.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL0</text>
+<text x="250.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL1</text>
+<text x="350.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL2</text>
+<text x="450.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL3</text>
+<text x="529.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL4</text>
+<text x="587.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL5</text>
+<text x="645.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL6</text>
+<text x="703.0" y="24" font-family="monospace" font-size="11" fill="#555" text-anchor="middle">BL7</text>
+<text x="90.0" y="48.0" font-family="sans-serif" font-size="11" fill="#555" text-anchor="end" dominant-baseline="central">P0 (256B)</text>
+<rect x="100" y="34" width="100" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="150.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x0..x15</text>
+<rect x="200" y="34" width="100" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="250.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x16..x31</text>
+<rect x="300" y="34" width="100" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="350.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x32..x47</text>
+<rect x="400" y="34" width="100" height="28" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="450.0" y="48.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x48..x63</text>
+<rect x="500" y="34" width="58" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="558" y="34" width="58" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="616" y="34" width="58" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<rect x="674" y="34" width="58" height="28" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<line x1="102" y1="72" x2="498" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="102" y1="68" x2="102" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="498" y1="68" x2="498" y2="72" stroke="#555" stroke-width="1"/>
+<text x="300.0" y="87" font-family="sans-serif" font-size="11" fill="#555" text-anchor="middle">128B logical payload</text>
+<line x1="502" y1="72" x2="730" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="502" y1="68" x2="502" y2="72" stroke="#555" stroke-width="1"/>
+<line x1="730" y1="68" x2="730" y2="72" stroke="#555" stroke-width="1"/>
+<text x="616.0" y="87" font-family="sans-serif" font-size="11" fill="#555" text-anchor="middle">128B outside logical value</text>
+</svg>

@@ -58,7 +58,7 @@
   | `reassoc` | *(unit attr)* | *(absent)* | Permit reassociation (**required** for fp sources) |
   | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-result behavior |
 
-- **datatypes:** `i8`–`i32`, `f16`, `f32`
+- **datatypes:** full reduce — `i32`, `f16`/`f32`; grouped reduce — `i8`/`i16`/`i32`, `f16`/`f32`
 - **lowering to `pto.mi`:**
 
   | Group / W | Category | Physical lowering | `#mi` | `dep` |
@@ -108,7 +108,7 @@
 - **operands:** Same as `vcadd` (without `reassoc`).
 - **results:** Same as `vcadd`.
 - **attributes:** `group`, `pmode` (same as `vcadd`, no `reassoc`).
-- **datatypes:** `i16`–`i32`, `f16`, `f32`
+- **datatypes:** `i8`/`i16`/`i32`, `f16`/`f32`.
 - **lowering to `pto.mi`:**
 
   | Group / W | Physical lowering |

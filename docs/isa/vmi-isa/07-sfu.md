@@ -440,7 +440,7 @@
   | Operand | Type | Description |
   |---|---|---|
   | `src` | `!pto.ptr<T, ub>` | UB base pointer |
-  | `offsets` | `!pto.vmi.vreg<L×i32>` | Per-lane element offset |
+  | `offsets` | `!pto.vmi.vreg<L×i32>` or `!pto.vmi.vreg<L×ui16>` | Per-lane element offset |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate |
 
 - **results:** `!pto.vmi.vreg<L×T>`
@@ -449,27 +449,6 @@
   plus `i8`/`ui8` -> `i16`/`ui16` zero-extension.
 - **lowering:** B16 -> `K × pto.vgather2`; B32 -> `K × pto.vgather2_bc`.
   A statically all-active mask omits the trailing `vsel`.
-
-### `pto.vmi.vgatherb`
-
-- **semantics:** Byte-granularity indexed gather. Mask lane count equals result
-  lane count (may differ from offset lane count).
-
-  ```c
-  for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? ub_byte[base_byte + offsets[i]] : (pmode_merge ? dst_old[i] : 0);
-  ```
-
-- **syntax:**
-  ```mlir
-  %gb = pto.vmi.vgatherb %src, %offsets, %mask : !pto.ptr<T, ub>, !pto.vmi.vreg<L×i32>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
-  ```
-- **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
-- **lowering to `pto.mi`:**
-  ```
-  K × pto.vgatherb
-  ```
-  `#mi = K`, `dep = 1`.
 
 ### `pto.vmi.vscatter`
 
@@ -492,7 +471,7 @@
   |---|---|---|
   | `value` | `!pto.vmi.vreg<L×T>` | Values to scatter |
   | `dest` | `!pto.ptr<T, ub>` | UB destination base pointer |
-  | `offsets` | `!pto.vmi.vreg<L×i32>` | Per-lane element offset |
+  | `offsets` | `!pto.vmi.vreg<L×i32>` or `!pto.vmi.vreg<L×ui16>` | Per-lane element offset |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate |
 
 - **results:** *(none)*

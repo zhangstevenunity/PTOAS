@@ -36,7 +36,7 @@
 
   | Operand | Type | Description |
   |---|---|---|
-  | `base` | integer or float scalar | Starting value |
+  | `base` | scalar (`i8`/`i16`/`i32`, `f16`/`f32`) | Starting value |
 
 - **results:**
 
@@ -57,8 +57,8 @@
   ```
   `#mi = 1/chunk`, `dep = 1`.
 
-- **datatypes:** `i8`/`i16`/`i32`, `f16`, `f32`; the result element type also
-  fixes `L` (`i32`/`f32` -> 64, `i16`/`f16` -> 128, `i8` -> 256).
+- **datatypes:** `i8`/`i16`/`i32`, `f16`, `f32`. For every element type,
+  the legal lane counts `L` of the result are `1, 2, 4, 8, 64, 128, 256`.
 
 - **example:**
   ```mlir

@@ -1,10 +1,10 @@
 # 1. Load / Store
 
-> **Category:** A (+B on `unpack`). **Mask:** load none (A5 loads are unpredicated), store `Pg`.
+> **Category:** A (+B on `dintlv`/`intlv`). **Mask:** load none (A5 loads are unpredicated), store `Pg`.
 >
 > `vload`/`vstore` are logical memory ops. **`[dist_mode]` explicitly declares
 > the access pattern**, defaulting to `continuous` (contiguous); the optional
-> modes are `unpack` (widening unpack) and `brc` (broadcast).
+> modes are `dintlv` (deinterleaved dual load), `brc` (broadcast) and `intlv` (interleaved dual store).
 
 
 ---
@@ -24,7 +24,7 @@
   (`{dist_mode}`, `{group = C}` with a `stride` operand, or
   `%block_stride`), the load may instead read in a strided/scattered
   fashion (e.g. per-row stride for group mode, 32B-block stride for
-  block-stride mode), widen the source, or broadcast. The exact pattern is
+  block-stride mode), deinterleave the source, or broadcast. The exact pattern is
   determined by these mutually exclusive attributes (see attributes and
   lowering below).
 
@@ -299,7 +299,7 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior: `"zero"` (default) skips the write on inactive blocks; `"merge"` retains prior UB contents on inactive blocks |
+  | `pmode` | `"zero"` | `"zero"` | Inactive-lane behavior: `"zero"` skips the write on inactive blocks |
 
 - **lowering to `pto.mi`:**
   ```

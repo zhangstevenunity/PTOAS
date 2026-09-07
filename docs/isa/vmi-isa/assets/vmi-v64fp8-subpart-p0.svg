@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="358" height="96" viewBox="0 0 358 96">
+<text x="179.0" y="16" font-family="sans-serif" font-size="12" fill="#555" text-anchor="middle">P0 slot valid per 4B group</text>
+<!-- grp0 -->
+<rect x="12" y="30" width="24" height="26" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="24.0" y="43.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x0</text>
+<rect x="36" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="48.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="60" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="72.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="84" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="96.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<!-- grp1 -->
+<rect x="114" y="30" width="24" height="26" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="126.0" y="43.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x1</text>
+<rect x="138" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="150.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="162" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="174.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="186" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="198.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<!-- ellipsis -->
+<rect x="216" y="30" width="28" height="26" fill="none" stroke="#555" stroke-width="1"/>
+<text x="230.0" y="43.0" font-family="monospace" font-size="11" fill="#555" text-anchor="middle" dominant-baseline="central">…</text>
+<!-- grp63 -->
+<rect x="250" y="30" width="24" height="26" fill="#dbeafe" stroke="#555" stroke-width="1"/>
+<text x="262.0" y="43.0" font-family="monospace" font-size="11" fill="#1e3a8a" text-anchor="middle" dominant-baseline="central">x63</text>
+<rect x="274" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="286.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="298" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="310.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<rect x="322" y="30" width="24" height="26" fill="#f0f0f0" stroke="#555" stroke-width="1"/>
+<text x="334.0" y="43.0" font-family="monospace" font-size="11" fill="#999" text-anchor="middle" dominant-baseline="central">_</text>
+<!-- slot labels grp0 -->
+<text x="24.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P0</text>
+<text x="48.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P1</text>
+<text x="72.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P2</text>
+<text x="96.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P3</text>
+<!-- slot labels grp1 -->
+<text x="126.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P0</text>
+<text x="150.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P1</text>
+<text x="174.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P2</text>
+<text x="198.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P3</text>
+<!-- slot labels grp63 -->
+<text x="262.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P0</text>
+<text x="286.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P1</text>
+<text x="310.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P2</text>
+<text x="334.0" y="68" font-family="monospace" font-size="9" fill="#555" text-anchor="middle">P3</text>
+<!-- group labels -->
+<text x="60.0" y="84" font-family="sans-serif" font-size="10" fill="#555" text-anchor="middle">grp0</text>
+<text x="162.0" y="84" font-family="sans-serif" font-size="10" fill="#555" text-anchor="middle">grp1</text>
+<text x="298.0" y="84" font-family="sans-serif" font-size="10" fill="#555" text-anchor="middle">grp63</text>
+</svg>
