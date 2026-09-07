@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-infer-layout %t/ambiguous_call.pto -o /dev/null \
+// RUN:   2>&1 | FileCheck %s --check-prefix=AMBIGUOUS-CALL
+// RUN: ptoas --pto-arch=a5 %t/ambiguous_call.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=AMBIGUOUS-CALL-EMITC
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-infer-layout %t/dynamic_type_layout.pto -o /dev/null \
+// RUN:   2>&1 | FileCheck %s --check-prefix=DYNAMIC-TYPE
+// RUN: ptoas --pto-arch=a5 %t/dynamic_type_layout.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=DYNAMIC-TYPE-EMITC
+// RUN: not ptoas --pto-arch=a5 %t/conflicting_consumers.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CONFLICTING-CONSUMERS
+
+// AMBIGUOUS-CALL-LABEL: func.func private @consume_dn(
+// AMBIGUOUS-CALL-SAME: !pto.partition_tensor_view<16x1xf16, #pto.layout<dn>>
+// AMBIGUOUS-CALL: pto.tload
+// AMBIGUOUS-CALL-SAME: {layout = #pto.layout<dn>}
+// AMBIGUOUS-CALL-LABEL: func.func @ambiguous_dn_through_call(
+// AMBIGUOUS-CALL: pto.make_tensor_view
+// AMBIGUOUS-CALL-SAME: {layout = #pto.layout<dn>, pto.inferred_layout = true}
+// AMBIGUOUS-CALL-SAME: !pto.tensor_view<?x?xf16, #pto.layout<dn>>
+// AMBIGUOUS-CALL: call @consume_dn
+// AMBIGUOUS-CALL-SAME: !pto.partition_tensor_view<16x1xf16, #pto.layout<dn>>
+
+// AMBIGUOUS-CALL-EMITC-LABEL: static AICORE void consume_dn(
+// AMBIGUOUS-CALL-EMITC-SAME: pto::Layout::DN>
+// AMBIGUOUS-CALL-EMITC-LABEL: AICORE void ambiguous_dn_through_call(
+// AMBIGUOUS-CALL-EMITC: pto::Layout::DN>
+// AMBIGUOUS-CALL-EMITC: consume_dn(
+
+// DYNAMIC-TYPE-LABEL: func.func @dynamic_type_layout(
+// DYNAMIC-TYPE-SAME: !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>>
+// DYNAMIC-TYPE: pto.make_tensor_view
+// DYNAMIC-TYPE-SAME: {layout = #pto.layout<nz>}
+// DYNAMIC-TYPE-SAME: !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>>
+// DYNAMIC-TYPE-NOT: pto.inferred_layout
+// DYNAMIC-TYPE: return
+
+// DYNAMIC-TYPE-EMITC-LABEL: pto::Layout::NZ> dynamic_type_layout(
+// DYNAMIC-TYPE-EMITC: GlobalTensor<float,
+// DYNAMIC-TYPE-EMITC-SAME: pto::Layout::NZ>
+
+// CONFLICTING-CONSUMERS: error: ambiguous tensor view has conflicting ND and DN consumer layouts
+
+//--- ambiguous_call.pto
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func private @consume_dn(
+      %view: !pto.partition_tensor_view<16x1xf16>) {
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                      v_row=16, v_col=1, blayout=col_major,
+                      slayout=none_box, fractal=512, pad=1>
+    pto.tload
+      ins(%view : !pto.partition_tensor_view<16x1xf16>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                                 v_row=16, v_col=1, blayout=col_major,
+                                 slayout=none_box, fractal=512, pad=1>)
+    return
+  }
+
+  func.func @ambiguous_dn_through_call(%ptr: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c16, %c1], strides = [%c1, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+        -> !pto.partition_tensor_view<16x1xf16>
+    func.call @consume_dn(%part)
+      : (!pto.partition_tensor_view<16x1xf16>) -> ()
+    return
+  }
+}
+
+//--- dynamic_type_layout.pto
+module {
+  func.func @dynamic_type_layout(
+      %ptr: !pto.ptr<f32>, %d1: index, %d2: index,
+      %stride0: index, %stride1: index)
+      -> !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c1, %d1, %d2, %c16, %c8],
+      strides = [%stride0, %stride1, %c128, %c8, %c1]
+      : !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>>
+    return %view : !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>>
+  }
+}
+
+//--- conflicting_consumers.pto
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @conflicting_consumers(%ptr: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c16, %c1], strides = [%c1, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0], sizes = [%c16, %c1]
+      : !pto.tensor_view<?x?xf16>
+        -> !pto.partition_tensor_view<16x1xf16>
+    %row_major = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                      v_row=16, v_col=1, blayout=row_major,
+                      slayout=none_box, fractal=512, pad=1>
+    %col_major = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                      v_row=16, v_col=1, blayout=col_major,
+                      slayout=none_box, fractal=512, pad=1>
+    pto.tload
+      ins(%part : !pto.partition_tensor_view<16x1xf16>)
+      outs(%row_major : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                                      v_row=16, v_col=1, blayout=row_major,
+                                      slayout=none_box, fractal=512, pad=1>)
+    pto.tload
+      ins(%part : !pto.partition_tensor_view<16x1xf16>)
+      outs(%col_major : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+                                      v_row=16, v_col=1, blayout=col_major,
+                                      slayout=none_box, fractal=512, pad=1>)
+    return
+  }
+}

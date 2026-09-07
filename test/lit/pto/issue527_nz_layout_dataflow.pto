@@ -1,0 +1,158 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-pto-ir \
+// RUN:   --mlir-print-ir-after=pto-infer-layout %t/positive.pto -o /dev/null \
+// RUN:   2>&1 | FileCheck %s --check-prefix=FLOW
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %t/positive.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=EMITC
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 %t/conflict.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=CONFLICT
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 %t/type_mismatch.pto 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=TYPE-MISMATCH
+
+// FLOW-LABEL: func.func private @identity_nz(
+// FLOW-SAME: !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// FLOW-SAME: -> !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// FLOW-LABEL: func.func @nz_layout_dataflow(
+// FLOW: scf.if
+// FLOW-SAME: -> (!pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>)
+// FLOW: call @identity_nz
+// FLOW: scf.for
+// FLOW-SAME: !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// FLOW: scf.while
+// FLOW-SAME: !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// FLOW: pto.partition_view
+// FLOW: pto.tload
+// FLOW-SAME: {layout = #pto.layout<nz>
+
+// EMITC-LABEL: identity_nz(
+// EMITC-SAME: GlobalTensor<float, pto::Shape<1, 8, 8, 16, 8>,
+// EMITC-SAME: pto::Layout::NZ>
+// EMITC-LABEL: AICORE void nz_layout_dataflow(
+// EMITC: GlobalTensor<float, pto::Shape<1, 8, 8, 16, 8>,
+// EMITC-SAME: pto::Layout::NZ>
+// EMITC: TLOAD(
+
+// CONFLICT: error: view layout conflict: nz and nd reach the same control-flow or function-boundary value
+// TYPE-MISMATCH: layout attribute #pto.layout<nd> does not match result type layout #pto.layout<nz>
+
+//--- positive.pto
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func private @identity_nz(
+      %view: !pto.tensor_view<1x8x8x16x8xf32>)
+      -> !pto.tensor_view<1x8x8x16x8xf32> {
+    return %view : !pto.tensor_view<1x8x8x16x8xf32>
+  }
+
+  func.func @nz_layout_dataflow(
+      %base: !pto.ptr<f32, gm>, %alternate: !pto.ptr<f32, gm>, %cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %c0_i64 = arith.constant 0 : i64
+
+    %lhs = pto.make_tensor_view %base,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %rhs = pto.make_tensor_view %alternate,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %selected = scf.if %cond -> (!pto.tensor_view<1x8x8x16x8xf32>) {
+      scf.yield %lhs : !pto.tensor_view<1x8x8x16x8xf32>
+    } else {
+      scf.yield %rhs : !pto.tensor_view<1x8x8x16x8xf32>
+    }
+    %called = func.call @identity_nz(%selected)
+      : (!pto.tensor_view<1x8x8x16x8xf32>)
+        -> !pto.tensor_view<1x8x8x16x8xf32>
+    %for_result = scf.for %i = %c0 to %c1 step %c1
+        iter_args(%iter = %called) -> (!pto.tensor_view<1x8x8x16x8xf32>) {
+      scf.yield %iter : !pto.tensor_view<1x8x8x16x8xf32>
+    }
+    %while_result = scf.while (%iter = %for_result)
+        : (!pto.tensor_view<1x8x8x16x8xf32>)
+          -> !pto.tensor_view<1x8x8x16x8xf32> {
+      scf.condition(%cond) %iter : !pto.tensor_view<1x8x8x16x8xf32>
+    } do {
+    ^bb0(%iter: !pto.tensor_view<1x8x8x16x8xf32>):
+      scf.yield %iter : !pto.tensor_view<1x8x8x16x8xf32>
+    }
+    %part = pto.partition_view %while_result,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c8, %c8, %c16, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x16x8xf32>
+    %tile = pto.alloc_tile addr = %c0_i64
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16,
+                      v_col=64, blayout=row_major, slayout=none_box,
+                      fractal=512, pad=0>
+    pto.tload ins(%part : !pto.partition_tensor_view<1x8x8x16x8xf32>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64,
+                                 v_row=16, v_col=64, blayout=row_major,
+                                 slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+//--- conflict.pto
+module {
+  func.func @nz_nd_conflict(
+      %base: !pto.ptr<f32, gm>, %alternate: !pto.ptr<f32, gm>, %cond: i1)
+      -> !pto.tensor_view<1x8x8x16x8xf32> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %nz = pto.make_tensor_view %base,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %nd = pto.make_tensor_view %alternate,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %selected = scf.if %cond -> (!pto.tensor_view<1x8x8x16x8xf32>) {
+      scf.yield %nz : !pto.tensor_view<1x8x8x16x8xf32>
+    } else {
+      scf.yield %nd : !pto.tensor_view<1x8x8x16x8xf32>
+    }
+    return %selected : !pto.tensor_view<1x8x8x16x8xf32>
+  }
+}
+
+//--- type_mismatch.pto
+module {
+  func.func @type_layout_mismatch(%base: !pto.ptr<f32, gm>) {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %view = pto.make_tensor_view %base,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+    return
+  }
+}

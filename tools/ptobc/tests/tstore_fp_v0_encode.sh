@@ -54,6 +54,9 @@ PY
 
 grep -F "pto.tstore ins(" "${ROUNDTRIP}" >/dev/null
 grep -F " fp " "${ROUNDTRIP}" >/dev/null
+grep -F "pto.partition_view" "${ROUNDTRIP}" |
+  grep -F ": !pto.partition_tensor_view<32x32xi8>" >/dev/null
+grep -F "!pto.partition_tensor_view<16x32xi8>" "${ROUNDTRIP}" >/dev/null
 grep -F "!pto.partition_tensor_view<32x32xi8>" "${ROUNDTRIP}" >/dev/null
 
 "${PTOAS_BIN}" --pto-arch=a3 --emit-pto-ir "${ROUNDTRIP}" -o /dev/null

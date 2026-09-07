@@ -10,7 +10,8 @@
 //
 // The pto-isa GlobalTensor ABI expects shape/stride to be represented in a 5D
 // right-aligned form (pad leading dims with 1). We infer ND/DN/NZ with the same
-// 5D view here and attach an optional `layout` attribute to:
+// 5D view here, propagate the result through control-flow and function
+// boundaries, and attach an optional `layout` attribute to:
 //   - memref.reinterpret_cast (lowered from pto.make_tensor_view)
 //   - memref.subview          (lowered from pto.partition_view)
 //   - pto.tload / pto.tstore  (for fully-static GM memrefs)
@@ -21,13 +22,22 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOLayoutUtils.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VMIControlFlowSupport.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 namespace mlir {
 namespace pto {
@@ -44,12 +54,37 @@ namespace {
 static constexpr llvm::StringLiteral kLayoutAttrName = "layout";
 static constexpr llvm::StringLiteral kInferredLayoutAttrName =
     "pto.inferred_layout";
-static constexpr unsigned kPaddedLayoutRank = 5;
-static constexpr int64_t kUnitExtent = 1;
-static constexpr int64_t kNZInnerRows = 16;
-static constexpr int64_t kNZFractalBytes = 512;
 
-using LayoutRankVector = SmallVector<int64_t, kPaddedLayoutRank>;
+static LayoutAttr getViewTypeLayoutAttr(Type type) {
+  if (auto tensorView = dyn_cast<TensorViewType>(type)) {
+    return tensorView.getLayoutAttr();
+  }
+  if (auto partitionView = dyn_cast<PartitionTensorViewType>(type)) {
+    return partitionView.getLayoutAttr();
+  }
+  return {};
+}
+
+static bool isViewType(Type type) {
+  return isa<TensorViewType, PartitionTensorViewType>(type);
+}
+
+static Type getViewTypeWithLayout(Type type, Layout layout) {
+  Attribute layoutAttr;
+  if (layout != Layout::ND) {
+    layoutAttr = LayoutAttr::get(type.getContext(), layout);
+  }
+  if (auto tensorView = dyn_cast<TensorViewType>(type)) {
+    return TensorViewType::get(type.getContext(), tensorView.getShape(),
+                               tensorView.getElementType(), layoutAttr);
+  }
+  if (auto partitionView = dyn_cast<PartitionTensorViewType>(type)) {
+    return PartitionTensorViewType::get(
+        type.getContext(), partitionView.getShape(),
+        partitionView.getElementType(), layoutAttr);
+  }
+  return type;
+}
 
 static std::optional<int64_t> getConstInt(Value v) {
   if (auto c = v.getDefiningOp<arith::ConstantIndexOp>()) {
@@ -101,134 +136,6 @@ static bool isGlobalMemRef(MemRefType ty) {
   }
   // Treat missing memory_space as GM.
   return true;
-}
-
-struct ShapeStride5D {
-  LayoutRankVector shape;
-  LayoutRankVector stride;
-};
-
-static bool isMinor2DLayout(Layout layout) {
-  return layout == Layout::ND || layout == Layout::DN;
-}
-
-static std::optional<ShapeStride5D> rightAlignTo5D(ArrayRef<int64_t> shape,
-                                                   ArrayRef<int64_t> stride) {
-  if (shape.size() != stride.size()) {
-    return std::nullopt;
-  }
-  if (shape.size() > kPaddedLayoutRank) {
-    return std::nullopt;
-  }
-
-  ShapeStride5D out;
-  out.shape.assign(kPaddedLayoutRank, kUnitExtent);
-  out.stride.assign(kPaddedLayoutRank, kUnitExtent);
-
-  const int rank = static_cast<int>(shape.size());
-  const int shift = static_cast<int>(kPaddedLayoutRank) - rank;
-  for (int i = 0; i < rank; ++i) {
-    out.shape[shift + i] = shape[i];
-    out.stride[shift + i] = stride[i];
-  }
-
-  // Derive the padded leading strides with the same rule used in EmitC:
-  // stride[i] = shape[i+1] * stride[i+1].
-  for (int i = shift - 1; i >= 0; --i) {
-    out.stride[i] = out.shape[i + 1] * out.stride[i + 1];
-  }
-
-  return out;
-}
-
-static bool matchesNDMinor2D(int64_t rows, int64_t cols, int64_t rowStride,
-                             int64_t colStride) {
-  if (cols != 1 && colStride != 1) {
-    return false;
-  }
-  if (rows == 1) {
-    return true;
-  }
-  return cols == 1 ? rowStride == 1 : rowStride == cols;
-}
-
-static bool matchesDNMinor2D(int64_t rows, int64_t cols, int64_t rowStride,
-                             int64_t colStride) {
-  if (rows != 1 && rowStride != 1) {
-    return false;
-  }
-  if (cols == 1) {
-    return true;
-  }
-  return rows == 1 ? colStride == 1 : colStride == rows;
-}
-
-static std::optional<Layout> inferMinor2DLayout(
-    int64_t rows, int64_t cols, int64_t rowStride, int64_t colStride,
-    std::optional<Layout> preferredMinor2D, bool *isMinor2DAmbiguous) {
-  const bool nd = matchesNDMinor2D(rows, cols, rowStride, colStride);
-  const bool dn = matchesDNMinor2D(rows, cols, rowStride, colStride);
-  if (!nd && !dn) {
-    return Layout::ND;
-  }
-  if (nd && dn) {
-    if (isMinor2DAmbiguous) {
-      *isMinor2DAmbiguous = true;
-    }
-    if (preferredMinor2D &&
-        (*preferredMinor2D == Layout::ND || *preferredMinor2D == Layout::DN)) {
-      return *preferredMinor2D;
-    }
-    return (cols == 1 && rows != 1) ? Layout::DN : Layout::ND;
-  }
-  return dn ? Layout::DN : Layout::ND;
-}
-
-static std::optional<Layout> inferNZLayout(ArrayRef<int64_t> shape,
-                                           ArrayRef<int64_t> stride,
-                                           unsigned elemBytes) {
-  int64_t sh3 = shape[2];
-  int64_t sh4 = shape[3];
-  int64_t sh5 = shape[4];
-  int64_t st4 = stride[3];
-  int64_t st5 = stride[4];
-  bool alignMatch =
-      (sh3 == kNZInnerRows) &&
-      (sh3 * sh4 * static_cast<int64_t>(elemBytes) == kNZFractalBytes);
-  bool strideMatch = (st5 == kUnitExtent) && (st4 == sh5);
-  if (alignMatch && strideMatch) {
-    return Layout::NZ;
-  }
-  return std::nullopt;
-}
-
-static std::optional<Layout> inferLayout5D(ArrayRef<int64_t> shape,
-                                           ArrayRef<int64_t> strides,
-                                           unsigned elemBytes,
-                                           std::optional<Layout> preferredMinor2D =
-                                               std::nullopt,
-                                           bool *isMinor2DAmbiguous = nullptr) {
-  if (shape.size() != strides.size() || elemBytes == 0) {
-    return std::nullopt;
-  }
-  if (isMinor2DAmbiguous) {
-    *isMinor2DAmbiguous = false;
-  }
-  auto padded = rightAlignTo5D(shape, strides);
-  if (!padded) {
-    return std::nullopt;
-  }
-
-  if (auto nz = inferNZLayout(padded->shape, padded->stride, elemBytes)) {
-    return nz;
-  }
-
-  const int64_t rows = padded->shape[3];
-  const int64_t cols = padded->shape[4];
-  const int64_t rowStride = padded->stride[3];
-  const int64_t colStride = padded->stride[4];
-  return inferMinor2DLayout(rows, cols, rowStride, colStride,
-                            preferredMinor2D, isMinor2DAmbiguous);
 }
 
 static std::optional<Layout> tileBLayoutToGlobalLayout(Type tileLikeTy) {
@@ -283,22 +190,52 @@ static void setLayoutAttr(Operation *op, Layout layout, bool inferred) {
 }
 
 template <typename SignalFailureFn>
-static void verifyOrSetLayoutAttr(Operation *op,
-                                  std::optional<Layout> inferred,
-                                  SignalFailureFn signalFailure,
-                                  bool isMinor2DAmbiguous = false) {
+static bool verifyExistingLayoutAttr(Operation *op, ArrayRef<int64_t> shape,
+                                     ArrayRef<int64_t> strides,
+                                     unsigned storageElemBytes,
+                                     SignalFailureFn signalFailure) {
   auto existing = op->getAttrOfType<LayoutAttr>(kLayoutAttrName);
-  if (existing) {
-    if (inferred && existing.getLayout() != *inferred) {
-      if (isMinor2DAmbiguous && isMinor2DLayout(existing.getLayout()) &&
-          isMinor2DLayout(*inferred)) {
-        return;
+  if (!existing) {
+    return true;
+  }
+
+  Layout layout = existing.getLayout();
+  if (!isLayoutCompatible5D(layout, shape, strides, storageElemBytes)) {
+    if (layout == Layout::NZ) {
+      if (shape.size() == kPTOLayoutRank && strides.size() == kPTOLayoutRank) {
+        auto error =
+            getNZViewCompatibilityError(shape, strides, storageElemBytes);
+        op->emitError() << "user-specified layout=nz is incompatible with "
+                           "shape/stride: "
+                        << error.value_or("unknown NZ layout mismatch");
+      } else {
+        op->emitError()
+            << "user-specified layout=nz requires a rank-5 view, got rank "
+            << shape.size();
       }
-      op->emitError() << "layout mismatch: user-specified layout="
-                      << stringifyLayout(existing.getLayout())
-                      << " but inferred=" << stringifyLayout(*inferred);
-      signalFailure();
+    } else {
+      op->emitError() << "user-specified layout=" << stringifyLayout(layout)
+                      << " is incompatible with the view shape/stride";
     }
+    signalFailure();
+    return false;
+  }
+
+  if (op->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
+    op->removeAttr(kInferredLayoutAttrName);
+  }
+  return true;
+}
+
+template <typename SignalFailureFn>
+static void resolveOrInferLayoutAttr(Operation *op, ArrayRef<int64_t> shape,
+                                     ArrayRef<int64_t> strides,
+                                     unsigned storageElemBytes,
+                                     std::optional<Layout> inferred,
+                                     SignalFailureFn signalFailure) {
+  if (op->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
+    (void)verifyExistingLayoutAttr(op, shape, strides, storageElemBytes,
+                                   signalFailure);
     return;
   }
   setLayoutAttr(op, inferred.value_or(Layout::ND), /*inferred=*/true);
@@ -306,7 +243,7 @@ static void verifyOrSetLayoutAttr(Operation *op,
 
 static std::optional<Layout> inferFromStaticMemRefTy(MemRefType mrTy) {
   if (!mrTy.hasStaticShape() || mrTy.getRank() == 0 ||
-      mrTy.getRank() > kPaddedLayoutRank) {
+      mrTy.getRank() > kPTOLayoutRank) {
     return std::nullopt;
   }
   SmallVector<int64_t> strideInts;
@@ -322,6 +259,34 @@ static std::optional<Layout> inferFromStaticMemRefTy(MemRefType mrTy) {
   }
   return inferLayout5D(mrTy.getShape(), strideInts,
                        elemByteSize(mrTy.getElementType()));
+}
+
+static bool isInferredMinor2DAmbiguousLayout(MakeTensorViewOp op) {
+  auto inferred = op->getAttrOfType<BoolAttr>(kInferredLayoutAttrName);
+  if (!inferred || !inferred.getValue()) {
+    return false;
+  }
+  auto layout = op.getLayoutAttr();
+  if (!layout) {
+    return false;
+  }
+  Layout layoutValue = layout.getLayout();
+  if (layoutValue != Layout::ND && layoutValue != Layout::DN) {
+    return false;
+  }
+
+  SmallVector<int64_t> shape;
+  SmallVector<int64_t> strides;
+  if (!getStaticShapeAndStride(op, shape, strides)) {
+    return false;
+  }
+
+  bool ambiguous = false;
+  (void)inferLayout5D(
+      shape, strides,
+      elemByteSize(cast<TensorViewType>(op.getResult().getType()).getElementType()),
+      std::nullopt, &ambiguous);
+  return ambiguous && isMinorColsOne(shape);
 }
 
 template <typename LoadStoreOp, typename ViewGetter, typename TileGetter>
@@ -344,16 +309,7 @@ static void maybeRepairMinor2DLoadStoreLayout(LoadStoreOp op, ViewGetter getView
     return;
   }
 
-  SmallVector<int64_t> shape, strides;
-  bool ambiguous = false;
-  if (!getStaticShapeAndStride(tv, shape, strides)) {
-    return;
-  }
-  (void)inferLayout5D(
-      shape, strides,
-      elemByteSize(cast<TensorViewType>(tv.getResult().getType()).getElementType()),
-      std::nullopt, &ambiguous);
-  if (ambiguous && isMinorColsOne(shape)) {
+  if (isInferredMinor2DAmbiguousLayout(tv)) {
     setLayoutAttr(viewInfo.owner, *tilePref, /*inferred=*/true);
     setLayoutAttr(op.getOperation(), *tilePref, /*inferred=*/true);
   }
@@ -489,29 +445,32 @@ static void reconcileAmbiguousTensorViewLayout(MakeTensorViewOp op,
   }
 }
 
-static bool getStaticShapeAndStride(MakeTensorViewOp op,
-                                    SmallVectorImpl<int64_t> &shape,
-                                    SmallVectorImpl<int64_t> &strides) {
+static bool getShapeAndStride(MakeTensorViewOp op,
+                              SmallVectorImpl<int64_t> &shape,
+                              SmallVectorImpl<int64_t> &strides,
+                              bool &allStatic) {
   auto tvTy = dyn_cast<TensorViewType>(op.getResult().getType());
   if (!tvTy) {
     return false;
   }
 
   const size_t rank = op.getShape().size();
-  if (rank == 0 || rank > kPaddedLayoutRank) {
+  if (rank == 0 || rank > kPTOLayoutRank) {
     return false;
   }
 
+  allStatic = true;
   shape.clear();
   shape.reserve(rank);
   for (size_t i = 0; i < rank; ++i) {
     int64_t dim = tvTy.getShape()[i];
     if (dim == ShapedType::kDynamic) {
       auto v = getConstInt(op.getShape()[i]);
-      if (!v) {
-        return false;
+      if (v) {
+        dim = *v;
+      } else {
+        allStatic = false;
       }
-      dim = *v;
     }
     shape.push_back(dim);
   }
@@ -520,34 +479,51 @@ static bool getStaticShapeAndStride(MakeTensorViewOp op,
   strides.reserve(rank);
   for (Value s : op.getStrides()) {
     auto v = getConstInt(s);
-    if (!v) {
-      return false;
+    if (v) {
+      strides.push_back(*v);
+    } else {
+      strides.push_back(ShapedType::kDynamic);
+      allStatic = false;
     }
-    strides.push_back(*v);
   }
   return true;
 }
 
-template <typename SignalFailureFn>
-static bool getConstFoldResults(ArrayRef<OpFoldResult> values,
-                                SmallVectorImpl<int64_t> &result,
-                                SignalFailureFn signalFailure,
-                                Operation *op) {
+static bool getStaticShapeAndStride(MakeTensorViewOp op,
+                                    SmallVectorImpl<int64_t> &shape,
+                                    SmallVectorImpl<int64_t> &strides) {
+  bool allStatic = false;
+  return getShapeAndStride(op, shape, strides, allStatic) && allStatic;
+}
+
+static void getFoldResults(ArrayRef<OpFoldResult> values,
+                           SmallVectorImpl<int64_t> &result, bool &allStatic) {
   result.clear();
   result.reserve(values.size());
   for (OpFoldResult value : values) {
     auto folded = getConstInt(value);
-    if (!folded) {
-      verifyOrSetLayoutAttr(op, std::nullopt, signalFailure);
-      return false;
+    if (folded) {
+      result.push_back(*folded);
+    } else {
+      result.push_back(ShapedType::kDynamic);
+      allStatic = false;
     }
-    result.push_back(*folded);
   }
-  return true;
 }
 
 static ResolvedLayoutInfo resolveLayoutFromViewValue(Value v) {
   ResolvedLayoutInfo info;
+  if (auto layoutAttr = getViewTypeLayoutAttr(v.getType())) {
+    info.owner = v.getDefiningOp();
+    info.layout = layoutAttr.getLayout();
+    if (info.owner) {
+      if (auto inferred =
+              info.owner->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
+        info.inferred = inferred.getValue();
+      }
+    }
+    return info;
+  }
   Operation *def = v.getDefiningOp();
   while (def) {
     if (auto layoutAttr = def->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
@@ -564,9 +540,199 @@ static ResolvedLayoutInfo resolveLayoutFromViewValue(Value v) {
       def = v.getDefiningOp();
       continue;
     }
+    if (auto subview = dyn_cast<memref::SubViewOp>(def)) {
+      v = subview.getSource();
+      def = v.getDefiningOp();
+      continue;
+    }
+    if (auto reinterpret = dyn_cast<memref::ReinterpretCastOp>(def)) {
+      v = reinterpret.getSource();
+      def = v.getDefiningOp();
+      continue;
+    }
+    if (auto cast = dyn_cast<memref::CastOp>(def)) {
+      v = cast.getSource();
+      def = v.getDefiningOp();
+      continue;
+    }
     break;
   }
   return info;
+}
+
+static void getValuesOrDynamic(ValueRange values,
+                               SmallVectorImpl<int64_t> &result) {
+  result.clear();
+  result.reserve(values.size());
+  for (Value value : values) {
+    result.push_back(getConstInt(value).value_or(ShapedType::kDynamic));
+  }
+}
+
+static void getFoldResultsOrDynamic(ArrayRef<OpFoldResult> values,
+                                    SmallVectorImpl<int64_t> &result) {
+  result.clear();
+  result.reserve(values.size());
+  for (OpFoldResult value : values) {
+    result.push_back(getConstInt(value).value_or(ShapedType::kDynamic));
+  }
+}
+
+static void resolveDynamicShape(ValueRange values,
+                                SmallVectorImpl<int64_t> &shape) {
+  for (auto [index, value] : llvm::enumerate(values)) {
+    if (shape[index] != ShapedType::kDynamic) {
+      continue;
+    }
+    if (auto constant = getConstInt(value)) {
+      shape[index] = *constant;
+    }
+  }
+}
+
+static void mergeKnownShape(ArrayRef<int64_t> knownShape,
+                            SmallVectorImpl<int64_t> &shape) {
+  if (knownShape.size() != shape.size()) {
+    return;
+  }
+  for (size_t index = 0; index < shape.size(); ++index) {
+    if (shape[index] == ShapedType::kDynamic &&
+        knownShape[index] != ShapedType::kDynamic) {
+      shape[index] = knownShape[index];
+    }
+  }
+}
+
+static bool getResolvedPTOViewShape(Value value,
+                                    SmallVectorImpl<int64_t> &shape) {
+  ArrayRef<int64_t> typeShape;
+  ValueRange dynamicShape;
+  if (auto make = value.getDefiningOp<MakeTensorViewOp>()) {
+    auto type = dyn_cast<TensorViewType>(make.getResult().getType());
+    if (!type) {
+      return false;
+    }
+    typeShape = type.getShape();
+    dynamicShape = make.getShape();
+  } else if (auto partition = value.getDefiningOp<PartitionViewOp>()) {
+    auto type =
+        dyn_cast<PartitionTensorViewType>(partition.getResult().getType());
+    if (!type) {
+      return false;
+    }
+    typeShape = type.getShape();
+    dynamicShape = partition.getSizes();
+  } else if (auto type = dyn_cast<TensorViewType>(value.getType())) {
+    typeShape = type.getShape();
+  } else if (auto type =
+                 dyn_cast<PartitionTensorViewType>(value.getType())) {
+    typeShape = type.getShape();
+  } else {
+    return false;
+  }
+
+  shape.assign(typeShape.begin(), typeShape.end());
+  resolveDynamicShape(dynamicShape, shape);
+  return true;
+}
+
+static bool getMixedMemRefShape(Value value,
+                                SmallVectorImpl<int64_t> &shape) {
+  if (auto reinterpret = value.getDefiningOp<memref::ReinterpretCastOp>()) {
+    getFoldResultsOrDynamic(reinterpret.getMixedSizes(), shape);
+    return true;
+  }
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>()) {
+    getFoldResultsOrDynamic(subview.getMixedSizes(), shape);
+    return true;
+  }
+  return false;
+}
+
+static Value getMemRefCastSource(Value value) {
+  if (auto cast = value.getDefiningOp<memref::CastOp>()) {
+    return cast.getSource();
+  }
+  if (auto cast = value.getDefiningOp<memref::MemorySpaceCastOp>()) {
+    return cast.getSource();
+  }
+  return Value();
+}
+
+static bool getResolvedViewShape(Value value, SmallVectorImpl<int64_t> &shape) {
+  if (getResolvedPTOViewShape(value, shape)) {
+    return true;
+  }
+
+  if (auto memrefType = dyn_cast<MemRefType>(value.getType())) {
+    shape.assign(memrefType.getShape().begin(), memrefType.getShape().end());
+
+    SmallVector<int64_t> knownShape;
+    if (getMixedMemRefShape(value, knownShape)) {
+      mergeKnownShape(knownShape, shape);
+      return true;
+    }
+
+    Value castSource = getMemRefCastSource(value);
+    if (castSource && getResolvedViewShape(castSource, knownShape)) {
+      mergeKnownShape(knownShape, shape);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+static bool verifyNZPartitionView(PartitionViewOp op) {
+  SmallVector<int64_t> sourceShape;
+  if (!getResolvedViewShape(op.getSource(), sourceShape)) {
+    op.emitError(
+        "cannot resolve the source shape needed to validate NZ partition");
+    return false;
+  }
+  SmallVector<int64_t> offsets;
+  SmallVector<int64_t> sizes;
+  getValuesOrDynamic(op.getOffsets(), offsets);
+  getValuesOrDynamic(op.getSizes(), sizes);
+  if (auto error =
+          getNZSubviewCompatibilityError(sourceShape, offsets, sizes)) {
+    op.emitError(*error);
+    return false;
+  }
+  return true;
+}
+
+static bool verifyNZMemRefSubview(memref::SubViewOp op) {
+  auto sourceType = dyn_cast<MemRefType>(op.getSource().getType());
+  auto resultType = dyn_cast<MemRefType>(op.getType());
+  if (!sourceType || !resultType ||
+      sourceType.getRank() != static_cast<int64_t>(kPTOLayoutRank) ||
+      resultType.getRank() != sourceType.getRank()) {
+    op.emitError("NZ subview requires a rank-preserving rank-5 view");
+    return false;
+  }
+
+  SmallVector<int64_t> offsets;
+  SmallVector<int64_t> sizes;
+  SmallVector<int64_t> steps;
+  getFoldResultsOrDynamic(op.getMixedOffsets(), offsets);
+  getFoldResultsOrDynamic(op.getMixedSizes(), sizes);
+  getFoldResultsOrDynamic(op.getMixedStrides(), steps);
+  if (llvm::any_of(steps, [](int64_t step) { return step != 1; })) {
+    op.emitError("NZ subview requires unit steps in every dimension");
+    return false;
+  }
+  SmallVector<int64_t> sourceShape;
+  if (!getResolvedViewShape(op.getSource(), sourceShape) ||
+      sourceShape.size() != static_cast<size_t>(kPTOLayoutRank)) {
+    op.emitError("cannot resolve the source shape needed to validate NZ subview");
+    return false;
+  }
+  if (auto error = getNZSubviewCompatibilityError(sourceShape, offsets, sizes)) {
+    op.emitError(*error);
+    return false;
+  }
+  return true;
 }
 
 template <typename SignalFailureFn>
@@ -574,16 +740,30 @@ static void inferMakeTensorViewLayoutAttr(MakeTensorViewOp op,
                                           SignalFailureFn signalFailure) {
   SmallVector<int64_t> shape;
   SmallVector<int64_t> strides;
-  if (!getStaticShapeAndStride(op, shape, strides)) {
-    verifyOrSetLayoutAttr(op.getOperation(), std::nullopt, signalFailure);
+  bool allStatic = false;
+  if (!getShapeAndStride(op, shape, strides, allStatic)) {
     return;
   }
 
+  if (!op.getLayoutAttr()) {
+    if (auto typeLayout = getViewTypeLayoutAttr(op.getResult().getType())) {
+      setLayoutAttr(op.getOperation(), typeLayout.getLayout(),
+                    /*inferred=*/false);
+    }
+  }
+
   bool isAmbiguous = false;
-  auto inferred = inferMakeTensorViewLayout(op, shape, strides, isAmbiguous);
-  verifyOrSetLayoutAttr(op.getOperation(), inferred, signalFailure,
-                        isAmbiguous);
-  if (isAmbiguous) {
+  std::optional<Layout> inferred;
+  if (allStatic) {
+    inferred = inferMakeTensorViewLayout(op, shape, strides, isAmbiguous);
+  }
+  resolveOrInferLayoutAttr(
+      op.getOperation(), shape, strides,
+      elemByteSize(
+          cast<TensorViewType>(op.getResult().getType()).getElementType()),
+      inferred, signalFailure);
+  if (allStatic && isAmbiguous &&
+      op->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
     reconcileAmbiguousTensorViewLayout(op, shape);
   }
 }
@@ -597,27 +777,677 @@ static void inferReinterpretCastLayoutAttr(memref::ReinterpretCastOp op,
   }
 
   const size_t rank = op.getMixedSizes().size();
-  if (rank == 0 || rank > kPaddedLayoutRank) {
-    verifyOrSetLayoutAttr(op.getOperation(), std::nullopt, signalFailure);
+  if (rank == 0 || rank > kPTOLayoutRank) {
     return;
   }
 
   SmallVector<int64_t> shape;
   SmallVector<int64_t> strides;
-  if (!getConstFoldResults(op.getMixedSizes(), shape, signalFailure,
-                           op.getOperation()) ||
-      !getConstFoldResults(op.getMixedStrides(), strides, signalFailure,
-                           op.getOperation())) {
-    return;
-  }
+  bool allStatic = true;
+  getFoldResults(op.getMixedSizes(), shape, allStatic);
+  getFoldResults(op.getMixedStrides(), strides, allStatic);
 
   bool isMinor2DAmbiguous = false;
-  auto inferred =
-      inferLayout5D(shape, strides, elemByteSize(mrTy.getElementType()),
-                    std::nullopt, &isMinor2DAmbiguous);
-  verifyOrSetLayoutAttr(op.getOperation(), inferred, signalFailure,
-                        isMinor2DAmbiguous);
+  std::optional<Layout> inferred;
+  if (allStatic) {
+    inferred =
+        inferLayout5D(shape, strides, elemByteSize(mrTy.getElementType()),
+                      std::nullopt, &isMinor2DAmbiguous);
+  }
+  resolveOrInferLayoutAttr(op.getOperation(), shape, strides,
+                           elemByteSize(mrTy.getElementType()), inferred,
+                           signalFailure);
 }
+
+struct ViewLayoutNode {
+  Value value;
+  unsigned parent;
+  std::optional<Layout> layout;
+};
+
+/// Whole-module equivalence solver for layouts carried by tensor-view SSA
+/// values. A missing fact is Unknown; uniting different known layouts is a
+/// Conflict. Inferred minor-2D ND/DN choices stay unknown until vector
+/// consumers are connected. Remaining unknown components use the historical
+/// ND default.
+class ViewLayoutSolver {
+public:
+  explicit ViewLayoutSolver(ModuleOp module)
+      : module(module), context(module.getContext()) {}
+
+  LogicalResult run() {
+    if (failed(collectValuesAndSeeds())) {
+      return failure();
+    }
+    if (failed(addConstraints())) {
+      return failure();
+    }
+    if (failed(resolveAmbiguousConsumerLayouts())) {
+      return failure();
+    }
+    rewriteAmbiguousMakeTensorViewLayouts();
+    rewriteValueTypes();
+    rewriteFunctionTypes();
+    return success();
+  }
+
+private:
+  unsigned addValue(Value value) {
+    if (!value || !isViewType(value.getType())) {
+      return ~0U;
+    }
+    auto [it, inserted] = ids.try_emplace(value, nodes.size());
+    if (!inserted) {
+      return it->second;
+    }
+
+    std::optional<Layout> layout;
+    if (LayoutAttr attr = getViewTypeLayoutAttr(value.getType())) {
+      layout = attr.getLayout();
+    }
+    nodes.push_back(ViewLayoutNode{value, it->second, layout});
+    return it->second;
+  }
+
+  unsigned find(unsigned id) {
+    if (nodes[id].parent == id) {
+      return id;
+    }
+    nodes[id].parent = find(nodes[id].parent);
+    return nodes[id].parent;
+  }
+
+  LogicalResult reportConflict(Operation *op, Layout lhs, Layout rhs) {
+    return op->emitError()
+           << "view layout conflict: " << stringifyLayout(lhs) << " and "
+           << stringifyLayout(rhs)
+           << " reach the same control-flow or function-boundary value";
+  }
+
+  LogicalResult seed(Value value, Layout layout, Operation *op) {
+    unsigned id = addValue(value);
+    if (id == ~0U) {
+      return success();
+    }
+    ViewLayoutNode &root = nodes[find(id)];
+    if (root.layout && *root.layout != layout) {
+      return reportConflict(op, *root.layout, layout);
+    }
+    root.layout = layout;
+    return success();
+  }
+
+  LogicalResult unite(Value lhs, Value rhs, Operation *op) {
+    unsigned lhsId = addValue(lhs);
+    unsigned rhsId = addValue(rhs);
+    if (lhsId == ~0U || rhsId == ~0U) {
+      return success();
+    }
+
+    unsigned lhsRoot = find(lhsId);
+    unsigned rhsRoot = find(rhsId);
+    if (lhsRoot == rhsRoot) {
+      return success();
+    }
+    if (nodes[lhsRoot].layout && nodes[rhsRoot].layout &&
+        nodes[lhsRoot].layout != nodes[rhsRoot].layout) {
+      return reportConflict(op, *nodes[lhsRoot].layout,
+                            *nodes[rhsRoot].layout);
+    }
+
+    nodes[rhsRoot].parent = lhsRoot;
+    if (!nodes[lhsRoot].layout) {
+      nodes[lhsRoot].layout = nodes[rhsRoot].layout;
+    }
+    return success();
+  }
+
+  void collectOperationValues(Operation *op) {
+    for (Value result : op->getResults()) {
+      addValue(result);
+    }
+    for (Region &region : op->getRegions()) {
+      for (Block &block : region) {
+        for (BlockArgument argument : block.getArguments()) {
+          addValue(argument);
+        }
+      }
+    }
+  }
+
+  LogicalResult seedMakeTensorViewLayouts() {
+    WalkResult result = module.walk([&](MakeTensorViewOp op) {
+      auto layout = op.getLayoutAttr();
+      if (!layout) {
+        return WalkResult::advance();
+      }
+      if (isInferredMinor2DAmbiguousLayout(op)) {
+        ambiguousMakes.push_back(op);
+        return WalkResult::advance();
+      }
+      return failed(seed(op.getResult(), layout.getLayout(), op))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult seedReturnLayouts(func::ReturnOp returnOp,
+                                  FunctionType functionType) {
+    for (auto [index, operand] : llvm::enumerate(returnOp.getOperands())) {
+      if (index >= functionType.getNumResults()) {
+        break;
+      }
+      auto layout = getViewTypeLayoutAttr(functionType.getResult(index));
+      if (!layout) {
+        continue;
+      }
+      if (failed(seed(operand, layout.getLayout(), returnOp))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult seedFunctionResultLayouts(func::FuncOp function) {
+    if (function.empty()) {
+      return success();
+    }
+    FunctionType functionType = function.getFunctionType();
+    WalkResult result = function.walk([&](func::ReturnOp returnOp) {
+      return failed(seedReturnLayouts(returnOp, functionType))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult seedFunctionResultLayouts() {
+    WalkResult result = module.walk([&](func::FuncOp function) {
+      return failed(seedFunctionResultLayouts(function))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult collectValuesAndSeeds() {
+    module.walk([&](Operation *op) { collectOperationValues(op); });
+    if (failed(seedMakeTensorViewLayouts())) {
+      return failure();
+    }
+    return seedFunctionResultLayouts();
+  }
+
+  LogicalResult reportAmbiguousConsumerConflict(Operation *consumer) {
+    consumer->emitError(
+        "ambiguous tensor view has conflicting ND and DN consumer layouts");
+    return failure();
+  }
+
+  LogicalResult recordAmbiguousConsumerLayout(
+      Value view, Type tileType, Operation *consumer,
+      const llvm::DenseSet<unsigned> &ambiguousRoots,
+      DenseMap<unsigned, LayoutPreference> &preferences) {
+    auto preference = isVectorTileType(tileType)
+                          ? tileBLayoutToGlobalLayout(tileType)
+                          : std::nullopt;
+    if (!preference || (*preference != Layout::ND &&
+                        *preference != Layout::DN)) {
+      return success();
+    }
+
+    auto it = ids.find(view);
+    if (it == ids.end()) {
+      return success();
+    }
+    unsigned root = find(it->second);
+    if (!ambiguousRoots.count(root)) {
+      return success();
+    }
+    if (nodes[root].layout) {
+      return success();
+    }
+
+    LayoutPreference &result = preferences[root];
+    if (result.conflict) {
+      return reportAmbiguousConsumerConflict(consumer);
+    }
+    if (!result.preferred) {
+      result.preferred = preference;
+      return success();
+    }
+    if (*result.preferred != *preference) {
+      result.preferred = std::nullopt;
+      result.conflict = true;
+      return reportAmbiguousConsumerConflict(consumer);
+    }
+    return success();
+  }
+
+  LogicalResult resolveAmbiguousConsumerLayouts() {
+    llvm::DenseSet<unsigned> ambiguousRoots;
+    for (MakeTensorViewOp op : ambiguousMakes) {
+      auto it = ids.find(op.getResult());
+      if (it != ids.end()) {
+        ambiguousRoots.insert(find(it->second));
+      }
+    }
+    if (ambiguousRoots.empty()) {
+      return success();
+    }
+
+    DenseMap<unsigned, LayoutPreference> preferences;
+    WalkResult loads = module.walk([&](pto::TLoadOp op) {
+      return failed(recordAmbiguousConsumerLayout(
+                 op.getSrc(), op.getDst().getType(), op, ambiguousRoots,
+                 preferences))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (loads.wasInterrupted()) {
+      return failure();
+    }
+
+    WalkResult stores = module.walk([&](pto::TStoreOp op) {
+      return failed(recordAmbiguousConsumerLayout(
+                 op.getDst(), op.getSrc().getType(), op, ambiguousRoots,
+                 preferences))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    if (stores.wasInterrupted()) {
+      return failure();
+    }
+
+    for (auto &entry : preferences) {
+      LayoutPreference &preference = entry.second;
+      if (preference.preferred) {
+        nodes[entry.first].layout = preference.preferred;
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addYieldConstraints(ResultRange results, scf::YieldOp yield,
+                                    Operation *op) {
+    for (auto [index, result] : llvm::enumerate(results)) {
+      if (index >= yield.getNumOperands()) {
+        break;
+      }
+      if (failed(unite(result, yield.getOperand(index), op))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addIfConstraints(scf::IfOp ifOp) {
+    for (OpResult result : ifOp->getResults()) {
+      unsigned index = result.getResultNumber();
+      for (Region *region : {&ifOp.getThenRegion(), &ifOp.getElseRegion()}) {
+        if (region->empty()) {
+          continue;
+        }
+        auto yield = dyn_cast<scf::YieldOp>(region->front().getTerminator());
+        bool hasOperand = yield && index < yield.getNumOperands();
+        if (hasOperand &&
+            failed(unite(result, yield.getOperand(index), ifOp))) {
+          return failure();
+        }
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addExecuteRegionConstraints(scf::ExecuteRegionOp execute) {
+    Operation *executeOp = execute.getOperation();
+    WalkResult result = execute.getRegion().walk([&](scf::YieldOp yield) {
+      bool belongsToExecute = yield->getParentOp() == executeOp;
+      if (!belongsToExecute) {
+        return WalkResult::advance();
+      }
+      return failed(addYieldConstraints(execute->getResults(), yield, execute))
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult addIndexSwitchConstraints(scf::IndexSwitchOp indexSwitch) {
+    auto addTerminator = [&](Block &block) {
+      auto yield = dyn_cast<scf::YieldOp>(block.getTerminator());
+      return yield ? addYieldConstraints(indexSwitch->getResults(), yield,
+                                         indexSwitch)
+                   : success();
+    };
+    if (failed(addTerminator(indexSwitch.getDefaultBlock()))) {
+      return failure();
+    }
+    for (unsigned index = 0, end = indexSwitch.getNumCases(); index < end;
+         ++index) {
+      if (failed(addTerminator(indexSwitch.getCaseBlock(index)))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addBranchConstraints(Block *destination, OperandRange operands,
+                                     Operation *op) {
+    if (!destination) {
+      return success();
+    }
+    for (auto [index, operand] : llvm::enumerate(operands)) {
+      if (index >= destination->getNumArguments()) {
+        break;
+      }
+      if (failed(unite(operand, destination->getArgument(index), op))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addSwitchConstraints(cf::SwitchOp switchOp) {
+    if (failed(addBranchConstraints(switchOp.getDefaultDestination(),
+                                    switchOp.getDefaultOperands(), switchOp))) {
+      return failure();
+    }
+    for (auto [destination, operands] :
+         llvm::zip(switchOp.getCaseDestinations(), switchOp.getCaseOperands())) {
+      if (failed(addBranchConstraints(destination, operands, switchOp))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addReturnConstraints(func::ReturnOp returnOp) {
+    func::FuncOp function = returnOp->getParentOfType<func::FuncOp>();
+    if (!function) {
+      return success();
+    }
+    auto [it, inserted] = firstReturnOperands.try_emplace(
+        function, SmallVector<Value>(returnOp.getOperands()));
+    if (inserted) {
+      return success();
+    }
+    for (auto [index, operand] : llvm::enumerate(returnOp.getOperands())) {
+      if (index >= it->second.size()) {
+        break;
+      }
+      if (failed(unite(it->second[index], operand, returnOp))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  bool hasViewValueTypes(Operation *op) const {
+    return llvm::any_of(op->getOperandTypes(), isViewType) ||
+           llvm::any_of(op->getResultTypes(), isViewType);
+  }
+
+  LogicalResult seedDeclarationBoundary(func::CallOp call,
+                                        func::FuncOp callee) {
+    FunctionType type = callee.getFunctionType();
+    for (auto [index, operand] : llvm::enumerate(call.getOperands())) {
+      bool isViewInput =
+          index < type.getNumInputs() && isViewType(type.getInput(index));
+      if (!isViewInput) {
+        continue;
+      }
+      Layout layout = Layout::ND;
+      if (auto attr = getViewTypeLayoutAttr(type.getInput(index))) {
+        layout = attr.getLayout();
+      }
+      if (failed(seed(operand, layout, call))) {
+        return failure();
+      }
+    }
+    for (auto [index, result] : llvm::enumerate(call.getResults())) {
+      bool isViewResult =
+          index < type.getNumResults() && isViewType(type.getResult(index));
+      if (!isViewResult) {
+        continue;
+      }
+      Layout layout = Layout::ND;
+      if (auto attr = getViewTypeLayoutAttr(type.getResult(index))) {
+        layout = attr.getLayout();
+      }
+      if (failed(seed(result, layout, call))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addCallConstraints(func::CallOp call) {
+    if (!hasViewValueTypes(call)) {
+      return success();
+    }
+    auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+        call, call.getCalleeAttr());
+    if (!callee) {
+      return call.emitError(
+          "view-typed call requires a resolvable direct callee");
+    }
+    if (callee.empty()) {
+      return seedDeclarationBoundary(call, callee);
+    }
+
+    for (auto [operand, argument] :
+         llvm::zip(call.getOperands(), callee.getArguments())) {
+      if (failed(unite(operand, argument, call))) {
+        return failure();
+      }
+    }
+    WalkResult result = callee.walk([&](func::ReturnOp returnOp) {
+      for (auto [index, result] : llvm::enumerate(call.getResults())) {
+        bool hasOperand = index < returnOp.getNumOperands();
+        if (hasOperand &&
+            failed(unite(result, returnOp.getOperand(index), call))) {
+          return WalkResult::interrupt();
+        }
+      }
+      return WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  LogicalResult addSelectConstraints(arith::SelectOp select) {
+    if (failed(unite(select.getTrueValue(), select.getResult(), select))) {
+      return failure();
+    }
+    return unite(select.getFalseValue(), select.getResult(), select);
+  }
+
+  LogicalResult addCastConstraints(UnrealizedConversionCastOp castOp) {
+    bool hasPairwiseValues =
+        castOp->getNumOperands() == castOp->getNumResults();
+    if (!hasPairwiseValues) {
+      return success();
+    }
+    for (auto [operand, result] :
+         llvm::zip(castOp->getOperands(), castOp->getResults())) {
+      if (failed(unite(operand, result, castOp))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
+  LogicalResult addForConstraints(scf::ForOp forOp) {
+    return VMIControlFlowSupport::addForConstraints(
+        forOp, [&](Value lhs, Value rhs, Operation *anchor) {
+          return unite(lhs, rhs, anchor);
+        });
+  }
+
+  LogicalResult addWhileConstraints(scf::WhileOp whileOp) {
+    return VMIControlFlowSupport::addWhileConstraints(
+        whileOp, [&](Value lhs, Value rhs, Operation *anchor) {
+          return unite(lhs, rhs, anchor);
+        });
+  }
+
+  LogicalResult addCondBranchConstraints(cf::CondBranchOp branch) {
+    if (failed(addBranchConstraints(branch.getTrueDest(),
+                                    branch.getTrueDestOperands(), branch))) {
+      return failure();
+    }
+    return addBranchConstraints(branch.getFalseDest(),
+                                branch.getFalseDestOperands(), branch);
+  }
+
+  LogicalResult addIndirectCallConstraints(func::CallIndirectOp call) {
+    if (!hasViewValueTypes(call)) {
+      return success();
+    }
+    call.emitError("view-typed indirect calls cannot propagate layout");
+    return failure();
+  }
+
+  LogicalResult addValueFlowConstraint(Operation *op) {
+    if (auto partition = dyn_cast<PartitionViewOp>(op)) {
+      return unite(partition.getSource(), partition.getResult(), partition);
+    }
+    if (auto select = dyn_cast<arith::SelectOp>(op)) {
+      return addSelectConstraints(select);
+    }
+    if (auto castOp = dyn_cast<UnrealizedConversionCastOp>(op)) {
+      return addCastConstraints(castOp);
+    }
+    return success();
+  }
+
+  LogicalResult addSCFConstraint(Operation *op) {
+    if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+      return addIfConstraints(ifOp);
+    }
+    if (auto execute = dyn_cast<scf::ExecuteRegionOp>(op)) {
+      return addExecuteRegionConstraints(execute);
+    }
+    if (auto indexSwitch = dyn_cast<scf::IndexSwitchOp>(op)) {
+      return addIndexSwitchConstraints(indexSwitch);
+    }
+    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      return addForConstraints(forOp);
+    }
+    if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+      return addWhileConstraints(whileOp);
+    }
+    return success();
+  }
+
+  LogicalResult addCFConstraint(Operation *op) {
+    if (auto branch = dyn_cast<cf::BranchOp>(op)) {
+      return addBranchConstraints(branch.getDest(), branch.getDestOperands(),
+                                  branch);
+    }
+    if (auto condBranch = dyn_cast<cf::CondBranchOp>(op)) {
+      return addCondBranchConstraints(condBranch);
+    }
+    if (auto switchOp = dyn_cast<cf::SwitchOp>(op)) {
+      return addSwitchConstraints(switchOp);
+    }
+    return success();
+  }
+
+  LogicalResult addFunctionConstraint(Operation *op) {
+    if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
+      return addReturnConstraints(returnOp);
+    }
+    if (auto callOp = dyn_cast<func::CallOp>(op)) {
+      return addCallConstraints(callOp);
+    }
+    if (auto indirectCall = dyn_cast<func::CallIndirectOp>(op)) {
+      return addIndirectCallConstraints(indirectCall);
+    }
+    return success();
+  }
+
+  LogicalResult addConstraint(Operation *op) {
+    if (failed(addValueFlowConstraint(op))) {
+      return failure();
+    }
+    if (failed(addSCFConstraint(op))) {
+      return failure();
+    }
+    if (failed(addCFConstraint(op))) {
+      return failure();
+    }
+    if (failed(addFunctionConstraint(op))) {
+      return failure();
+    }
+    return success();
+  }
+
+  LogicalResult addConstraints() {
+    WalkResult result = module.walk([&](Operation *op) {
+      return failed(addConstraint(op)) ? WalkResult::interrupt()
+                                       : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
+  }
+
+  Layout getLayout(Value value) {
+    auto it = ids.find(value);
+    if (it == ids.end()) {
+      return Layout::ND;
+    }
+    return nodes[find(it->second)].layout.value_or(Layout::ND);
+  }
+
+  void rewriteAmbiguousMakeTensorViewLayouts() {
+    for (MakeTensorViewOp op : ambiguousMakes) {
+      setLayoutAttr(op.getOperation(), getLayout(op.getResult()),
+                    /*inferred=*/true);
+    }
+  }
+
+  void rewriteValueTypes() {
+    for (ViewLayoutNode &node : nodes) {
+      Type newType = getViewTypeWithLayout(node.value.getType(),
+                                           getLayout(node.value));
+      node.value.setType(newType);
+    }
+  }
+
+  void rewriteFunctionTypes() {
+    module.walk([&](func::FuncOp function) {
+      FunctionType oldType = function.getFunctionType();
+      SmallVector<Type> inputs;
+      if (function.empty()) {
+        inputs.assign(oldType.getInputs().begin(), oldType.getInputs().end());
+      } else {
+        for (BlockArgument argument : function.getArguments()) {
+          inputs.push_back(argument.getType());
+        }
+      }
+
+      SmallVector<Type> results(oldType.getResults().begin(),
+                                oldType.getResults().end());
+      auto it = firstReturnOperands.find(function);
+      if (it != firstReturnOperands.end()) {
+        for (auto [index, operand] : llvm::enumerate(it->second)) {
+          if (index < results.size()) {
+            results[index] = operand.getType();
+          }
+        }
+      }
+      function.setFunctionType(FunctionType::get(context, inputs, results));
+    });
+  }
+
+  ModuleOp module;
+  MLIRContext *context;
+  DenseMap<Value, unsigned> ids;
+  SmallVector<ViewLayoutNode> nodes;
+  SmallVector<MakeTensorViewOp> ambiguousMakes;
+  DenseMap<func::FuncOp, SmallVector<Value>> firstReturnOperands;
+};
 
 struct InferPTOLayoutPass
     : public mlir::pto::impl::InferPTOLayoutBase<InferPTOLayoutPass> {
@@ -630,43 +1460,99 @@ struct InferPTOLayoutPass
   }
 
   void runOnOperation() override {
-    func::FuncOp func = getOperation();
+    ModuleOp module = getOperation();
     // ------------------------------------------------------------------
     // 1) pto.make_tensor_view (only if it still exists in the pipeline)
     // ------------------------------------------------------------------
-    func.walk([&](MakeTensorViewOp op) {
-      inferMakeTensorViewLayoutAttr(op, [this] { signalPassFailure(); });
+    bool inferenceFailed = false;
+    module.walk([&](MakeTensorViewOp op) {
+      inferMakeTensorViewLayoutAttr(op, [this, &inferenceFailed] {
+        inferenceFailed = true;
+        signalPassFailure();
+      });
+    });
+    if (inferenceFailed) {
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // 2) Propagate view layouts through SSA merges and direct calls. This
+    // rewrites non-ND view types so downstream structural type conversion can
+    // preserve the layout without relying on a defining-op walk.
+    // ------------------------------------------------------------------
+    ViewLayoutSolver solver(module);
+    if (failed(solver.run())) {
+      signalPassFailure();
+      return;
+    }
+
+    // ------------------------------------------------------------------
+    // 3) pto.partition_view: validate against the resolved source layout.
+    // The logical inheritance is resolved through the source chain and later
+    // materialized on the lowered memref.subview. Avoid adding derived
+    // attributes here so the source remains the single authority.
+    // ------------------------------------------------------------------
+    module.walk([&](PartitionViewOp op) {
+      auto sourceInfo = resolveLayoutFromViewValue(op.getSource());
+      if (!sourceInfo.layout) {
+        return;
+      }
+      if (*sourceInfo.layout == Layout::NZ && !verifyNZPartitionView(op)) {
+        signalPassFailure();
+        return;
+      }
+      if (auto existing = op->getAttrOfType<LayoutAttr>(kLayoutAttrName);
+          existing && existing.getLayout() != *sourceInfo.layout) {
+        op.emitError() << "partition layout="
+                       << stringifyLayout(existing.getLayout())
+                       << " does not match source layout="
+                       << stringifyLayout(*sourceInfo.layout);
+        signalPassFailure();
+        return;
+      }
     });
 
     // ------------------------------------------------------------------
-    // 2) memref.reinterpret_cast (lowered from make_tensor_view)
+    // 4) memref.reinterpret_cast (lowered from make_tensor_view)
     // ------------------------------------------------------------------
-    func.walk([&](memref::ReinterpretCastOp op) {
+    module.walk([&](memref::ReinterpretCastOp op) {
       inferReinterpretCastLayoutAttr(op, [this] { signalPassFailure(); });
     });
 
     // ------------------------------------------------------------------
-    // 3) memref.subview: layout is preserved from the source view
+    // 5) memref.subview: preserve layout only across a legal derived view.
     // ------------------------------------------------------------------
-    func.walk([&](memref::SubViewOp op) {
+    module.walk([&](memref::SubViewOp op) {
       auto resTy = dyn_cast<MemRefType>(op.getType());
       if (!resTy || !isGlobalMemRef(resTy)) {
         return;
       }
 
-      if (op->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
+      auto sourceInfo = resolveLayoutFromViewValue(op.getSource());
+      auto existing = op->getAttrOfType<LayoutAttr>(kLayoutAttrName);
+      if (existing && sourceInfo.layout &&
+          existing.getLayout() != *sourceInfo.layout) {
+        op.emitError() << "subview layout="
+                       << stringifyLayout(existing.getLayout())
+                       << " does not match source layout="
+                       << stringifyLayout(*sourceInfo.layout);
+        signalPassFailure();
         return;
       }
 
-      if (Operation *def = op.getSource().getDefiningOp()) {
-        if (auto srcLayout = def->getAttrOfType<LayoutAttr>(kLayoutAttrName)) {
-          op->setAttr(kLayoutAttrName, srcLayout);
-          if (auto inferred =
-                  def->getAttrOfType<BoolAttr>(kInferredLayoutAttrName)) {
-            op->setAttr(kInferredLayoutAttrName, inferred);
-          }
+      if (existing || sourceInfo.layout) {
+        Layout layout = existing ? existing.getLayout() : *sourceInfo.layout;
+        auto existingInferred =
+            op->getAttrOfType<BoolAttr>(kInferredLayoutAttrName);
+        bool inferred =
+            existing ? (existingInferred && existingInferred.getValue())
+                     : sourceInfo.inferred;
+        if (layout == Layout::NZ && !verifyNZMemRefSubview(op)) {
+          signalPassFailure();
           return;
         }
+        setLayoutAttr(op.getOperation(), layout, inferred);
+        return;
       }
 
       // Fallback: if source memref type is fully static, infer from it.
@@ -689,20 +1575,24 @@ struct InferPTOLayoutPass
 
       auto inferred = inferLayout5D(srcTy.getShape(), strideInts,
                                     elemByteSize(srcTy.getElementType()));
+      if (inferred == Layout::NZ && !verifyNZMemRefSubview(op)) {
+        signalPassFailure();
+        return;
+      }
       setLayoutAttr(op.getOperation(), inferred.value_or(Layout::ND),
                     /*inferred=*/true);
     });
 
     // ------------------------------------------------------------------
-    // 4) pto.tload / pto.tstore: attach layout for static GM memrefs so EmitC
+    // 6) pto.tload / pto.tstore: attach layout for static GM memrefs so EmitC
     //    doesn't need to infer again in buildGlobalTensorFromMemref().
     // ------------------------------------------------------------------
-    func.walk([&](pto::TLoadOp op) {
+    module.walk([&](pto::TLoadOp op) {
       attachLoadStoreLayout(op, [](auto load) { return load.getSrc(); },
                             [](auto load) { return load.getDst(); });
     });
 
-    func.walk([&](pto::TStoreOp op) {
+    module.walk([&](pto::TStoreOp op) {
       attachLoadStoreLayout(op, [](auto store) { return store.getDst(); },
                             [](auto store) { return store.getSrc(); });
     });

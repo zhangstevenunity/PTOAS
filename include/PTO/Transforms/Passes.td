@@ -92,15 +92,18 @@ def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   ];
 }
 
-def InferPTOLayout : Pass<"pto-infer-layout", "func::FuncOp"> {
-  let summary = "Infer GlobalTensor layout (ND/DN/NZ) for make_tensor_view";
+def InferPTOLayout : Pass<"pto-infer-layout", "ModuleOp"> {
+  let summary = "Infer and propagate GlobalTensor layout (ND/DN/NZ)";
   let description = [{
     For each pto.make_tensor_view with fully static shape/stride, compute layout
-    (ND/DN/NZ) per design rules and attach the optional `layout` attribute.
-    Dynamic stride/shape are left unset.
+    (ND/DN/NZ) per design rules, propagate it through SCF/CF control flow and
+    direct function calls, and diagnose conflicting layouts at merge points.
+    Non-ND layouts are encoded in tensor-view SSA types for backend conversion.
   }];
   let constructor = "mlir::pto::createInferPTOLayoutPass()";
-  let dependentDialects = ["pto::PTODialect", "arith::ArithDialect"];
+  let dependentDialects = ["pto::PTODialect", "arith::ArithDialect",
+                           "cf::ControlFlowDialect", "func::FuncDialect",
+                           "scf::SCFDialect"];
 }
 
 def PTOA5NormalizeTMov : Pass<"pto-a5-normalize-tmov", "func::FuncOp"> {

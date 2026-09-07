@@ -48,6 +48,10 @@ def PTOCommType :
 def PtrOrMemRef :
   AnyTypeOf<[PtrType, AnyMemRef], "Ptr or MemRef">;
 
+def TensorViewOrPartitionView :
+  AnyTypeOf<[TensorViewType, PartitionTensorViewType],
+            "TensorView or PartitionTensorView">;
+
 def ScalarType :
   AnyTypeOf<[AnySignlessInteger, AnyFloat], "numeric (integer/float)">;
 
@@ -264,7 +268,7 @@ def PartitionViewOp : PTO_Op<"partition_view", [AttrSizedOperandSegments,
   }];
 
   let arguments = (ins
-    TensorViewType:$source,    // 输入: 物理大底座 (MakeTensorViewOp 的结果)
+    TensorViewOrPartitionView:$source,
     Variadic<Index>:$offsets,  // 动态 offsets
     Variadic<Index>:$sizes     // 动态 sizes
   );

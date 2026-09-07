@@ -107,7 +107,7 @@ grep -F "TMOV<" "${TMOV_LEGACY_CPP}" \
 TSTORE_SIMPLE_BC="${OUT_DIR}/tstore_fp_simple_v0.ptobc"
 TSTORE_LEGACY_IR="${OUT_DIR}/tstore_fp_simple_v0.legacy.pto"
 TSTORE_LEGACY_CPP="${OUT_DIR}/tstore_fp_simple_v0.legacy.cpp"
-"${PTOBC_BIN}" encode "${TESTDATA_DIR}/tstore_fp_v0_roundtrip.pto" \
+"${PTOBC_BIN}" encode "${TESTDATA_DIR}/tstore_fp_v0_legacy_roundtrip.pto" \
   -o "${TSTORE_SIMPLE_BC}"
 "${LEGACY_PTOBC_BIN}" decode "${TSTORE_SIMPLE_BC}" -o "${TSTORE_LEGACY_IR}"
 grep -F "pto.tstore_fp" "${TSTORE_LEGACY_IR}" >/dev/null

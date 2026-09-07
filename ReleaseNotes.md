@@ -7,6 +7,12 @@
 ## 变更摘要
 - PTOAS 首次发布
 
+## 未发布变更
+- GlobalTensor layout 推断现在识别 canonical rank-5 NZ view。对
+  `pto.mgather` / `pto.mscatter`，若无 layout 的 shape/stride 同时命中该 NZ
+  约定，而内核语义实际是 ND，需要在 `pto.make_tensor_view` 上显式写
+  `layout = #pto.layout<nd>`（PTODSL 使用 `layout="ND"`）。
+
 ## 概述
 PTOAS（PTO Assembler & Optimizer）是面向 PTO Bytecode 的编译器工具链，基于 LLVM/MLIR LLVM19 VPTO 分支 `vpto-dev/llvm-project:feature-vpto` 构建。它提供 PTO Dialect 的定义、解析、验证、优化与代码生成能力，并输出可调用 `pto-isa` 的 C++ 代码。
 

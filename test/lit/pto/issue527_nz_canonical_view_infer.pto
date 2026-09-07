@@ -1,0 +1,852 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir --mlir-print-ir-after=pto-infer-layout %t/positive.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=INFER
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-infer-layout %t/positive.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=INFER
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir --mlir-print-ir-after=pto-infer-layout %t/nd_fallback.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=ND-FALLBACK
+// RUN: ptoas --pto-arch=a3 %t/emitc.pto 2>&1 | FileCheck %s --check-prefix=EMITC
+// RUN: ptoas --pto-arch=a5 %t/emitc.pto 2>&1 | FileCheck %s --check-prefix=EMITC
+// RUN: not ptoas --pto-arch=a5 %t/invalid_inner_shape.pto 2>&1 | FileCheck %s --check-prefix=BAD-SHAPE
+// RUN: not ptoas --pto-arch=a5 %t/invalid_rank.pto 2>&1 | FileCheck %s --check-prefix=BAD-RANK
+// RUN: not ptoas --pto-arch=a5 %t/invalid_inner_stride.pto 2>&1 | FileCheck %s --check-prefix=BAD-STRIDE
+// RUN: not ptoas --pto-arch=a5 %t/invalid_outer_gap.pto 2>&1 | FileCheck %s --check-prefix=BAD-GAP
+// RUN: not ptoas --pto-arch=a5 %t/invalid_d3_partition.pto 2>&1 | FileCheck %s --check-prefix=BAD-D3
+// RUN: not ptoas --pto-arch=a5 %t/invalid_d4_partition.pto 2>&1 | FileCheck %s --check-prefix=BAD-D4
+// RUN: not ptoas --pto-arch=a5 %t/partition_offset_overflow.pto 2>&1 | FileCheck %s --check-prefix=OFFSET-OVERFLOW
+// RUN: not ptoas --pto-arch=a5 %t/dynamic_inner_partition.pto 2>&1 | FileCheck %s --check-prefix=DYNAMIC-INNER
+// RUN: not ptoas --pto-arch=a5 %t/invalid_memref_subview.pto 2>&1 | FileCheck %s --check-prefix=BAD-MEMREF
+// RUN: not ptoas --pto-arch=a5 %t/invalid_memref_subview_step.pto 2>&1 | FileCheck %s --check-prefix=BAD-MEMREF-STEP
+// RUN: not ptoas --pto-arch=a5 %t/partition_layout_mismatch.pto 2>&1 | FileCheck %s --check-prefix=PARTITION-MISMATCH
+// RUN: not ptoas --pto-arch=a5 %t/subview_layout_mismatch.pto 2>&1 | FileCheck %s --check-prefix=SUBVIEW-MISMATCH
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-infer-layout %t/explicit_false_inferred_attr.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALSE-INFERRED
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-infer-layout %t/dynamic_memref_subview.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=DYNAMIC-MEMREF
+
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nz>, pto.inferred_layout = true} : !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nz>, pto.inferred_layout = true} : !pto.tensor_view<1x4x8x16x16xf16, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nz>, pto.inferred_layout = true} : !pto.tensor_view<1x2x8x16x32xi8, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nz>, pto.inferred_layout = true} : !pto.tensor_view<1x2x8x16x32x!pto.f4E1M2x2, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<8x8x16x8xf32>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<4x1x16x8x16xf32>
+// INFER-DAG: pto.make_tensor_view {{.*}} shape = {{.*}} {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<1x1x1x16x8xf32>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x1x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nd>} : !pto.tensor_view<1x2x1x16x8xf32>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nz>} : !pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nz>} : !pto.tensor_view<1x4x8x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nz>} : !pto.tensor_view<32x128x128x16x32xi8, #pto.layout<nz>>
+// INFER-DAG: pto.partition_view {{.*}} : !pto.tensor_view<32x128x128x16x32xi8, #pto.layout<nz>>
+// INFER-DAG: pto.partition_view {{.*}} : !pto.partition_tensor_view<1x4x8x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.make_tensor_view {{.*}} {layout = #pto.layout<nz>} : !pto.tensor_view<1x?x?x16x8xf32, #pto.layout<nz>>
+// INFER-DAG: pto.mgather
+// INFER-DAG: pto.mscatter
+// INFER-DAG: memref.subview {{.*}} {layout = #pto.layout<nz>}
+
+// ND-FALLBACK: pto.make_tensor_view {{.*}} {layout = #pto.layout<nd>, pto.inferred_layout = true} : !pto.tensor_view<4x8x16xf32>
+
+// EMITC: pto::Shape<1, 8, 8, 16, 8>
+// EMITC: pto::Stride<8192, 1024, 128, 8, 1>
+// EMITC: GlobalTensor<float, pto::Shape<1, 8, 8, 16, 8>, pto::Stride<8192, 1024, 128, 8, 1>, pto::Layout::NZ>
+// EMITC-LABEL: AICORE void gapped_nested_partition_emitc(
+// EMITC: GlobalTensor<float, pto::Shape<1, 3, 8, 16, 8>, pto::Stride<16384, 2048, 128, 8, 1>, pto::Layout::NZ>
+// EMITC: PTOAS__GLOBAL_TENSOR_DATA
+// EMITC: pto::Shape<1, 2, 8, 16, 8>
+// EMITC: pto::Stride<16384, 2048, 128, 8, 1>
+// EMITC: GlobalTensor<float, pto::Shape<1, 2, 8, 16, 8>, pto::Stride<16384, 2048, 128, 8, 1>, pto::Layout::NZ>
+// EMITC-LABEL: AICORE void dynamic_nested_partition_emitc(
+// EMITC: GetStride
+// EMITC: PTOAS__GLOBAL_TENSOR_DATA
+// EMITC-LABEL: AICORE void batched_nz_tload(
+// EMITC: PTOAS__GLOBAL_TENSOR_DATA
+// EMITC: unsigned [[NZ_OFFSET:v[0-9]+]] = 512
+// EMITC: GlobalTensor<int8_t, pto::Shape<1, 1, 1, 16, 32>, pto::Stride<512, 512, 512, 32, 1>, pto::Layout::NZ>
+// EMITC-SAME: {{.*}} + [[NZ_OFFSET]]
+
+// BAD-SHAPE: user-specified layout=nz is incompatible with shape/stride: expected shape[3]==16 (got 8)
+// BAD-RANK: user-specified layout=nz requires a rank-5 view, got rank 4
+// BAD-STRIDE: user-specified layout=nz is incompatible with shape/stride: expected stride[2]==128 (got 64)
+// BAD-GAP: user-specified layout=nz is incompatible with shape/stride: expected stride[1] >= shape[2] * stride[2] (1024), got 512
+// BAD-D3: NZ view cannot be partitioned inside a fractal: d3 must keep offset=0 and size=16 (got offset=1, size=15)
+// BAD-D4: NZ view cannot be partitioned inside a fractal: d4 must keep offset=0 and size=8 (got offset=1, size=7)
+// OFFSET-OVERFLOW: offset+size at dim 0 overflows
+// DYNAMIC-INNER: NZ partition must prove that d3 remains complete at compile time
+// BAD-MEMREF: NZ view cannot be partitioned inside a fractal: d4 must keep offset=0 and size=8 (got offset=1, size=7)
+// BAD-MEMREF-STEP: NZ subview requires unit steps in every dimension
+// PARTITION-MISMATCH: partition layout=nd does not match source layout=nz
+// SUBVIEW-MISMATCH: subview layout=nd does not match source layout=nz
+// FALSE-INFERRED: memref.subview {{.*}} {layout = #pto.layout<nz>}
+// FALSE-INFERRED-NOT: pto.inferred_layout
+
+// DYNAMIC-MEMREF: memref.reinterpret_cast {{.*}} {layout = #pto.layout<nz>}
+// DYNAMIC-MEMREF: memref.cast
+// DYNAMIC-MEMREF: memref.subview {{.*}} {layout = #pto.layout<nz>}
+
+//--- positive.pto
+module {
+  func.func @canonical_roots(
+      %fp32: !pto.ptr<f32>, %fp16: !pto.ptr<f16>, %i8: !pto.ptr<i8>,
+      %fp4: !pto.ptr<!pto.f4E1M2x2>)
+      -> (!pto.tensor_view<1x8x8x16x8xf32>,
+          !pto.tensor_view<1x4x8x16x16xf16>,
+          !pto.tensor_view<1x2x8x16x32xi8>,
+          !pto.tensor_view<1x2x8x16x32x!pto.f4E1M2x2>,
+          !pto.tensor_view<8x8x16x8xf32>,
+          !pto.tensor_view<4x1x16x8x16xf32>,
+          !pto.tensor_view<1x1x1x16x8xf32>) {
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c512 = arith.constant 512 : index
+    %c1024 = arith.constant 1024 : index
+    %c2048 = arith.constant 2048 : index
+    %c4096 = arith.constant 4096 : index
+    %c8192 = arith.constant 8192 : index
+
+    %fp32_nz = pto.make_tensor_view %fp32,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %fp16_nz = pto.make_tensor_view %fp16,
+      shape = [%c1, %c4, %c8, %c16, %c16],
+      strides = [%c8192, %c2048, %c256, %c16, %c1]
+      : !pto.tensor_view<1x4x8x16x16xf16>
+    %i8_nz = pto.make_tensor_view %i8,
+      shape = [%c1, %c2, %c8, %c16, %c32],
+      strides = [%c8192, %c4096, %c512, %c32, %c1]
+      : !pto.tensor_view<1x2x8x16x32xi8>
+    %fp4_nz = pto.make_tensor_view %fp4,
+      shape = [%c1, %c2, %c8, %c16, %c32],
+      strides = [%c8192, %c4096, %c512, %c32, %c1]
+      : !pto.tensor_view<1x2x8x16x32x!pto.f4E1M2x2>
+    %rank4_nd = pto.make_tensor_view %fp32,
+      shape = [%c8, %c8, %c16, %c8],
+      strides = [%c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<8x8x16x8xf32>
+    %legacy_nd = pto.make_tensor_view %fp32,
+      shape = [%c4, %c1, %c16, %c8, %c16],
+      strides = [%c2048, %c2048, %c128, %c16, %c1]
+      : !pto.tensor_view<4x1x16x8x16xf32>
+    %single_nd = pto.make_tensor_view %fp32,
+      shape = [%c1, %c1, %c1, %c16, %c8],
+      strides = [%c128, %c128, %c128, %c8, %c1]
+      : !pto.tensor_view<1x1x1x16x8xf32>
+    return %fp32_nz, %fp16_nz, %i8_nz, %fp4_nz, %rank4_nd, %legacy_nd,
+      %single_nd : !pto.tensor_view<1x8x8x16x8xf32>,
+      !pto.tensor_view<1x4x8x16x16xf16>,
+      !pto.tensor_view<1x2x8x16x32xi8>,
+      !pto.tensor_view<1x2x8x16x32x!pto.f4E1M2x2>,
+      !pto.tensor_view<8x8x16x8xf32>,
+      !pto.tensor_view<4x1x16x8x16xf32>,
+      !pto.tensor_view<1x1x1x16x8xf32>
+  }
+
+  func.func @explicit_layouts(%ptr: !pto.ptr<f32>)
+      -> (!pto.tensor_view<1x1x1x16x8xf32>,
+          !pto.tensor_view<1x2x1x16x8xf32>,
+          !pto.tensor_view<1x8x8x16x8xf32>,
+          !pto.tensor_view<1x4x8x16x8xf32>) {
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+
+    %single_nz = pto.make_tensor_view %ptr,
+      shape = [%c1, %c1, %c1, %c16, %c8],
+      strides = [%c128, %c128, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>, pto.inferred_layout = true}
+      : !pto.tensor_view<1x1x1x16x8xf32>
+    %canonical_nd = pto.make_tensor_view %ptr,
+      shape = [%c1, %c2, %c1, %c16, %c8],
+      strides = [%c256, %c128, %c128, %c8, %c1]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x2x1x16x8xf32>
+    %canonical_nz = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %gapped_nz = pto.make_tensor_view %ptr,
+      shape = [%c1, %c4, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x4x8x16x8xf32>
+    return %single_nz, %canonical_nd, %canonical_nz, %gapped_nz
+      : !pto.tensor_view<1x1x1x16x8xf32>,
+        !pto.tensor_view<1x2x1x16x8xf32>,
+        !pto.tensor_view<1x8x8x16x8xf32>,
+        !pto.tensor_view<1x4x8x16x8xf32>
+  }
+
+  // pto-isa canonical NZ permits a non-unit outer batch/expert dimension.
+  // Its shape/stride structure is also valid blocked ND, so the explicit
+  // annotation is required to preserve the intended NZ interpretation.
+  func.func @batched_canonical_nz(%ptr: !pto.ptr<i8>)
+      -> !pto.partition_tensor_view<1x128x128x16x32xi8> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c512 = arith.constant 512 : index
+    %c65536 = arith.constant 65536 : index
+    %c8388608 = arith.constant 8388608 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c32, %c128, %c128, %c16, %c32],
+      strides = [%c8388608, %c65536, %c512, %c32, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<32x128x128x16x32xi8>
+    %part = pto.partition_view %view,
+      offsets = [%c1, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c128, %c128, %c16, %c32]
+      : !pto.tensor_view<32x128x128x16x32xi8>
+        -> !pto.partition_tensor_view<1x128x128x16x32xi8>
+    return %part : !pto.partition_tensor_view<1x128x128x16x32xi8>
+  }
+
+  func.func @partition_and_nested_propagation(%ptr: !pto.ptr<f32>)
+      -> (!pto.partition_tensor_view<1x8x4x16x8xf32>,
+          !pto.partition_tensor_view<1x2x4x16x8xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %d1 = pto.partition_view %root,
+      offsets = [%c0, %c2, %c0, %c0, %c0],
+      sizes = [%c1, %c4, %c8, %c16, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x4x8x16x8xf32>
+    %d2 = pto.partition_view %root,
+      offsets = [%c0, %c0, %c2, %c0, %c0],
+      sizes = [%c1, %c8, %c4, %c16, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x4x16x8xf32>
+    %nested = pto.partition_view %d1,
+      offsets = [%c0, %c1, %c2, %c0, %c0],
+      sizes = [%c1, %c2, %c4, %c16, %c8]
+      : !pto.partition_tensor_view<1x4x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x2x4x16x8xf32>
+    return %d2, %nested : !pto.partition_tensor_view<1x8x4x16x8xf32>,
+      !pto.partition_tensor_view<1x2x4x16x8xf32>
+  }
+
+  func.func @dynamic_outer_partition(
+      %ptr: !pto.ptr<f32>, %d1: index, %d2: index,
+      %stride0: index, %stride1: index,
+      %offset1: index, %offset2: index,
+      %size1: index, %size2: index)
+      -> !pto.partition_tensor_view<1x?x?x16x8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %d1, %d2, %c16, %c8],
+      strides = [%stride0, %stride1, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x?x?x16x8xf32>
+    %part = pto.partition_view %root,
+      offsets = [%c0, %offset1, %offset2, %c0, %c0],
+      sizes = [%c1, %size1, %size2, %c16, %c8]
+      : !pto.tensor_view<1x?x?x16x8xf32>
+        -> !pto.partition_tensor_view<1x?x?x16x8xf32>
+    return %part : !pto.partition_tensor_view<1x?x?x16x8xf32>
+  }
+
+  func.func @mgather_explicit_nd(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c1, %c2, %c1, %c16, %c8],
+      strides = [%c256, %c128, %c128, %c8, %c1]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x2x1x16x8xf32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c2, %c1, %c16, %c8]
+      : !pto.tensor_view<1x2x1x16x8xf32>
+        -> !pto.partition_tensor_view<1x2x1x16x8xf32>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mgather
+      ins(%part, %idx : !pto.partition_tensor_view<1x2x1x16x8xf32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      {coalesce = #pto<coalesce row>}
+    return
+  }
+
+  func.func @mscatter_explicit_nd(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c1, %c2, %c1, %c16, %c8],
+      strides = [%c256, %c128, %c128, %c8, %c1]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x2x1x16x8xf32>
+    %part = pto.partition_view %view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c2, %c1, %c16, %c8]
+      : !pto.tensor_view<1x2x1x16x8xf32>
+        -> !pto.partition_tensor_view<1x2x1x16x8xf32>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %idx = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.mscatter
+      ins(%src, %idx : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32, v_row=8, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32, v_row=8, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%part : !pto.partition_tensor_view<1x2x1x16x8xf32>)
+    return
+  }
+
+  func.func @memref_nz_subview(
+      %base: memref<?xf32, #pto.address_space<gm>>)
+      -> memref<1x4x8x16x8xf32,
+                strided<[8192, 1024, 128, 8, 1], offset: 2048>,
+                #pto.address_space<gm>> {
+    %root = memref.reinterpret_cast %base to
+      offset: [0],
+      sizes: [1, 8, 8, 16, 8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<1x8x8x16x8xf32, strided<[8192, 1024, 128, 8, 1]>, #pto.address_space<gm>>
+    %part = memref.subview %root[0, 2, 0, 0, 0] [1, 4, 8, 16, 8] [1, 1, 1, 1, 1]
+      : memref<1x8x8x16x8xf32, strided<[8192, 1024, 128, 8, 1]>, #pto.address_space<gm>>
+        to memref<1x4x8x16x8xf32, strided<[8192, 1024, 128, 8, 1], offset: 2048>, #pto.address_space<gm>>
+    return %part : memref<1x4x8x16x8xf32,
+                          strided<[8192, 1024, 128, 8, 1], offset: 2048>,
+                          #pto.address_space<gm>>
+  }
+}
+
+//--- emitc.pto
+module {
+  func.func @canonical_nz_emitc(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %part = pto.partition_view %root,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c8, %c8, %c16, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x16x8xf32>
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tload
+      ins(%part : !pto.partition_tensor_view<1x8x8x16x8xf32>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=64, v_row=128, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @gapped_nested_partition_emitc(%ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c2048 = arith.constant 2048 : index
+    %c16384 = arith.constant 16384 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c4, %c8, %c16, %c8],
+      strides = [%c16384, %c2048, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x4x8x16x8xf32>
+    %outer = pto.partition_view %root,
+      offsets = [%c0, %c1, %c0, %c0, %c0],
+      sizes = [%c1, %c3, %c8, %c16, %c8]
+      : !pto.tensor_view<1x4x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x3x8x16x8xf32>
+    %nested = pto.partition_view %outer,
+      offsets = [%c0, %c1, %c0, %c0, %c0],
+      sizes = [%c1, %c2, %c8, %c16, %c8]
+      : !pto.partition_tensor_view<1x3x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x2x8x16x8xf32>
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=16, v_row=128, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tload
+      ins(%nested : !pto.partition_tensor_view<1x2x8x16x8xf32>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=16, v_row=128, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @dynamic_nested_partition_emitc(
+      %ptr: !pto.ptr<f32>, %d1: index, %d2: index,
+      %stride0: index, %stride1: index,
+      %outerOffset1: index, %outerOffset2: index,
+      %outerSize1: index, %outerSize2: index,
+      %innerOffset1: index, %innerOffset2: index,
+      %innerSize1: index, %innerSize2: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %d1, %d2, %c16, %c8],
+      strides = [%stride0, %stride1, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x?x?x16x8xf32>
+    %outer = pto.partition_view %root,
+      offsets = [%c0, %outerOffset1, %outerOffset2, %c0, %c0],
+      sizes = [%c1, %outerSize1, %outerSize2, %c16, %c8]
+      : !pto.tensor_view<1x?x?x16x8xf32>
+        -> !pto.partition_tensor_view<1x?x?x16x8xf32>
+    %nested = pto.partition_view %outer,
+      offsets = [%c0, %innerOffset1, %innerOffset2, %c0, %c0],
+      sizes = [%c1, %innerSize1, %innerSize2, %c16, %c8]
+      : !pto.partition_tensor_view<1x?x?x16x8xf32>
+        -> !pto.partition_tensor_view<1x?x?x16x8xf32>
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=16, v_col=8, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=16, v_col=8, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%nested : !pto.partition_tensor_view<1x?x?x16x8xf32>)
+    return
+  }
+
+  func.func @batched_nz_tload(%ptr: !pto.ptr<i8>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c512 = arith.constant 512 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c2, %c1, %c1, %c16, %c32],
+      strides = [%c512, %c512, %c512, %c32, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<2x1x1x16x32xi8>
+    %part = pto.partition_view %root,
+      offsets = [%c1, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c16, %c32]
+      : !pto.tensor_view<2x1x1x16x32xi8>
+        -> !pto.partition_tensor_view<1x1x1x16x32xi8>
+    %tile = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
+                      v_row=16, v_col=32, blayout=col_major,
+                      slayout=row_major, fractal=512, pad=0>
+    pto.tload
+      ins(%part : !pto.partition_tensor_view<1x1x1x16x32xi8>)
+      outs(%tile : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
+        v_row=16, v_col=32, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>)
+    return
+  }
+}
+
+//--- nd_fallback.pto
+module {
+  func.func @nd_fallback_for_unknown_stride(%ptr: !pto.ptr<f32>)
+      -> !pto.tensor_view<4x8x16xf32> {
+    %c-1 = arith.constant -1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %view = pto.make_tensor_view %ptr,
+      shape = [%c4, %c8, %c16],
+      strides = [%c128, %c16, %c-1]
+      : !pto.tensor_view<4x8x16xf32>
+    return %view : !pto.tensor_view<4x8x16xf32>
+  }
+}
+
+//--- dynamic_memref_subview.pto
+module {
+  func.func @dynamic_memref_nz_subview(
+      %base: memref<?xf32, #pto.address_space<gm>>, %d1: index, %d2: index)
+      -> memref<?x?x?x?x?xf32,
+                strided<[?, ?, ?, ?, ?], offset: ?>,
+                #pto.address_space<gm>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = memref.reinterpret_cast %base to
+      offset: [0],
+      sizes: [%c1, %d1, %d2, %c16, %c8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<?x?x?x?x?xf32,
+                  strided<[8192, 1024, 128, 8, 1], offset: ?>,
+                  #pto.address_space<gm>>
+    %cast = memref.cast %root : memref<?x?x?x?x?xf32,
+                  strided<[8192, 1024, 128, 8, 1], offset: ?>,
+                  #pto.address_space<gm>> to memref<?x?x?x?x?xf32,
+                  strided<[?, ?, ?, ?, ?], offset: ?>,
+                  #pto.address_space<gm>>
+    %part = memref.subview %cast[%c0, %c0, %c0, %c0, %c0]
+      [%c1, %d1, %d2, %c16, %c8] [1, 1, 1, 1, 1]
+      : memref<?x?x?x?x?xf32,
+                strided<[?, ?, ?, ?, ?], offset: ?>,
+                #pto.address_space<gm>>
+        to memref<?x?x?x?x?xf32,
+                  strided<[?, ?, ?, ?, ?], offset: ?>,
+                  #pto.address_space<gm>>
+    return %part : memref<?x?x?x?x?xf32,
+                           strided<[?, ?, ?, ?, ?], offset: ?>,
+                           #pto.address_space<gm>>
+  }
+}
+
+//--- invalid_inner_shape.pto
+module {
+  func.func @invalid_inner_shape(%ptr: !pto.ptr<f32>)
+      -> !pto.tensor_view<1x8x8x8x8xf32> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c4096 = arith.constant 4096 : index
+    %bad = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c8, %c8],
+      strides = [%c4096, %c512, %c64, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x8x8xf32>
+    return %bad : !pto.tensor_view<1x8x8x8x8xf32>
+  }
+}
+
+//--- invalid_rank.pto
+module {
+  func.func @invalid_rank(%ptr: !pto.ptr<f32>)
+      -> !pto.tensor_view<8x8x16x8xf32> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %bad = pto.make_tensor_view %ptr,
+      shape = [%c8, %c8, %c16, %c8],
+      strides = [%c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<8x8x16x8xf32>
+    return %bad : !pto.tensor_view<8x8x16x8xf32>
+  }
+}
+
+//--- invalid_inner_stride.pto
+module {
+  func.func @invalid_inner_stride(%ptr: !pto.ptr<f32>)
+      -> !pto.tensor_view<1x8x8x16x8xf32> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c512 = arith.constant 512 : index
+    %c4096 = arith.constant 4096 : index
+    %bad = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c4096, %c512, %c64, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    return %bad : !pto.tensor_view<1x8x8x16x8xf32>
+  }
+}
+
+//--- invalid_outer_gap.pto
+module {
+  func.func @invalid_outer_gap(%ptr: !pto.ptr<f32>)
+      -> !pto.tensor_view<1x8x8x16x8xf32> {
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c512 = arith.constant 512 : index
+    %c4096 = arith.constant 4096 : index
+    %bad = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c4096, %c512, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    return %bad : !pto.tensor_view<1x8x8x16x8xf32>
+  }
+}
+
+//--- invalid_d3_partition.pto
+module {
+  func.func @invalid_d3_partition(%ptr: !pto.ptr<f32>)
+      -> !pto.partition_tensor_view<1x8x8x15x8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c15 = arith.constant 15 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %bad = pto.partition_view %root,
+      offsets = [%c0, %c0, %c0, %c1, %c0],
+      sizes = [%c1, %c8, %c8, %c15, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x15x8xf32>
+    return %bad : !pto.partition_tensor_view<1x8x8x15x8xf32>
+  }
+}
+
+//--- invalid_d4_partition.pto
+module {
+  func.func @invalid_d4_partition(%ptr: !pto.ptr<f32>)
+      -> !pto.partition_tensor_view<1x8x8x16x7xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c7 = arith.constant 7 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %bad = pto.partition_view %root,
+      offsets = [%c0, %c0, %c0, %c0, %c1],
+      sizes = [%c1, %c8, %c8, %c16, %c7]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x16x7xf32>
+    return %bad : !pto.partition_tensor_view<1x8x8x16x7xf32>
+  }
+}
+
+//--- dynamic_inner_partition.pto
+module {
+  func.func @dynamic_inner_partition(
+      %ptr: !pto.ptr<f32>, %innerOffset: index, %innerSize: index)
+      -> !pto.partition_tensor_view<1x8x8x?x8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %bad = pto.partition_view %root,
+      offsets = [%c0, %c0, %c0, %innerOffset, %c0],
+      sizes = [%c1, %c8, %c8, %innerSize, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x?x8xf32>
+    return %bad : !pto.partition_tensor_view<1x8x8x?x8xf32>
+  }
+}
+
+//--- partition_offset_overflow.pto
+module {
+  func.func @partition_offset_overflow(%ptr: !pto.ptr<f32>)
+      -> !pto.partition_tensor_view<1x8x8x16x8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %cmax = arith.constant 9223372036854775807 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %bad = pto.partition_view %root,
+      offsets = [%cmax, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c8, %c8, %c16, %c8]
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x8x8x16x8xf32>
+    return %bad : !pto.partition_tensor_view<1x8x8x16x8xf32>
+  }
+}
+
+//--- invalid_memref_subview.pto
+module {
+  func.func @invalid_memref_subview(
+      %base: memref<?xf32, #pto.address_space<gm>>)
+      -> memref<1x8x8x16x7xf32,
+                strided<[8192, 1024, 128, 8, 1], offset: 1>,
+                #pto.address_space<gm>> {
+    %root = memref.reinterpret_cast %base to
+      offset: [0],
+      sizes: [1, 8, 8, 16, 8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<1x8x8x16x8xf32, strided<[8192, 1024, 128, 8, 1]>, #pto.address_space<gm>>
+    %bad = memref.subview %root[0, 0, 0, 0, 1] [1, 8, 8, 16, 7] [1, 1, 1, 1, 1]
+      : memref<1x8x8x16x8xf32, strided<[8192, 1024, 128, 8, 1]>, #pto.address_space<gm>>
+        to memref<1x8x8x16x7xf32, strided<[8192, 1024, 128, 8, 1], offset: 1>, #pto.address_space<gm>>
+    return %bad : memref<1x8x8x16x7xf32,
+                         strided<[8192, 1024, 128, 8, 1], offset: 1>,
+                         #pto.address_space<gm>>
+  }
+}
+
+//--- invalid_memref_subview_step.pto
+module {
+  func.func @invalid_memref_subview_step(
+      %base: memref<?xf32, #pto.address_space<gm>>)
+      -> memref<1x8x8x16x4xf32,
+                strided<[8192, 1024, 256, 8, 1], offset: 0>,
+                #pto.address_space<gm>> {
+    %root = memref.reinterpret_cast %base to
+      offset: [0],
+      sizes: [1, 8, 8, 16, 8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<1x8x8x16x8xf32,
+                  strided<[8192, 1024, 128, 8, 1]>,
+                  #pto.address_space<gm>>
+    %bad = memref.subview %root[0, 0, 0, 0, 0]
+      [1, 8, 8, 16, 4] [1, 1, 2, 1, 1]
+      : memref<1x8x8x16x8xf32,
+               strided<[8192, 1024, 128, 8, 1]>, #pto.address_space<gm>>
+        to memref<1x8x8x16x4xf32,
+                  strided<[8192, 1024, 256, 8, 1]>, #pto.address_space<gm>>
+    return %bad : memref<1x8x8x16x4xf32,
+                          strided<[8192, 1024, 256, 8, 1]>,
+                          #pto.address_space<gm>>
+  }
+}
+
+//--- partition_layout_mismatch.pto
+module {
+  func.func @partition_layout_mismatch(%ptr: !pto.ptr<f32>)
+      -> !pto.partition_tensor_view<1x4x8x16x8xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %c1024 = arith.constant 1024 : index
+    %c8192 = arith.constant 8192 : index
+    %root = pto.make_tensor_view %ptr,
+      shape = [%c1, %c8, %c8, %c16, %c8],
+      strides = [%c8192, %c1024, %c128, %c8, %c1]
+      {layout = #pto.layout<nz>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+    %part = pto.partition_view %root,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c4, %c8, %c16, %c8]
+      {layout = #pto.layout<nd>}
+      : !pto.tensor_view<1x8x8x16x8xf32>
+        -> !pto.partition_tensor_view<1x4x8x16x8xf32>
+    return %part : !pto.partition_tensor_view<1x4x8x16x8xf32>
+  }
+}
+
+//--- subview_layout_mismatch.pto
+module {
+  func.func @subview_layout_mismatch(
+      %base: memref<?xf32, #pto.address_space<gm>>)
+      -> memref<1x4x8x16x8xf32,
+                strided<[8192, 1024, 128, 8, 1]>,
+                #pto.address_space<gm>> {
+    %root = memref.reinterpret_cast %base to
+      offset: [0], sizes: [1, 8, 8, 16, 8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<1x8x8x16x8xf32,
+                  strided<[8192, 1024, 128, 8, 1]>,
+                  #pto.address_space<gm>>
+    %part = memref.subview %root[0, 0, 0, 0, 0]
+      [1, 4, 8, 16, 8] [1, 1, 1, 1, 1]
+      {layout = #pto.layout<nd>}
+      : memref<1x8x8x16x8xf32,
+               strided<[8192, 1024, 128, 8, 1]>,
+               #pto.address_space<gm>>
+        to memref<1x4x8x16x8xf32,
+                  strided<[8192, 1024, 128, 8, 1]>,
+                  #pto.address_space<gm>>
+    return %part : memref<1x4x8x16x8xf32,
+                          strided<[8192, 1024, 128, 8, 1]>,
+                          #pto.address_space<gm>>
+  }
+}
+
+//--- explicit_false_inferred_attr.pto
+module {
+  func.func @explicit_false_inferred_attr(
+      %base: memref<?xf32, #pto.address_space<gm>>)
+      -> memref<1x4x8x16x8xf32,
+                strided<[8192, 1024, 128, 8, 1]>,
+                #pto.address_space<gm>> {
+    %root = memref.reinterpret_cast %base to
+      offset: [0], sizes: [1, 8, 8, 16, 8],
+      strides: [8192, 1024, 128, 8, 1]
+      {layout = #pto.layout<nz>}
+      : memref<?xf32, #pto.address_space<gm>>
+        to memref<1x8x8x16x8xf32,
+                  strided<[8192, 1024, 128, 8, 1]>,
+                  #pto.address_space<gm>>
+    %part = memref.subview %root[0, 0, 0, 0, 0]
+      [1, 4, 8, 16, 8] [1, 1, 1, 1, 1]
+      {layout = #pto.layout<nz>, pto.inferred_layout = false}
+      : memref<1x8x8x16x8xf32,
+               strided<[8192, 1024, 128, 8, 1]>,
+               #pto.address_space<gm>>
+        to memref<1x4x8x16x8xf32,
+                  strided<[8192, 1024, 128, 8, 1]>,
+                  #pto.address_space<gm>>
+    return %part : memref<1x4x8x16x8xf32,
+                          strided<[8192, 1024, 128, 8, 1]>,
+                          #pto.address_space<gm>>
+  }
+}

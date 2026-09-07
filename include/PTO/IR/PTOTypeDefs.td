@@ -46,20 +46,30 @@ def TensorViewType : TypeDef<PTO_Dialect, "TensorView"> {
   let mnemonic = "tensor_view";
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shape,
-    "mlir::Type":$elementType
+    "mlir::Type":$elementType,
+    "mlir::Attribute":$layout
   );
   let hasCustomAssemblyFormat = 1;
 
-  // Convenience builders: explicit shape, or rank -> all dynamic ("?")
+  // A null layout preserves the historical spelling and means the default ND
+  // layout. Non-ND layouts are materialized in the type when they cross an SSA
+  // merge or a function boundary.
   let builders = [
+    TypeBuilder<(ins "ArrayRef<int64_t>":$shape,
+                     "Type":$elementType), [{
+      return Base::get($_ctxt, shape, elementType, mlir::Attribute{});
+    }]>,
     TypeBuilder<(ins "int64_t":$rank,
                      "Type":$elementType), [{
       SmallVector<int64_t, 4> shp(rank, mlir::ShapedType::kDynamic);
-      return Base::get($_ctxt, shp, elementType);
+      return Base::get($_ctxt, shp, elementType, mlir::Attribute{});
     }]>
   ];
 
   let extraClassDeclaration = [{
+    LayoutAttr getLayoutAttr() const {
+      return ::llvm::dyn_cast_or_null<LayoutAttr>(getLayout());
+    }
     int64_t getRank() const { return getShape().size(); }
     int64_t getDimSize(unsigned idx) const { return getShape()[idx]; }
     int64_t getNumElements() const {
@@ -90,21 +100,28 @@ def PartitionTensorViewType : TypeDef<PTO_Dialect, "PartitionTensorView"> {
 
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$shape,
-    "mlir::Type":$elementType
+    "mlir::Type":$elementType,
+    "mlir::Attribute":$layout
   );
 
   let hasCustomAssemblyFormat = 1;
 
-  // Convenience builders: explicit shape, or rank -> all dynamic ("?")
   let builders = [
+    TypeBuilder<(ins "ArrayRef<int64_t>":$shape,
+                     "Type":$elementType), [{
+      return Base::get($_ctxt, shape, elementType, mlir::Attribute{});
+    }]>,
     TypeBuilder<(ins "int64_t":$rank,
                      "Type":$elementType), [{
       SmallVector<int64_t, 4> shp(rank, mlir::ShapedType::kDynamic);
-      return Base::get($_ctxt, shp, elementType);
+      return Base::get($_ctxt, shp, elementType, mlir::Attribute{});
     }]>
   ];
 
   let extraClassDeclaration = [{
+    LayoutAttr getLayoutAttr() const {
+      return ::llvm::dyn_cast_or_null<LayoutAttr>(getLayout());
+    }
     int64_t getRank() const { return getShape().size(); }
     int64_t getDimSize(unsigned idx) const { return getShape()[idx]; }
     

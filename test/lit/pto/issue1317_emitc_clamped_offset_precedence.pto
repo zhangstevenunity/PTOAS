@@ -43,4 +43,5 @@ module {
 // CHECK-DAG: const int64_t [[ZERO:v[0-9]+]] = 0;
 // CHECK: int64_t [[SUBBLOCK_CLAMP:v[0-9]+]] = [[SUBBLOCK]] < [[ZERO]] ? [[ZERO]] : [[SUBBLOCK]];
 // CHECK: int64_t [[CHUNK_CLAMP:v[0-9]+]] = [[CHUNK]] < [[ZERO]] ? [[ZERO]] : [[CHUNK]];
-// CHECK: GlobalTensor<float, {{.*}}> {{.*}} = GlobalTensor<float, {{.*}}>({{.*}}[[SRC]] + ({{.*}}[[SUBBLOCK_CLAMP]]{{.*}}[[CHUNK_CLAMP]]),
+// CHECK: __gm__ float* [[ROOT_DATA:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA
+// CHECK: GlobalTensor<float, {{.*}}> {{.*}} = GlobalTensor<float, {{.*}}>({{.*}}[[ROOT_DATA]] + ({{.*}}[[SUBBLOCK_CLAMP]]{{.*}}[[CHUNK_CLAMP]]),

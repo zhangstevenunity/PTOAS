@@ -164,7 +164,8 @@ static Type canonicalViewType(Type type) {
     if (viewType.getRank() > 0 && viewType.getRank() < kCanonicalRank5) {
       return TensorViewType::get(type.getContext(),
                                  rightAlignShapeToRank5(viewType.getShape()),
-                                 viewType.getElementType());
+                                 viewType.getElementType(),
+                                 viewType.getLayout());
     }
     return type;
   }
@@ -172,7 +173,7 @@ static Type canonicalViewType(Type type) {
     if (viewType.getRank() > 0 && viewType.getRank() < kCanonicalRank5) {
       return PartitionTensorViewType::get(
           type.getContext(), rightAlignShapeToRank5(viewType.getShape()),
-          viewType.getElementType());
+          viewType.getElementType(), viewType.getLayout());
     }
     return type;
   }
@@ -220,9 +221,19 @@ static LogicalResult rewriteMakeTensorView(MakeTensorViewOp op,
 
 static LogicalResult rewritePartitionView(PartitionViewOp op,
                                           IRRewriter &rewriter) {
-  auto sourceType = dyn_cast<TensorViewType>(op.getSource().getType());
   auto resultType = dyn_cast<PartitionTensorViewType>(op.getResult().getType());
-  if (!sourceType || !resultType) {
+  if (!resultType) {
+    return success();
+  }
+  int64_t sourceRank = 0;
+  if (auto sourceType =
+          dyn_cast<TensorViewType>(op.getSource().getType())) {
+    sourceRank = sourceType.getRank();
+  } else if (auto sourceType =
+                 dyn_cast<PartitionTensorViewType>(
+                     op.getSource().getType())) {
+    sourceRank = sourceType.getRank();
+  } else {
     return success();
   }
 
@@ -232,10 +243,10 @@ static LogicalResult rewritePartitionView(PartitionViewOp op,
     return success();
   }
 
-  if (sourceType.getRank() != kCanonicalRank5) {
+  if (sourceRank != kCanonicalRank5) {
     return op.emitOpError(
         "low-rank partition_tensor_view normalization expects canonical rank-5 "
-        "source tensor_view");
+        "source view");
   }
 
   rewriter.setInsertionPoint(op);

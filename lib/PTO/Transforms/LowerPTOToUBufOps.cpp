@@ -1547,47 +1547,66 @@ private:
     return !strides.empty() && strides.back() == 1;
   }
 
+  static FailureOr<DmaViewInfo>
+  extractDirectDmaViewInfo(Value view, Operation *consumer) {
+    SmallVector<pto::PartitionViewOp> partitions;
+    Value root = view;
+    while (auto partition = root.getDefiningOp<pto::PartitionViewOp>()) {
+      partitions.push_back(partition);
+      root = partition.getSource();
+    }
+    if (partitions.empty()) {
+      return failure();
+    }
+
+    auto makeView = root.getDefiningOp<pto::MakeTensorViewOp>();
+    if (!makeView) {
+      return failure();
+    }
+
+    DmaViewInfo info;
+    info.gmPtr = makeView.getPtr();
+    info.sizes.assign(partitions.front().getSizes().begin(),
+                      partitions.front().getSizes().end());
+    info.strides.assign(makeView.getStrides().begin(),
+                        makeView.getStrides().end());
+    if (info.strides.empty() ||
+        !matchPattern(info.strides.back(), m_One())) {
+      consumer->emitError(
+          "A2/A3 DMA lowering requires a unit innermost stride");
+      return failure();
+    }
+
+    info.offsets.assign(partitions.front().getOffsets().begin(),
+                        partitions.front().getOffsets().end());
+    OpBuilder builder(consumer);
+    for (pto::PartitionViewOp partition :
+         llvm::drop_begin(partitions)) {
+      if (partition.getOffsets().size() != info.offsets.size() ||
+          partition.getSizes().size() != info.sizes.size()) {
+        consumer->emitError(
+            "A2/A3 DMA lowering requires rank-preserving nested partitions");
+        return failure();
+      }
+      for (auto [index, offset] :
+           llvm::enumerate(partition.getOffsets())) {
+        info.offsets[index] = builder.create<arith::AddIOp>(
+            consumer->getLoc(), info.offsets[index], offset);
+      }
+    }
+    return info;
+  }
+
   static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TLoadOp op) {
-    auto pvOp = op.getSrc().getDefiningOp<pto::PartitionViewOp>();
-    if (pvOp) {
-      auto mtvOp = pvOp.getSource().getDefiningOp<pto::MakeTensorViewOp>();
-      if (!mtvOp) {
-        return failure();
-      }
-      DmaViewInfo info;
-      info.gmPtr = mtvOp.getPtr();
-      info.sizes.assign(pvOp.getSizes().begin(), pvOp.getSizes().end());
-      info.strides.assign(mtvOp.getStrides().begin(),
-                          mtvOp.getStrides().end());
-      if (info.strides.empty() ||
-          !matchPattern(info.strides.back(), m_One())) {
-        op.emitError("A2/A3 DMA lowering requires a unit innermost stride");
-        return failure();
-      }
-      info.offsets.assign(pvOp.getOffsets().begin(), pvOp.getOffsets().end());
-      return info;
+    if (op.getSrc().getDefiningOp<pto::PartitionViewOp>()) {
+      return extractDirectDmaViewInfo(op.getSrc(), op.getOperation());
     }
     return extractDmaMemRefViewInfo(op.getLoc(), op.getSrc(), op.getContext());
   }
 
   static FailureOr<DmaViewInfo> extractDmaViewInfo(pto::TStoreOp op) {
-    auto pvOp = op.getDst().getDefiningOp<pto::PartitionViewOp>();
-    if (pvOp) {
-      auto mtvOp = pvOp.getSource().getDefiningOp<pto::MakeTensorViewOp>();
-      if (!mtvOp) {
-        return failure();
-      }
-      DmaViewInfo info;
-      info.gmPtr = mtvOp.getPtr();
-      info.sizes.assign(pvOp.getSizes().begin(), pvOp.getSizes().end());
-      info.strides.assign(mtvOp.getStrides().begin(), mtvOp.getStrides().end());
-      if (info.strides.empty() ||
-          !matchPattern(info.strides.back(), m_One())) {
-        op.emitError("A2/A3 DMA lowering requires a unit innermost stride");
-        return failure();
-      }
-      info.offsets.assign(pvOp.getOffsets().begin(), pvOp.getOffsets().end());
-      return info;
+    if (op.getDst().getDefiningOp<pto::PartitionViewOp>()) {
+      return extractDirectDmaViewInfo(op.getDst(), op.getOperation());
     }
     return extractDmaMemRefViewInfo(op.getLoc(), op.getDst(), op.getContext());
   }

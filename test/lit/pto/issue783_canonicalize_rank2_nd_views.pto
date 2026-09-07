@@ -10,13 +10,14 @@
 // correct cumulative-product strides and that the layout attribute is
 // preserved after rank-5 padding.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-canonicalize-ir %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-canonicalize-ir %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=IR
 
-module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @canonicalize_rank2_views(%src: !pto.ptr<bf16, gm>, %dst: !pto.ptr<bf16, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
+    %c256 = arith.constant 256 : index
     %c512 = arith.constant 512 : index
     %c8192 = arith.constant 8192 : index
 
@@ -25,15 +26,18 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %dst_view = pto.make_tensor_view %dst, shape = [%c16, %c8192], strides = [%c8192, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
     %src_part = pto.partition_view %src_view, offsets = [%c0, %c512], sizes = [%c16, %c512] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x512xbf16>
     %dst_part = pto.partition_view %dst_view, offsets = [%c0, %c512], sizes = [%c16, %c512] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x512xbf16>
-    %tile = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=512, v_row=16, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tload ins(%src_part : !pto.partition_tensor_view<16x512xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=512, v_row=16, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %nested_src = pto.partition_view %src_part, offsets = [%c0, %c0], sizes = [%c16, %c256] : !pto.partition_tensor_view<16x512xbf16> -> !pto.partition_tensor_view<16x256xbf16>
+    %tile = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tload ins(%nested_src : !pto.partition_tensor_view<16x256xbf16>) outs(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     pto.section.vector {
     }
     return
   }
 }
 
-// IR: pto.make_tensor_view {{.*}} shape = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}], strides = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] {layout = #pto.layout<nd>} : !pto.tensor_view<1x1x1x?x?xbf16>
-// IR: pto.partition_view {{.*}} offsets = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}], sizes = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] : !pto.tensor_view<1x1x1x?x?xbf16>
-// IR: !pto.partition_tensor_view<1x1x1x16x512xbf16>
+// IR-DAG: pto.make_tensor_view {{.*}} shape = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}], strides = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] {layout = #pto.layout<nd>} : !pto.tensor_view<1x1x1x?x?xbf16>
+// IR-DAG: pto.partition_view {{.*}} offsets = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}], sizes = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] : !pto.tensor_view<1x1x1x?x?xbf16>
+// IR-DAG: pto.partition_view {{.*}} offsets = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}], sizes = [{{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}, {{%[^]]+}}] : !pto.partition_tensor_view<1x1x1x16x512xbf16>
+// IR-DAG: pto.tload ins({{.*}} : !pto.partition_tensor_view<1x1x1x16x256xbf16>)
 // IR-NOT: !pto.partition_tensor_view<16x512xbf16>
+// IR-NOT: !pto.partition_tensor_view<16x256xbf16>

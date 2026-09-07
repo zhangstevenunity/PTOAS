@@ -10,12 +10,14 @@ module {
   func.func @tstore_fp_v0(%dst: !pto.ptr<i8>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
     %dst_tv = pto.make_tensor_view %dst, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<32x32xi8>
     %dst_part = pto.partition_view %dst_tv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<32x32xi8> -> !pto.partition_tensor_view<32x32xi8>
+    %nested_dst = pto.partition_view %dst_part, offsets = [%c0, %c0], sizes = [%c16, %c32] : !pto.partition_tensor_view<32x32xi8> -> !pto.partition_tensor_view<16x32xi8>
     %acc_tile = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
     %fp_tile = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.tstore ins(%acc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0> fp %fp_tile : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst_part : !pto.partition_tensor_view<32x32xi8>)
+    pto.tstore ins(%acc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0> fp %fp_tile : !pto.tile_buf<loc=scaling, dtype=ui64, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%nested_dst : !pto.partition_tensor_view<16x32xi8>)
     return
   }
 }

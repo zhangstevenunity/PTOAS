@@ -157,6 +157,31 @@ contract is also owned here: the runtime grid (e.g., `batch * heads` blocks) is
 declared at the call site, and block/subblock indices are queried via
 `pto.get_block_idx()` and friends.
 
+`make_tensor_view(..., layout=...)` accepts `"ND"`, `"DN"`, and `"NZ"`
+(case-insensitive). Use it when the logical layout cannot be distinguished from
+shape/stride alone. For example, fp32 canonical NZ has `C0 = 32 / 4 = 8`:
+
+<!-- ptodsl-doc-test: {"mode":"compile","symbol":"explicit_nz_view","compile":{}} -->
+```python
+from ptodsl import pto
+
+
+@pto.jit(target="a5")
+def explicit_nz_view(ptr: pto.ptr(pto.f32, "gm")):
+    view = pto.make_tensor_view(
+        ptr,
+        shape=[1, 8, 8, 16, 8],
+        strides=[8192, 1024, 128, 8, 1],
+        layout="NZ",
+    )
+    _ = view
+    return
+```
+
+An explicit layout is preserved by PTOAS. Without one, only a non-degenerate
+canonical NZ five-dimensional root is inferred as NZ; a single-fractal
+`[1,1,1,16,C0]` view remains ND.
+
 #### `entry=False` — kernel modules
 
 A kernel module is a device-side function that entries and other modules call

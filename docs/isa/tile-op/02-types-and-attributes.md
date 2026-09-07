@@ -36,7 +36,7 @@ A typed pointer. `memorySpace` is optional and defaults to `gm`.
 
 Pointer conversions are modeled explicitly with `pto.castptr`. Between two `!pto.ptr` types, casts are only legal when both pointers stay in the same PTO memory space.
 
-## 2.3 `!pto.tensor_view<d0 x d1 x elementType>`
+## 2.3 `!pto.tensor_view<d0 x d1 x elementType[, layout]>`
 
 A descriptor for a global-memory tensor. Holds shape information; strides are supplied at `pto.make_tensor_view` construction time. Does not own data.
 
@@ -44,10 +44,12 @@ A descriptor for a global-memory tensor. Holds shape information; strides are su
 |-----------|------|-------------|
 | `shape` | `ArrayRef<i64>` | Tensor shape `[d0, d1]` (each dim may be `?`). |
 | `elementType` | element type | Element data type. |
+| `layout` | `#pto.layout<...>` | Optional resolved GM layout. Omission leaves the layout to construction-time resolution and defaults to ND when no stronger fact exists. |
 
-**Syntax:** `!pto.tensor_view<1024x512xf16>`
+**Syntax:** `!pto.tensor_view<1024x512xf16>` or
+`!pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>`
 
-## 2.4 `!pto.partition_tensor_view<d0 x d1 x elementType>`
+## 2.4 `!pto.partition_tensor_view<d0 x d1 x elementType[, layout]>`
 
 A logical partition (slice) of a `tensor_view`. Holds shape information for a tile-sized region; strides are inherited from the parent `tensor_view`. Does not own data.
 
@@ -55,8 +57,10 @@ A logical partition (slice) of a `tensor_view`. Holds shape information for a ti
 |-----------|------|-------------|
 | `shape` | `ArrayRef<i64>` | Partition shape `[d0, d1]`. |
 | `elementType` | element type | Element data type. |
+| `layout` | `#pto.layout<...>` | Optional resolved GM layout inherited from the source view. |
 
-**Syntax:** `!pto.partition_tensor_view<16x16xf16>`
+**Syntax:** `!pto.partition_tensor_view<16x16xf16>` or
+`!pto.partition_tensor_view<1x4x8x16x8xf32, #pto.layout<nz>>`
 
 ## 2.5 `!pto.tile_buf<loc, RxCxdtype[, valid=v_rxv_c][, blayout=..., slayout=..., fractal=..., pad=...]>`
 
@@ -153,6 +157,13 @@ Global tensor layout attribute for `tensor_view` and `partition_tensor_view`. Ti
 | `NZ` | 2 | `nz` | Fractal / blocked layout. |
 
 **Attribute syntax:** `#pto.layout<nd>`
+
+Layout is preserved when a view crosses `scf.if`, `scf.for`, `scf.while`, a
+control-flow block argument, or a direct internal function argument/return.
+Every incoming view at a merge must resolve to the same layout. For example,
+merging NZ with NZ produces NZ, while merging NZ with ND is invalid. A
+view-typed indirect call is invalid because it has no statically resolvable
+layout contract.
 
 ## 2.9 PadMode (for loads)
 

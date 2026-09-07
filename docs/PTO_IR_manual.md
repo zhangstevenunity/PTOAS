@@ -120,7 +120,7 @@ the same PTO memory space.
 
 ---
 
-### 2.3 `!pto.tensor_view<d0 x d1 x elementType>`
+### 2.3 `!pto.tensor_view<d0 x d1 x elementType[, layout]>`
 
 A descriptor for a global memory tensor. Does not own data - represents a view with shape and stride information.
 
@@ -128,12 +128,14 @@ A descriptor for a global memory tensor. Does not own data - represents a view w
 |-----------|------|-------------|
 | `shape` | `ArrayRef<i64>` | Tensor shape `[d0, d1]` (each dim may be `?` for dynamic) |
 | `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element data type |
+| `layout` | `#pto.layout<...>` | Optional resolved GM layout; omission allows construction-time resolution and defaults to ND when no stronger fact exists |
 
-**Syntax:** `!pto.tensor_view<1024x512xf16>`
+**Syntax:** `!pto.tensor_view<1024x512xf16>` or
+`!pto.tensor_view<1x8x8x16x8xf32, #pto.layout<nz>>`
 
 ---
 
-### 2.4 `!pto.partition_tensor_view<d0 x d1 x elementType>`
+### 2.4 `!pto.partition_tensor_view<d0 x d1 x elementType[, layout]>`
 
 A logical partition (slice) of a `tensor_view`. Holds shape and stride information for a tile-sized region but does not own data.
 
@@ -141,8 +143,10 @@ A logical partition (slice) of a `tensor_view`. Holds shape and stride informati
 |-----------|------|-------------|
 | `shape` | `ArrayRef<i64>` | Partition shape `[d0, d1]` |
 | `elementType` | `element-type(i1/i8/i16/i32/f16/f32/bf16...)` | Element data type |
+| `layout` | `#pto.layout<...>` | Optional resolved GM layout inherited from the source view |
 
-**Syntax:** `!pto.partition_tensor_view<16x16xf16>`
+**Syntax:** `!pto.partition_tensor_view<16x16xf16>` or
+`!pto.partition_tensor_view<1x4x8x16x8xf32, #pto.layout<nz>>`
 
 ---
 
@@ -478,7 +482,11 @@ Composite attribute and component enums for tile buffer configuration.
 
 ### 3.5 Layout
 
-Global tensor layout inference for [`tensor_view` (Section 2.3)](#23-ptotensor_viewd0-x-d1-x-elementtype)/[`partition_tensor_view` (Section 2.4)](#24-ptopartition_tensor_viewd0-x-d1-x-elementtype). Tile buffers additionally use **Tile Buf config** (see 3.4) to describe physical/fractal layout.
+Global tensor layout inference for
+[`tensor_view` (Section 2.3)](#23-ptotensor_viewd0-x-d1-x-elementtype-layout) /
+[`partition_tensor_view` (Section 2.4)](#24-ptopartition_tensor_viewd0-x-d1-x-elementtype-layout).
+Tile buffers additionally use **Tile Buf config** (see 3.4) to describe
+physical/fractal layout.
 
 | Value | Int | Mnemonic | Description |
 |-------|-----|----------|-------------|
@@ -487,6 +495,25 @@ Global tensor layout inference for [`tensor_view` (Section 2.3)](#23-ptotensor_v
 | `NZ` | 2 | `nz` | Fractal/blocked layout |
 
 **Attribute syntax:** `#pto.layout<nd>`
+
+Resolution follows one order: an explicit `layout` is authoritative; a
+partition inherits its source layout; only an unannotated root view is
+pattern-inferred. For a storage element of `sizeof(T)` bytes, canonical NZ uses
+`C0 = 32 / sizeof(T)` and:
+
+```text
+shape  = [1, n1, m1, 16, C0]
+stride = [n1*m1*16*C0, m1*16*C0, 16*C0, C0, 1]
+```
+
+An unannotated single-fractal `[1,1,1,16,C0]` view remains ND. Use an explicit
+`#pto.layout<nz>` when its logical meaning is NZ.
+
+A resolved layout remains part of the view contract across structured control
+flow, control-flow block arguments, and direct internal function calls and
+returns. All incoming values at a merge must agree: NZ merged with NZ remains
+NZ, while NZ merged with ND is rejected. View-typed indirect calls are not
+supported because their layout contract cannot be resolved statically.
 
 ---
 
@@ -677,7 +704,7 @@ This operation defines the physical "base" and stride rules for global memory. I
 | `ptr` | `AnyType` | Source pointer |
 | `shape` | `Variadic<Index>` | Dynamic shape dimensions |
 | `strides` | `Variadic<Index>` | Dynamic strides |
-| `layout` | `LayoutAttr` (optional) | ND/DN/NZ layout hint |
+| `layout` | `LayoutAttr` (optional) | Authoritative ND/DN/NZ logical layout |
 
 **Results:** `!pto.tensor_view<...>`
 
@@ -686,14 +713,18 @@ This operation defines the physical "base" and stride rules for global memory. I
 - The operation has a custom verifier that checks:
   - `ptr` must be `!pto.ptr<...>` and its element type must match the result element type
   - `shape` and `strides` operand counts must match the tensor_view rank
-  - If `layout` is provided with static shapes/strides, it must be consistent with inferred layout
+  - Explicit ND/DN are preserved and are not replaced by shape/stride pattern
+    inference
+  - Explicit NZ must keep rank 5, `shape[0] == 1`, the complete
+    `[16,C0]` inner fractal, and compatible C0-aligned outer strides
 - `pto.inttoptr` results cannot feed `pto.make_tensor_view`. Tensor views must
   be constructed from a source pointer that already carries the desired element
   type.
 
 **Notes:**
 
-- Stride patterns may allow the compiler to infer hardware layout hints (e.g., `layout = nz`) to guide later DMA operations.
+- An unannotated non-degenerate canonical NZ five-dimensional shape is inferred
+  as NZ. Other unannotated views use the existing ND/DN fallback.
 
 **Hardware Mapping:**
 
@@ -703,6 +734,16 @@ This operation defines the physical "base" and stride rules for global memory. I
 
 ```mlir
 %tv = pto.make_tensor_view %ptr, shape = [%m, %n], strides = [%s0, %s1] : !pto.tensor_view<?x?xf32>
+```
+
+For an explicit fp32 NZ view (`C0 = 8`):
+
+```mlir
+%tv = pto.make_tensor_view %ptr,
+  shape = [%c1, %c8, %c8, %c16, %c8],
+  strides = [%c8192, %c1024, %c128, %c8, %c1]
+  {layout = #pto.layout<nz>}
+  : !pto.tensor_view<1x8x8x16x8xf32>
 ```
 
 ---
@@ -783,7 +824,8 @@ in elements rather than bytes.
 
 ##### `pto.partition_view` - Partition Tensor View
 
-**Summary:** Creates a logical window on a tensor_view using offsets and sizes, producing a `partition_tensor_view`.
+**Summary:** Creates a logical window on a tensor_view or partition_tensor_view
+using offsets and sizes, producing a `partition_tensor_view`.
 
 **Semantics:**
 
@@ -797,7 +839,7 @@ This op captures both static and dynamic shapes. It represents a logical slice w
 
 | Name | Type | Description |
 |------|------|-------------|
-| `source` | `TensorViewType` | Input tensor view |
+| `source` | `TensorViewType` or `PartitionTensorViewType` | Input root or partition view |
 | `offsets` | `Variadic<Index>` | Dynamic offsets |
 | `sizes` | `Variadic<Index>` | Dynamic sizes |
 
@@ -806,10 +848,15 @@ This op captures both static and dynamic shapes. It represents a logical slice w
 **Constraints & Verification:**
 
 - `offsets`/`sizes` counts must match the rank of `source`
+- An NZ partition may shrink or dynamically offset/size only `d1` and `d2`
+- NZ `d0`, `d3`, and `d4` must be statically proven complete; slicing inside
+  `d3`/`d4` is rejected instead of falling back to ND
 
 **Notes:**
 
 - Pointer arithmetic is modeled as `BasePtr + Offset`, and the logical shape is determined by `sizes`.
+- Nested partitions inherit the already-resolved source layout and preserve the
+  root strides.
 
 **Hardware Mapping:**
 

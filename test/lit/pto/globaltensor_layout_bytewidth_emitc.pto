@@ -7,30 +7,33 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A3
 
 module {
   func.func @comm_globaltensor_bf16_nz(
       %src_ptr: !pto.ptr<bf16>, %peer_ptr: !pto.ptr<bf16>) {
+    %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
     %c256 = arith.constant 256 : index
-    %c1 = arith.constant 1 : index
-    %src = pto.make_tensor_view %src_ptr, shape = [%c16, %c16, %c16], strides = [%c256, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<16x16x16xbf16>
-    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c16, %c16, %c16], strides = [%c256, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<16x16x16xbf16>
+    %c4096 = arith.constant 4096 : index
+    %src = pto.make_tensor_view %src_ptr, shape = [%c1, %c1, %c16, %c16, %c16], strides = [%c4096, %c4096, %c256, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x16x16xbf16>
+    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c1, %c1, %c16, %c16, %c16], strides = [%c4096, %c4096, %c256, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x16x16xbf16>
     %ping = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<16x16x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<16x16x16xbf16>) {root = 0 : i32}
+    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<1x1x16x16x16xbf16>, !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<1x1x16x16x16xbf16>) {root = 0 : i32}
     return
   }
 
   func.func @comm_globaltensor_i8_nz(
       %src_ptr: !pto.ptr<i8>, %peer_ptr: !pto.ptr<i8>) {
+    %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
     %c512 = arith.constant 512 : index
-    %c1 = arith.constant 1 : index
-    %src = pto.make_tensor_view %src_ptr, shape = [%c16, %c32, %c16], strides = [%c512, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<16x32x16xi8>
-    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c16, %c32, %c16], strides = [%c512, %c16, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<16x32x16xi8>
+    %c8192 = arith.constant 8192 : index
+    %src = pto.make_tensor_view %src_ptr, shape = [%c1, %c1, %c16, %c16, %c32], strides = [%c8192, %c8192, %c512, %c32, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x16x32xi8>
+    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c1, %c1, %c16, %c16, %c32], strides = [%c8192, %c8192, %c512, %c32, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x16x32xi8>
     %ping = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<16x32x16xi8>, !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<16x32x16xi8>) {root = 0 : i32}
+    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<1x1x16x16x32xi8>, !pto.tile_buf<loc=vec, dtype=i8, rows=1, cols=256, v_row=1, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<1x1x16x16x32xi8>) {root = 0 : i32}
     return
   }
 
@@ -40,14 +43,14 @@ module {
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
-    %src = pto.make_tensor_view %src_ptr, shape = [%c1, %c1, %c16, %c4, %c1], strides = [%c64, %c64, %c4, %c1, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x4x1xi64>
-    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c1, %c1, %c16, %c4, %c1], strides = [%c64, %c64, %c4, %c1, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x16x4x1xi64>
+    %src = pto.make_tensor_view %src_ptr, shape = [%c1, %c1, %c1, %c16, %c4], strides = [%c64, %c64, %c64, %c4, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x1x16x4xi64>
+    %peer0 = pto.make_tensor_view %peer_ptr, shape = [%c1, %c1, %c1, %c16, %c4], strides = [%c64, %c64, %c64, %c4, %c1] {layout = #pto.layout<nz>} : !pto.tensor_view<1x1x1x16x4xi64>
     %ping = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<1x1x16x4x1xi64>, !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<1x1x16x4x1xi64>) {root = 0 : i32}
+    pto.comm.tbroadcast(%src, recv(%ping), group(%peer0) : !pto.tensor_view<1x1x1x16x4xi64>, !pto.tile_buf<loc=vec, dtype=i64, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tensor_view<1x1x1x16x4xi64>) {root = 0 : i32}
     return
   }
 }
 
 // A3: GlobalTensor<bfloat16_t, pto::Shape<1, 1, 16, 16, 16>, pto::Stride<{{.*}}>, pto::Layout::NZ>
-// A3: GlobalTensor<int8_t, pto::Shape<1, 1, 16, 32, 16>, pto::Stride<{{.*}}>, pto::Layout::NZ>
-// A3: GlobalTensor<int64_t, pto::Shape<1, 1, 16, 4, 1>, pto::Stride<{{.*}}>, pto::Layout::NZ>
+// A3: GlobalTensor<int8_t, pto::Shape<1, 1, 16, 16, 32>, pto::Stride<{{.*}}>, pto::Layout::NZ>
+// A3: GlobalTensor<int64_t, pto::Shape<1, 1, 1, 16, 4>, pto::Stride<{{.*}}>, pto::Layout::NZ>
