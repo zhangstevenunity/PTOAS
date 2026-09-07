@@ -297,6 +297,15 @@ struct MaskGranularitySolver {
           return constraintResult(
               requestMaskUse(histogram.getMaskMutable(), "b8", op));
         })
+        .Case<VMIVmulaOp>([this, op](VMIVmulaOp vmula) {
+          if (vmula.getMask().empty()) {
+            return constraintResult(success());
+          }
+          auto accType = cast<VMIVRegType>(vmula.getAcc().getType());
+          return constraintResult(requestMaskUse(
+              *vmula.getMaskMutable().begin(),
+              getMaskGranularityForElement(accType.getElementType()), op));
+        })
         .Default([](Operation *) { return std::nullopt; });
   }
 

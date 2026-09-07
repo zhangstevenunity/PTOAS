@@ -666,6 +666,13 @@ struct LayoutSolver {
                                failed(unite(fma.getLhs(), fma.getResult(), op));
           return constraintResult(failure(failedToUnite));
         })
+        .Case<VMIVmulaOp>([this, op](VMIVmulaOp vmula) {
+          bool failedToUnite =
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getRhs(), op)) ||
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getAcc(), op)) ||
+              failed(uniteDataEquivalent(vmula.getLhs(), vmula.getResult(), op));
+          return constraintResult(failure(failedToUnite));
+        })
         .Case<VMICmpFOp, VMICmpIOp>([this, op](auto compareOp) {
           return constraintResult(
               unite(compareOp.getLhs(), compareOp.getRhs(), op));
@@ -1729,6 +1736,18 @@ struct LayoutSolver {
     }
     if (failed(requestDataUseSeeds(propagator, phase, /*late=*/false))) {
       return failure();
+    }
+    if (phase == DataLayoutSeedPhase::Store) {
+      if (failed(propagator.run()))
+        return failure();
+      module.walk([&](VMIVmulaOp vmula) {
+        if (vmula.getMask().empty())
+          return;
+        VMILayoutAttr layout =
+            propagator.getRequestedOrCurrentLayout(vmula.getLhs());
+        if (layout)
+          (void)propagator.request(*vmula.getMaskMutable().begin(), layout);
+      });
     }
     if (failed(requestMaskUseSeeds(propagator, phase))) {
       return failure();
