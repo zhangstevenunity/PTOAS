@@ -29,6 +29,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <type_traits>
+
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_VMILAYOUTASSIGNMENT
@@ -693,6 +695,34 @@ struct LayoutSolver {
   WalkResult addExtensionConstraint(CastOp castOp, Operation *op) {
     auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
     auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+
+    // A four-lane byte/halfword -> ui32 widening is a compact group-slot
+    // operation.  Seed the result with the group-slot carrier so propagation
+    // selects the existing group-slot extension lowering (and avoids creating
+    // an unsupported group-slot -> dense lane-stride ensure_layout).
+    if constexpr (std::is_same_v<CastOp, VMIExtUIOp>) {
+      auto sourceInteger = dyn_cast<IntegerType>(sourceType.getElementType());
+      auto resultInteger = dyn_cast<IntegerType>(resultType.getElementType());
+      unsigned sourceBits =
+          pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+      unsigned resultBits =
+          pto::getPTOStorageElemBitWidth(resultType.getElementType());
+      bool compactUI32Widen =
+          sourceType.getElementCount() == 4 && sourceInteger && resultInteger &&
+          !sourceType.getLayoutAttr() && !resultType.getLayoutAttr() &&
+          (resultInteger.isUnsigned() || resultInteger.isSignless()) &&
+          (sourceBits == 8 || sourceBits == 16) &&
+          resultBits == 32;
+      if (compactUI32Widen) {
+        VMILayoutAttr compactLayout =
+            VMILayoutAttr::getGroupSlots(ctx, /*numGroups=*/4,
+                                         /*slots=*/mlir::pto::kValue8);
+        return *constraintResult(setPreferredLayout(
+            castOp.getResult(), compactLayout, op,
+            DataLayoutSeedPhase::CompactCast));
+      }
+    }
+
     FailureOr<VMICastLayoutFact> fact =
         VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
     if (failed(fact)) {

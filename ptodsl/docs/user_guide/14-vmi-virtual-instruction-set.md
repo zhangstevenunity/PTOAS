@@ -881,8 +881,8 @@ group_max = pto.vmi.vcmax(
 Converts the element type of `source` to the target element type. PTODSL
 infers the result vector type from the source lane count/layout and `to_dtype`.
 
-For int→int widening, the source element type must carry signedness
-(e.g. `si8`/`ui8`/`si16`/`ui16`); signless integers are rejected.
+For `vcvt`, signless integer types (`i8`/`i16`/`i32`) are treated as
+unsigned. Use `siN` types for signed conversion semantics.
 
 **Parameters**:
 

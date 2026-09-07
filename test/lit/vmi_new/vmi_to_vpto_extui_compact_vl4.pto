@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of the CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
+// or implied. See the License for the specific language governing permissions and
+// limitations under the License. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @extui_compact_vl4(
+      %src: !pto.ptr<i8, ub>, %dst: !pto.ptr<ui32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.vload %src[%off], %c1 {group = 4}
+        : !pto.ptr<i8, ub> -> !pto.vmi.vreg<4xi8>
+    %wide = pto.vmi.vcvt %value
+        : !pto.vmi.vreg<4xi8> -> !pto.vmi.vreg<4xui32>
+    pto.vmi.vstore %wide, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+
+  func.func @extui_compact_vl4_i16(
+      %src: !pto.ptr<i16, ub>, %dst: !pto.ptr<ui32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %value = pto.vmi.vload %src[%off], %c1 {group = 4}
+        : !pto.ptr<i16, ub> -> !pto.vmi.vreg<4xi16>
+    %wide = pto.vmi.vcvt %value
+        : !pto.vmi.vreg<4xi16> -> !pto.vmi.vreg<4xui32>
+    pto.vmi.vstore %wide, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @extui_compact_vl4(
+// ASSIGN: %[[WIDE:.*]] = pto.vmi.extui %{{.*}} : !pto.vmi.vreg<4xi8, #pto.vmi.layout<num_groups = 4, slots = 8>> -> !pto.vmi.vreg<4xui32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+
+// ASSIGN-LABEL: func.func @extui_compact_vl4_i16(
+// ASSIGN: %[[WIDE16:.*]] = pto.vmi.extui %{{.*}} : !pto.vmi.vreg<4xi16, #pto.vmi.layout<num_groups = 4, slots = 8>> -> !pto.vmi.vreg<4xui32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+
+// LOWER-LABEL: func.func @extui_compact_vl4(
+// LOWER-COUNT-2: pto.vzunpack
+// LOWER: pto.vstus
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast
+
+// LOWER-LABEL: func.func @extui_compact_vl4_i16(
+// LOWER: pto.vzunpack
+// LOWER: pto.vstus
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast
