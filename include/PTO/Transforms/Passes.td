@@ -182,7 +182,7 @@ def PTOMaterializeImplicitTmp
 
 def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
  let summary = "Plan memory for PTO Ops";
-  let constructor = "mlir::pto::createPlanMemoryPass()";
+  let constructor = "mlir::pto::createPlanMemoryModernPass()";
 
   let options = [
     Option<"memMode", "mem-mode", "std::string", "\"local\"",

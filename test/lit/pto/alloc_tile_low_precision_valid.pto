@@ -18,6 +18,6 @@ module {
 }
 
 // CHECK: func.func @alloc_tile_low_precision_valid()
-// CHECK: pto.alloc_tile : !pto.tile_buf<vec, 16x32x!pto.hif8>
-// CHECK: pto.alloc_tile : !pto.tile_buf<vec, 16x32x!pto.f4E1M2x2>
-// CHECK: pto.alloc_tile : !pto.tile_buf<vec, 16x32xf8E4M3FN>
+// CHECK: pto.alloc_tile{{.*}} : !pto.tile_buf<vec, 16x32x!pto.hif8>
+// CHECK: pto.alloc_tile{{.*}} : !pto.tile_buf<vec, 16x32x!pto.f4E1M2x2>
+// CHECK: pto.alloc_tile{{.*}} : !pto.tile_buf<vec, 16x32xf8E4M3FN>

@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
-// RUN: ptoas --plan-memory-impl=modern --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
+// RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
 
 // Sanity for N == 3 to confirm `ExpandMultiBufferStorageEntry` produces 3
 // physical slots and `UpdateBuffer2Offsets` emits them in slot order.

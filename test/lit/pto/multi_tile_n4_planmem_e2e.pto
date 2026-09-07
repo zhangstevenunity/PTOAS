@@ -8,8 +8,8 @@
 
 // RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
 // RUN: ptoas --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
-// RUN: ptoas --plan-memory-impl=modern --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
-// RUN: ptoas --plan-memory-impl=modern --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
+// RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
+// RUN: ptoas --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
 
 // End-to-end test for N == 4: PlanMemory records four physical slot addresses,
 // then PTOResolveBufferSelect materializes each selected tile handle.

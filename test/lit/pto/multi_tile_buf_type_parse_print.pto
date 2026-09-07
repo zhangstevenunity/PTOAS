@@ -34,10 +34,10 @@ module {
 }
 
 // CHECK-LABEL: func.func @mtb_compact_n2
-// CHECK: pto.alloc_multi_tile : !pto.multi_tile_buf<!pto.tile_buf<vec, 16x16xf16>, count=2>
+// CHECK: pto.alloc_multi_tile{{.*}} : !pto.multi_tile_buf<!pto.tile_buf<vec, 16x16xf16>, count=2>
 
 // CHECK-LABEL: func.func @mtb_compact_n4
-// CHECK: pto.alloc_multi_tile : !pto.multi_tile_buf<!pto.tile_buf<vec, 32x32xf32>, count=4>
+// CHECK: pto.alloc_multi_tile{{.*}} : !pto.multi_tile_buf<!pto.tile_buf<vec, 32x32xf32>, count=4>
 
 // CHECK-LABEL: func.func @mtb_verbose
-// CHECK: pto.alloc_multi_tile : !pto.multi_tile_buf<!pto.tile_buf<vec, 16x16xf16>, count=3>
+// CHECK: pto.alloc_multi_tile{{.*}} : !pto.multi_tile_buf<!pto.tile_buf<vec, 16x16xf16>, count=3>

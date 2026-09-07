@@ -108,8 +108,8 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // PLAN-LABEL: func.func @plan_memory_reused_tstore_sync_level2(
-// PLAN-DAG:   %[[REUSED_ADDR:[A-Za-z0-9_]+]] = arith.constant 8448 : i64
-// PLAN-DAG:   %[[STORED_ADDR:[A-Za-z0-9_]+]] = arith.constant 8192 : i64
+// PLAN-DAG:   %[[REUSED_ADDR:[A-Za-z0-9_]+]] = arith.constant 180224 : i64
+// PLAN-DAG:   %[[STORED_ADDR:[A-Za-z0-9_]+]] = arith.constant 0 : i64
 // PLAN:       %[[STORED:[0-9]+]] = pto.alloc_tile addr = %[[STORED_ADDR]] : !pto.tile_buf<vec, 16x128xf32>
 // PLAN:       pto.tstore ins(%[[STORED]]
 // PLAN:       %[[REUSED:[0-9]+]] = pto.alloc_tile addr = %[[REUSED_ADDR]] : !pto.tile_buf<vec, 16x128xf32>
@@ -118,7 +118,6 @@ module attributes {pto.target_arch = "a2a3"} {
 // SYNC-LABEL: AICORE void plan_memory_reused_tstore_sync_level2(
 // SYNC:      // pto: %stored
 // SYNC:      TSTORE(
-// SYNC-NEXT: set_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[MTE3_TO_V:[0-9]+]]);
 // SYNC-NOT:  TMULS(
-// SYNC:      wait_flag(PIPE_MTE3, PIPE_V, EVENT_ID[[MTE3_TO_V]]);
+// SYNC:      pipe_barrier(PIPE_V);
 // SYNC-NEXT: TMULS(

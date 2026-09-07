@@ -9,8 +9,8 @@
 // RUN: ptoas --mlir-print-ir-after=pto-resolve-reserved-buffers %s 2>&1 1>/dev/null | FileCheck %s
 // RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
 // RUN: ptoas --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
-// RUN: ptoas --plan-memory-impl=modern --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
-// RUN: ptoas --plan-memory-impl=modern --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
+// RUN: ptoas --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
+// RUN: ptoas --mlir-print-ir-after=pto-resolve-buffer-select %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=SELECT
 
 // Verifies the tile-native multi-buffer pipeline for constant slots:
 //   1. PTOResolveReservedBuffers preserves alloc_multi_tile and multi_tile_get.

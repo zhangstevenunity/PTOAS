@@ -1355,26 +1355,15 @@ static LogicalResult appendFusionFrontendPasses(
 
 static LogicalResult appendPlanMemoryPasses(PassManager &pm,
                                             PTOBuildLevel effectiveLevel) {
-  if (planMemoryImpl != "legacy" && planMemoryImpl != "modern") {
-    llvm::errs() << "Error: invalid --plan-memory-impl='" << planMemoryImpl
-                 << "', expected 'legacy' or 'modern'.\n";
-    return failure();
-  }
-
   if (effectiveLevel != PTOBuildLevel::Level3) {
     pto::PlanMemoryOptions planMemoryOptions;
     planMemoryOptions.memMode = "local";
     bool effectivePlanMemoryOrderBySize = planMemoryOrderBySize;
-    if (planMemoryImpl == "modern" &&
-        planMemoryOrderBySize.getNumOccurrences() == 0) {
+    if (planMemoryOrderBySize.getNumOccurrences() == 0) {
       effectivePlanMemoryOrderBySize = true;
     }
     planMemoryOptions.orderBySize = effectivePlanMemoryOrderBySize;
-    if (planMemoryImpl == "legacy") {
-      pm.addPass(pto::createPlanMemoryPass(planMemoryOptions));
-    } else {
-      pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
-    }
+    pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
   }
   return success();
 }

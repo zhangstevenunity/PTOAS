@@ -8,4 +8,4 @@ module attributes {"pto.target_arch" = "a3"} {
 }
 
 // CHECK-LABEL: func.func @compact_left_blayout_parser_a3() {
-// CHECK: pto.alloc_tile : !pto.tile_buf<left, 32x32xf32, slayout=row_major>
+// CHECK: pto.alloc_tile{{.*}} : !pto.tile_buf<left, 32x32xf32, slayout=row_major>

@@ -9,89 +9,40 @@
 // RUN: split-file %s %t
 // RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir \
 // RUN:   --mlir-print-ir-after=pto-plan-memory %t/planned.pto -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=LEGACY
-// RUN: ptoas --pto-arch=a5 --pto-level=level2 --plan-memory-impl=modern --emit-pto-ir \
-// RUN:   --mlir-print-ir-after=pto-plan-memory %t/planned.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MODERN
 // RUN: not pto-test-opt --pto-plan-memory %t/explicit_overlap.pto 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=OVERLAP
-// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/explicit_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=OVERLAP
 // RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/src_tmp_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SRC-TMP-OVERLAP
-// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/src_tmp_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SRC-TMP-OVERLAP
 // RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/tmp_dst_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=TMP-DST-OVERLAP
-// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/tmp_dst_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=TMP-DST-OVERLAP
 // RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/tquant_output_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=TQUANT-OUTPUT-OVERLAP
-// RUN: not ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
+// RUN: not ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/tquant_output_overlap.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=TQUANT-OUTPUT-OVERLAP
 // RUN: not ptoas --pto-arch=a5 --pto-level=level2 %t/view_alias.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=VIEW
-// RUN: not ptoas --pto-arch=a5 --pto-level=level2 --plan-memory-impl=modern \
+// RUN: not ptoas --pto-arch=a5 --pto-level=level2 \
 // RUN:   %t/view_alias.pto -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=VIEW
 // RUN: not pto-test-opt --pto-plan-memory %t/strided_view_overlap.pto \
 // RUN:   -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=STRIDED
-// RUN: ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=legacy \
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 \
 // RUN:   %t/plain_control.pto -o /dev/null
-// RUN: ptoas --pto-arch=a5 --pto-level=level3 --plan-memory-impl=modern \
-// RUN:   %t/plain_control.pto -o /dev/null
-
-// LEGACY-LABEL: func.func @dn_x2zz_src_last_use_dst_first_write
-// LEGACY-DAG: %[[DN0:.*]] = arith.constant 0 : i64
-// LEGACY-DAG: %[[DN512:.*]] = arith.constant 512 : i64
-// LEGACY-DAG: %[[DN768:.*]] = arith.constant 768 : i64
-// LEGACY: pto.alloc_tile addr = %[[DN0]] : !pto.tile_buf<vec, 16x32xui8>
-// LEGACY: pto.alloc_tile addr = %[[DN512]] : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
-// LEGACY: pto.alloc_tile addr = %[[DN768]] : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
-// LEGACY-LABEL: func.func @nd_x2zz_src_last_use_dst_first_write
-// LEGACY-DAG: %[[ND0:.*]] = arith.constant 0 : i64
-// LEGACY-DAG: %[[ND1024:.*]] = arith.constant 1024 : i64
-// LEGACY-DAG: %[[ND1280:.*]] = arith.constant 1280 : i64
-// LEGACY: pto.alloc_tile addr = %[[ND0]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32>
-// LEGACY: pto.alloc_tile addr = %[[ND1024]] : !pto.tile_buf<vec, 1x128xui8, valid=1x32>
-// LEGACY: pto.alloc_tile addr = %[[ND1280]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
-// LEGACY-LABEL: func.func @tquant_src_vs_each_output
-// LEGACY-DAG: %[[TQ_SRC_C:.*]] = arith.constant 0 : i64
-// LEGACY-DAG: %[[TQ_DST_C:.*]] = arith.constant 2048 : i64
-// LEGACY-DAG: %[[TQ_EXP_C:.*]] = arith.constant 2560 : i64
-// LEGACY-DAG: %[[TQ_MAX_C:.*]] = arith.constant 2816 : i64
-// LEGACY-DAG: %[[TQ_SCALING_C:.*]] = arith.constant 3072 : i64
-// LEGACY: pto.alloc_tile addr = %[[TQ_SRC_C]] : !pto.tile_buf<vec, 16x32xf32>
-// LEGACY: pto.alloc_tile addr = %[[TQ_DST_C]] : !pto.tile_buf<vec, 16x32xui8>
-// LEGACY: pto.alloc_tile addr = %[[TQ_EXP_C]] : !pto.tile_buf<vec, 1x32xui8, valid=1x16>
-// LEGACY: pto.alloc_tile addr = %[[TQ_MAX_C]] : !pto.tile_buf<vec, 1x16xf32>
-// LEGACY: pto.alloc_tile addr = %[[TQ_SCALING_C]] : !pto.tile_buf<vec, 1x64xf32, valid=1x16>
-// LEGACY-LABEL: func.func @tquant_src_vs_exp_zz
-// LEGACY-DAG: %[[FUSED_SRC:.*]] = arith.constant 0 : i64
-// LEGACY-DAG: %[[FUSED_DST:.*]] = arith.constant 4096 : i64
-// LEGACY-DAG: %[[FUSED_EXP:.*]] = arith.constant 5120 : i64
-// LEGACY-DAG: %[[FUSED_MAX:.*]] = arith.constant 5376 : i64
-// LEGACY-DAG: %[[FUSED_SCALING:.*]] = arith.constant 5632 : i64
-// LEGACY-DAG: %[[FUSED_EXP_ZZ:.*]] = arith.constant 5888 : i64
-// LEGACY: pto.alloc_tile addr = %[[FUSED_SRC]] : !pto.tile_buf<vec, 32x32xf32>
-// LEGACY: pto.alloc_tile addr = %[[FUSED_DST]] : !pto.tile_buf<vec, 32x32xui8>
-// LEGACY: pto.alloc_tile addr = %[[FUSED_EXP]] : !pto.tile_buf<vec, 1x32xui8>
-// LEGACY: pto.alloc_tile addr = %[[FUSED_MAX]] : !pto.tile_buf<vec, 1x32xf32>
-// LEGACY: pto.alloc_tile addr = %[[FUSED_SCALING]] : !pto.tile_buf<vec, 1x64xf32, valid=1x32>
-// LEGACY: pto.alloc_tile addr = %[[FUSED_EXP_ZZ]] : !pto.tile_buf<vec, 1x32xui8>
-// LEGACY-LABEL: func.func @plain_tmov_reuse_control
-// LEGACY-DAG: %[[PLAIN_C:.*]] = arith.constant 0 : i64
-// LEGACY-DAG: %[[PLAIN_NEXT:.*]] = arith.constant 2048 : i64
-// LEGACY: pto.alloc_tile addr = %[[PLAIN_C]] : !pto.tile_buf<vec, 16x32xf32>
-// LEGACY: pto.alloc_tile addr = %[[PLAIN_NEXT]] : !pto.tile_buf<vec, 16x32xf32>
 
 // MODERN-LABEL: func.func @dn_x2zz_src_last_use_dst_first_write
 // MODERN-DAG: %[[DN0:.*]] = arith.constant 0 : i64
